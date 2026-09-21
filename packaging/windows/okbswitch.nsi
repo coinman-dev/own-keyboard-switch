@@ -1,4 +1,4 @@
-; Installer for Own Keyboard Switch.
+﻿; Installer for Own Keyboard Switch.
 ;
 ; Built by tools/build-installer.sh, which passes the paths and the version:
 ;   makensis -DVERSION=0.1.0-beta -DVERSION_NUMERIC=0.1.0.0 \
