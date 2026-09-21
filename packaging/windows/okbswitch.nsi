@@ -98,10 +98,13 @@ VIAddVersionKey "LegalCopyright" "Copyright (c) 2026 coinman-dev"
 !define MUI_LANGDLL_REGISTRY_KEY "Software\${SHORT_NAME}"
 !define MUI_LANGDLL_REGISTRY_VALUENAME "Language"
 
+!define MUI_PAGE_CUSTOMFUNCTION_PRE ResumeBeforeComponents
 !insertmacro MUI_PAGE_WELCOME
+!define MUI_PAGE_CUSTOMFUNCTION_PRE ResumeBeforeComponents
 !insertmacro MUI_PAGE_LICENSE "${ROOT}\LICENSE"
 ; Checked when the install mode page is left, that is as soon as the choice
 ; between the two variants is known.
+!define MULTIUSER_PAGE_CUSTOMFUNCTION_PRE ResumeBeforeComponents
 !define MULTIUSER_PAGE_CUSTOMFUNCTION_LEAVE ElevateForAllUsers
 !insertmacro MULTIUSER_PAGE_INSTALLMODE
 !insertmacro MUI_PAGE_COMPONENTS
@@ -211,9 +214,14 @@ FunctionEnd
 ; Marks the copy that was started with raised rights, so a directory that
 ; stays unwritable cannot send the installer round in circles.
 !define ELEVATED_FLAG "/elevated"
+; Set only by MaybeElevate after the user confirms the all-users choice. The
+; raised copy resumes on the Components page instead of asking the completed
+; welcome, license and installation-mode questions again.
+!define RESUME_COMPONENTS_FLAG "/resume-components"
 
 Var Writable
 Var CommandLineInstallDir
+Var ResumeComponents
 
 ; Whether this process may create and write in $INSTDIR. A standard account,
 ; and an administrator who has not been elevated, cannot write under Program
@@ -279,8 +287,14 @@ Function MaybeElevate
         ; reason, and asking again would only loop.
         Return
     ${EndIf}
+    StrCpy $R3 "/AllUsers ${ELEVATED_FLAG} ${RESUME_COMPONENTS_FLAG} $R1"
+    ; NSIS consumes /D= before .onInit, so restore it as the final argument
+    ; for the raised copy. This preserves an explicit custom destination.
+    ${If} $CommandLineInstallDir != ""
+        StrCpy $R3 "$R3 /D=$CommandLineInstallDir"
+    ${EndIf}
     System::Call 'shell32::ShellExecuteW(p 0, t "runas", t "$EXEPATH", \
-        t "/AllUsers ${ELEVATED_FLAG} $R1", t "", i 1) i .r0'
+        t "$R3", t "", i 1) i .r0'
     ${If} $0 > 32
         Quit
     ${EndIf}
@@ -323,6 +337,16 @@ Function InstallModeChanged
     ${EndIf}
 FunctionEnd
 
+; The all-users choice is made on the page immediately before Components.
+; After UAC starts the elevated copy, the preceding pages are already
+; complete. Aborting their pre-callbacks moves the wizard directly forward
+; without resetting the user's place.
+Function ResumeBeforeComponents
+    ${If} $ResumeComponents == "yes"
+        Abort
+    ${EndIf}
+FunctionEnd
+
 Function .onInit
     ${IfNot} ${RunningX64}
         MessageBox MB_OK|MB_ICONSTOP "$(Need64)"
@@ -333,6 +357,15 @@ Function .onInit
     ; Preserve that result rather than re-parsing the path as ordinary options.
     ; /D= is consumed and removed from $CMDLINE by NSIS before .onInit.
     StrCpy $CommandLineInstallDir $INSTDIR
+    StrCpy $ResumeComponents "no"
+    ${GetParameters} $R1
+    ${StrStr} $R2 $R1 "${ELEVATED_FLAG}"
+    ${If} $R2 != ""
+        ${StrStr} $R2 $R1 "${RESUME_COMPONENTS_FLAG}"
+        ${If} $R2 != ""
+            StrCpy $ResumeComponents "yes"
+        ${EndIf}
+    ${EndIf}
     !insertmacro MUI_LANGDLL_DISPLAY
     !insertmacro MULTIUSER_INIT
     Call RestoreAdminPrivileges
