@@ -153,17 +153,20 @@ LangString NeedAdminUninstall ${LANG_ENGLISH} "Removing a program installed for 
 
 ; The program keeps a global keyboard hook, so its files are locked while it
 ; runs. A close request first, then force, so nothing is left half-updated.
+; Windows utilities write localized output in the OEM code page. Never send
+; that raw output to NSIS's Unicode details pane: it would be mojibake. The
+; translated DetailPrint text above is the user-facing progress message.
 !macro StopProgram UN
 Function ${UN}StopProgram
     DetailPrint "$(StoppingProgram)"
-    nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM "${EXE}"'
+    nsExec::Exec '"$SYSDIR\taskkill.exe" /IM "${EXE}"'
     Pop $0
-    nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /IM "okbswitch-portable.exe"'
+    nsExec::Exec '"$SYSDIR\taskkill.exe" /IM "okbswitch-portable.exe"'
     Pop $0
     Sleep 1500
-    nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /IM "${EXE}"'
+    nsExec::Exec '"$SYSDIR\taskkill.exe" /F /IM "${EXE}"'
     Pop $0
-    nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /IM "okbswitch-portable.exe"'
+    nsExec::Exec '"$SYSDIR\taskkill.exe" /F /IM "okbswitch-portable.exe"'
     Pop $0
     Sleep 500
 FunctionEnd
@@ -447,9 +450,9 @@ Section "!${NAME}" SecMain
     CreateDirectory "$INSTDIR\log"
     ${If} $MultiUser.InstallMode == "AllUsers"
         DetailPrint "$(GrantingLog)"
-        nsExec::ExecToLog '"$SYSDIR\icacls.exe" "$INSTDIR\data" /grant *S-1-5-32-545:(OI)(CI)M'
+        nsExec::Exec '"$SYSDIR\icacls.exe" "$INSTDIR\data" /grant *S-1-5-32-545:(OI)(CI)M'
         Pop $0
-        nsExec::ExecToLog '"$SYSDIR\icacls.exe" "$INSTDIR\log" /grant *S-1-5-32-545:(OI)(CI)M'
+        nsExec::Exec '"$SYSDIR\icacls.exe" "$INSTDIR\log" /grant *S-1-5-32-545:(OI)(CI)M'
         Pop $0
     ${EndIf}
 
@@ -508,7 +511,7 @@ Section "Uninstall"
     ${EndIf}
     ; «Запускать с правами Администратора» may have replaced it with a task.
     ${If} $MultiUser.InstallMode == "AllUsers"
-        nsExec::ExecToLog '"$SYSDIR\schtasks.exe" /Delete /TN "${LOGON_TASK}" /F'
+        nsExec::Exec '"$SYSDIR\schtasks.exe" /Delete /TN "${LOGON_TASK}" /F'
         Pop $0
     ${EndIf}
 
