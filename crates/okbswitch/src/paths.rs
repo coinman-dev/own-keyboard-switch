@@ -181,7 +181,7 @@ fn archive_directory(
     for item in fs::read_dir(source)? {
         let item = item?;
         let from = item.path();
-        if locks.iter().any(|lock| from == *lock) {
+        if locks.contains(&from) {
             continue;
         }
         let kind = item.file_type()?;
@@ -311,7 +311,7 @@ mod tests {
         let legacy_lock = profile.join("okbswitch.lock");
         assert!(
             paths
-                .adopt_from(&profile, &profile, &[legacy_lock.clone()])
+                .adopt_from(&profile, &profile, std::slice::from_ref(&legacy_lock))
                 .is_err()
         );
         assert_eq!(
