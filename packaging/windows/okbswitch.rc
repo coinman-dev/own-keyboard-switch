@@ -1,0 +1,27 @@
+// build.rs expands these placeholders for every build target/version.
+1 ICON "@ICON@"
+
+1 VERSIONINFO
+FILEVERSION @NUMERIC_VERSION@
+PRODUCTVERSION @NUMERIC_VERSION@
+FILEOS 0x40004L
+FILETYPE 0x1L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "coinman-dev\0"
+            VALUE "FileDescription", "Own Keyboard Switch\0"
+            VALUE "FileVersion", "@VERSION@\0"
+            VALUE "ProductName", "Own Keyboard Switch\0"
+            VALUE "ProductVersion", "@VERSION@\0"
+            VALUE "OriginalFilename", "okbswitch.exe\0"
+            VALUE "LegalCopyright", "Copyright (c) 2026 coinman-dev\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

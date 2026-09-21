@@ -1,0 +1,18 @@
+[package]
+name = "okbs-platform-linux"
+description = "Own Keyboard Switch: Linux backend (evdev, uinput, xkbcommon, X11, KDE, GNOME)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+evdev.workspace = true
+okbs-core.workspace = true
+okbs-platform.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

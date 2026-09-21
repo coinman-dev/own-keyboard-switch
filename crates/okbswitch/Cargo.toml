@@ -1,0 +1,41 @@
+[package]
+name = "okbswitch"
+description = "Own Keyboard Switch: automatic RU/EN keyboard layout switcher"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+default-run = "okbswitch"
+
+[[bin]]
+name = "okbswitch"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+crossbeam-channel.workspace = true
+ctrlc.workspace = true
+directories.workspace = true
+okbs-core = { workspace = true, features = ["builtin-data"] }
+okbs-engine.workspace = true
+okbs-platform.workspace = true
+okbs-ui.workspace = true
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber.workspace = true
+tempfile.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+okbs-platform-windows.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+okbs-platform-linux.workspace = true
+
+[build-dependencies]
+embed-resource = "3.0.8"
+
+[lints]
+workspace = true

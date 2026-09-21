@@ -1,0 +1,17 @@
+Third-party software notices for Own Keyboard Switch
+===================================================
+
+These licenses apply to their listed third-party components, not to the
+project's original code. See LICENSE and NOTICE for the project license;
+see data/LICENSES.md for bundled language data.
+
+{{#each licenses}}
+{{name}}
+{{#each used_by}}
+- {{crate.name}} {{crate.version}}{{#if crate.repository}} ({{crate.repository}}){{/if}}
+{{/each}}
+
+{{{text}}}
+
+------------------------------------------------------------------------
+{{/each}}

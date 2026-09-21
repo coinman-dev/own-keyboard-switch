@@ -1,0 +1,8 @@
+# Keep source checkouts identical on Windows and WSL.
+* text=auto eol=lf
+
+# Binary data must retain its exact bytes and hashes.
+*.z -text
+*.exe -text
+*.dll -text
+*.dat -text

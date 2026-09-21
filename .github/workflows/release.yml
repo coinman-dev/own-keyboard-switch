@@ -1,0 +1,142 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version tag, for example v0.1.0-beta (must exist unless dry_run is enabled)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Build and test the selected branch without publishing a release'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 40
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      DRY_RUN: ${{ inputs.dry_run || false }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.dry_run && github.ref || inputs.tag || github.ref_name }}
+          fetch-depth: 0
+      - name: Validate version tag
+        shell: pwsh
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') { throw 'Invalid release tag.' }
+          $version = [regex]::Match((Get-Content Cargo.toml -Raw), '(?m)^version\s*=\s*"([^"]+)"').Groups[1].Value
+          if ($env:RELEASE_TAG -ne "v$version") { throw 'Tag and package version differ.' }
+          if ($env:DRY_RUN -ne 'true') {
+            $tagCommit = git rev-parse "refs/tags/$env:RELEASE_TAG^{commit}"
+            if ($LASTEXITCODE -ne 0 -or $tagCommit -ne (git rev-parse HEAD)) { throw 'Checkout is not the requested tag.' }
+          }
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Formatting
+        run: cargo fmt --all --check
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Tests
+        run: cargo test --workspace --locked
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about@0.9.2
+      - name: Generate dependency notices
+        run: cargo about generate --locked --fail --manifest-path crates/okbswitch/Cargo.toml --config about.toml about.hbs --output-file THIRD-PARTY-NOTICES.txt
+      - name: Install NSIS
+        run: choco install nsis --no-progress --yes
+      - name: Build and package Windows x64
+        env:
+          RUSTFLAGS: '-C target-feature=+crt-static'
+        shell: pwsh
+        run: ./tools/build-release.ps1 -Tag $env:RELEASE_TAG
+      - name: Verify portable paths and licenses
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD 'target/dist/okbswitch-portable.exe'
+          $pathsFile = Join-Path $env:RUNNER_TEMP 'okbs-paths.txt'
+          $check = Start-Process -FilePath $exe -ArgumentList '--paths' -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput $pathsFile
+          if ($check.ExitCode -ne 0) { throw 'Portable --paths failed.' }
+          $paths = Get-Content $pathsFile -Raw
+          if ($paths -notmatch 'data[\\/]config.toml' -or $paths -match 'AppData') { throw 'Data escaped the program directory.' }
+          if (Test-Path 'target/dist/data') { throw '--paths unexpectedly created data.' }
+      - name: Installer integration check
+        shell: pwsh
+        run: ./tools/test-installer.ps1 -Installer target/dist/okbswitch-install.exe
+      - name: All-users installer integration check
+        shell: pwsh
+        run: ./tools/test-installer.ps1 -Installer target/dist/okbswitch-install.exe -Mode AllUsers
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: target/dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    if: github.event_name != 'workflow_dispatch' || !inputs.dry_run
+    needs: windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-release
+          path: dist
+      - name: Publish complete release
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum --check SHA256SUMS.txt)
+          prerelease=false
+          [[ "$RELEASE_TAG" == *-* ]] && prerelease=true
+          printf '%s\n' \
+            "## Own Keyboard Switch ${RELEASE_TAG#v}" \
+            '' \
+            'English: Windows 10/11 x64. Choose **okbswitch-portable.exe** (no installation) or **okbswitch-install.exe** (setup wizard).' \
+            '' \
+            'Русский: Windows 10/11 x64. **okbswitch-portable.exe** — без установки; **okbswitch-install.exe** — мастер установки.' \
+            '' \
+            'Settings and logs stay in the program folder (data/ and log/). / Настройки и журналы находятся в папке программы (data/ и log/).' \
+            '' \
+            'Linux: in development, no Linux artifacts yet. / Linux: в разработке, готовых сборок пока нет.' \
+            '' \
+            'License: PolyForm Noncommercial License 1.0.0. Third-party components retain their own licenses.' \
+            '' \
+            'Verify downloads with SHA256SUMS.txt. / Проверить файлы можно по SHA256SUMS.txt.' > notes.md
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)"
+            [[ "$draft" == true ]] || { echo 'A published release already exists; refusing to replace its files.' >&2; exit 1; }
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "${RELEASE_TAG#v}" --notes-file notes.md
+          fi
+          gh release upload "$RELEASE_TAG" dist/* --clobber
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease="$prerelease" --notes-file notes.md

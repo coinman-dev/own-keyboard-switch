@@ -1,0 +1,16 @@
+{
+  "format": "OKBEXR01",
+  "database_version": "20170627",
+  "source": "external layout-rule database",
+  "source_sha256": "36d3b1dd99663b5d58f102ce9edeaede8f99f1b07b19dd80156eeb48254d161f",
+  "records": 37747,
+  "match_modes": {
+    "equals": 7324,
+    "contains": 16084,
+    "starts_with": 14339
+  },
+  "uncompressed_bytes": 544931,
+  "compressed_bytes": 158149,
+  "payload_sha256": "1499e3d1f4f89de3483341537fad3b0e6b476e3b7a0ffc8c32e426e48ea06f3f",
+  "compressed_sha256": "a160688067941532b7ca9de2b8e379f5b03a57fbbcfaa746dd008d8325b57e14"
+}

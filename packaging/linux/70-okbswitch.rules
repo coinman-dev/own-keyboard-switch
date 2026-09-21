@@ -1,0 +1,18 @@
+# Own Keyboard Switch (okbswitch): access to input devices for the logged-in user.
+#
+# The program reads keyboard events passively (without grabbing the device) and
+# retypes words through a uinput virtual keyboard. The `uaccess` tag lets
+# systemd-logind grant access only to the user of the active local session,
+# so neither root nor membership in the `input` group is required.
+#
+# Note: any program of that user can then read keyboard events, as with the
+# `input` group. This is inherent to layout switchers on Wayland.
+#
+# Installed by the .deb package to /usr/lib/udev/rules.d/70-okbswitch.rules.
+# Rules must sort before 73-seat-late.rules, which applies the uaccess tag.
+
+KERNEL=="event[0-9]*", SUBSYSTEM=="input", ENV{ID_INPUT_KEYBOARD}=="1", TAG+="uaccess"
+# Mouse and touchpad clicks only reset the word buffer (the caret may have moved).
+KERNEL=="event[0-9]*", SUBSYSTEM=="input", ENV{ID_INPUT_MOUSE}=="1", TAG+="uaccess"
+KERNEL=="event[0-9]*", SUBSYSTEM=="input", ENV{ID_INPUT_TOUCHPAD}=="1", TAG+="uaccess"
+KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"

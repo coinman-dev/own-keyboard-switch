@@ -1,0 +1,9 @@
+/target
+**/*.rs.bk
+*.pdb
+/data/sources/
+.DS_Store
+/log/
+/switcher/
+/.ai/
+/tmp/

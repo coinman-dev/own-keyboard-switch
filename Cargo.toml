@@ -1,0 +1,65 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "tools/*"]
+
+[workspace.package]
+version = "0.1.0-beta"
+edition = "2024"
+rust-version = "1.95"
+license = "PolyForm-Noncommercial-1.0.0"
+authors = ["coinman-dev"]
+publish = false
+
+[workspace.dependencies]
+# internal crates
+okbs-core = { path = "crates/okbs-core", default-features = false }
+okbs-platform = { path = "crates/okbs-platform" }
+okbs-platform-windows = { path = "crates/okbs-platform-windows" }
+okbs-platform-linux = { path = "crates/okbs-platform-linux" }
+okbs-engine = { path = "crates/okbs-engine" }
+okbs-ui = { path = "crates/okbs-ui" }
+
+# external crates
+anyhow = "1.0.104"
+arboard = { version = "3.6.1", default-features = false }
+clap = { version = "4.6.7", features = ["derive"] }
+crossbeam-channel = "0.5.17"
+ctrlc = { version = "3.5.2", features = ["termination"] }
+directories = "6.0.0"
+eframe = { version = "0.36.2", default-features = false, features = ["glow", "default_fonts"] }
+egui = { version = "0.36.2", default-features = false, features = ["default_fonts"] }
+miniz_oxide = "0.9.1"
+evdev = "0.13.2"
+pretty_assertions = "1.4.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_ignored = "0.1.14"
+spellbook = "0.4.2"
+tempfile = "3.27.0"
+thiserror = "2.0.20"
+toml = "1.1.6"
+tracing = "0.1.44"
+tracing-appender = "0.2.5"
+tray-icon = { version = "0.25.1", default-features = false }
+tracing-subscriber = { version = "0.3.23", features = ["fmt", "ansi"] }
+windows = "0.62.2"
+winit = { version = "0.30.13", default-features = false }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+dbg_macro = "warn"
+todo = "warn"
+unwrap_used = "warn"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+
+[profile.dev.package."*"]
+opt-level = 1
