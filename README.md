@@ -1,7 +1,7 @@
 [English](README.md) | [Русский](README.ru_RU.md)
 
 <p align="center">
-  <img src="images/logo-256.png" alt="Own Keyboard Switch" width="160">
+  <img src="images/logo-settings.png" alt="Own Keyboard Switch" width="160">
 </p>
 
 <h1 align="center">Own Keyboard Switch</h1>
