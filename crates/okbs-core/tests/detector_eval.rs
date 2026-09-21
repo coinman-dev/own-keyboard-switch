@@ -13,6 +13,7 @@ use okbs_core::config::Config;
 use okbs_core::detect::{Decision, Detector, DetectorOptions};
 use okbs_core::layouts::{builtin_keymap, keys_for_text};
 use okbs_core::rules::RuleSet;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 #[derive(Default, Debug)]
@@ -228,25 +229,37 @@ fn configured_extra_rules_quality() {
             assert!(report.recall_short.word_rate() >= 0.60);
             // Aggregate scores must not hide a newly damaged word. Expectations
             // here belong to our held-out corpus.
+            let baseline_false_switches: HashSet<_> = baseline
+                .false_switches
+                .iter()
+                .map(|(_, word, _)| word.as_str())
+                .collect();
             for (_, word, _) in &report.false_switches {
                 assert!(
-                    baseline
-                        .false_switches
-                        .iter()
-                        .any(|(_, old, _)| old == word),
+                    baseline_false_switches.contains(word.as_str()),
                     "new false switch: {word}"
                 );
             }
+            let baseline_misses: HashSet<_> = baseline
+                .misses
+                .iter()
+                .map(|(_, word, _)| word.as_str())
+                .collect();
             for (_, word, _) in &report.misses {
                 assert!(
-                    baseline.misses.iter().any(|(_, old, _)| old == word),
+                    baseline_misses.contains(word.as_str()),
                     "new missed correction: {word}"
                 );
             }
+            let report_misses: HashSet<_> = report
+                .misses
+                .iter()
+                .map(|(_, word, _)| word.as_str())
+                .collect();
             let fixed: Vec<_> = baseline
                 .misses
                 .iter()
-                .filter(|(_, word, _)| !report.misses.iter().any(|(_, old, _)| old == word))
+                .filter(|(_, word, _)| !report_misses.contains(word.as_str()))
                 .map(|(_, word, _)| word.as_str())
                 .collect();
             println!(
