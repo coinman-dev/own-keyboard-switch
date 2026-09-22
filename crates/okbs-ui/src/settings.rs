@@ -4,6 +4,9 @@
 //! emit [`SettingsEvent::Apply`]; the application saves the file and passes the
 //! configuration to the engine.
 
+#[cfg(test)]
+use crate::appearance::configure as configure_context;
+use crate::appearance::{CONTROL_HEIGHT, action_button, content as content_style};
 use crate::flags::{Flag, flag_for_layout};
 use crate::i18n::{Text, hotkey_action_text, tr};
 use egui::{Color32, RichText, Ui};
@@ -16,18 +19,6 @@ use okbs_core::{Hotkey, Lang};
 
 /// Window size in logical points (Windows applies the monitor DPI scale).
 pub(crate) const WINDOW_SIZE: [f32; 2] = [800.0, 600.0];
-
-/// Applied once when a GUI context is created, to both light and dark themes.
-pub(crate) fn configure_context(ctx: &egui::Context) {
-    ctx.all_styles_mut(|style| {
-        for font in style.text_styles.values_mut() {
-            font.size += 1.0;
-        }
-        // Settings cells have explicit widths; they must never infer their
-        // width from already-wrapped text, as an auto-sized Grid would.
-        style.wrap_mode = Some(egui::TextWrapMode::Wrap);
-    });
-}
 
 /// Sections of the settings window in display order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -177,6 +168,7 @@ pub enum SettingsEvent {
     DownloadDictionary(String),
     /// Apply an explicitly chosen spelling replacement to its original input target.
     ReplaceSpelling {
+        request_id: u64,
         target: (u64, u64),
         original: String,
         corrected: String,
@@ -198,6 +190,11 @@ pub enum DictionaryState {
 /// Messages from the application to the settings window.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SettingsInput {
+    /// The engine has completed a particular replacement button action.
+    SpellingReplacementFinished {
+        request_id: u64,
+        success: bool,
+    },
     /// A key combination was captured.
     HotkeyCaptured(Hotkey),
     /// Capture ended without a combination.
@@ -217,8 +214,6 @@ pub enum SettingsInput {
         id: String,
         state: DictionaryState,
     },
-    /// The original input target of a spelling popup is still active.
-    SpellingTargetActive(bool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -352,26 +347,6 @@ pub struct SettingsView {
 
 fn weak(ui: &mut Ui, text: &str) {
     ui.label(RichText::new(text).weak().small());
-}
-
-const CONTROL_HEIGHT: f32 = 28.0;
-
-/// Roomier controls in the content area and dialogs; the navigation stays compact.
-pub(crate) fn content_style(ui: &mut Ui) {
-    let spacing = ui.spacing_mut();
-    spacing.interact_size = egui::vec2(88.0, CONTROL_HEIGHT);
-    spacing.button_padding = egui::vec2(10.0, 5.0);
-    spacing.item_spacing = egui::vec2(10.0, 6.0);
-    spacing.icon_width = 16.0;
-    spacing.icon_width_inner = 9.0;
-    spacing.combo_width = 200.0;
-    spacing.scroll.dormant_handle_opacity = 0.6;
-    spacing.scroll.dormant_background_opacity = 0.15;
-    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-}
-
-pub(crate) fn action_button(text: &str) -> egui::Button<'_> {
-    egui::Button::new(text).min_size(egui::vec2(88.0, CONTROL_HEIGHT))
 }
 
 /// Explicit column widths, including on the very first frame. Each row fills
@@ -649,7 +624,7 @@ impl SettingsView {
                 }
             }
             SettingsInput::DictionaryState { .. } => {}
-            SettingsInput::SpellingTargetActive(_) => {}
+            SettingsInput::SpellingReplacementFinished { .. } => {}
             SettingsInput::SuggestRule(rule) => {
                 self.section = Section::Rules;
                 self.dialog = Some(Dialog::Rule {

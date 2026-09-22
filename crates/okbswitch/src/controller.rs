@@ -92,8 +92,11 @@ fn spelling_worker(
             while let Ok(mut job) = input.recv() {
                 // Rapid repeated requests only need the most recent snapshot.
                 for newer in input.try_iter() {
+                    tracing::info!(target: "okbs_spelling", skipped_job = job.id,
+                        newer_job = newer.id, "queued check superseded");
                     job = newer;
                 }
+                let started = Instant::now();
                 dictionaries.select(job.settings.english_dictionary.as_deref());
                 let misspellings = okbs_core::spell::check_text_with_words(
                     &job.text,
@@ -102,6 +105,11 @@ fn spelling_worker(
                     &job.settings.custom_words,
                     |lang| dictionaries.dictionary(lang),
                 );
+                tracing::info!(target: "okbs_spelling", job = job.id,
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    errors = misspellings.len(),
+                    suggestions = misspellings.iter().map(|m| m.suggestions.len()).sum::<usize>(),
+                    "dictionary check completed");
                 if output.send(SpellingResult { job, misspellings }).is_err() {
                     break;
                 }
@@ -168,7 +176,6 @@ pub struct Controller {
     alert_until: Option<Instant>,
     spelling: Option<(Sender<SpellingJob>, Receiver<SpellingResult>)>,
     spelling_id: u64,
-    spelling_target: Option<InputTarget>,
     dictionary_root: PathBuf,
     system_language: okbs_core::Lang,
     elevation: Option<Box<dyn Elevation>>,
@@ -216,18 +223,6 @@ fn spelling_popup_position(_target: Option<InputTarget>) -> Option<[f32; 2]> {
     #[cfg(not(windows))]
     {
         None
-    }
-}
-
-fn spelling_target_is_active(target: InputTarget) -> bool {
-    #[cfg(windows)]
-    {
-        okbs_platform_windows::focus::input_target() == Some(target)
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = target;
-        true
     }
 }
 
@@ -325,7 +320,6 @@ impl Controller {
                 .map_err(|err| tracing::error!("cannot start spelling worker: {err}"))
                 .ok(),
             spelling_id: 0,
-            spelling_target: None,
             dictionary_root,
             system_language,
             elevation: platform.elevation,
@@ -617,6 +611,18 @@ impl Controller {
             }
             Event::Error(message) => tracing::warn!("{message}"),
             Event::SpellingCorrected => self.play_configured(SoundId::SpellingCorrected),
+            Event::SpellingReplacementFinished {
+                request_id,
+                success,
+            } => {
+                tracing::info!(target: "okbs_spelling", request_id, success, "replacement acknowledged by engine");
+                if let Some(window) = &self.window {
+                    window.send(SettingsInput::SpellingReplacementFinished {
+                        request_id,
+                        success,
+                    });
+                }
+            }
             Event::SuggestRule(rule) => {
                 let layouts = self.layout_entries();
                 if let Some(window) = &self.window {
@@ -687,6 +693,9 @@ impl Controller {
                 target,
             } => {
                 self.spelling_id = self.spelling_id.wrapping_add(1);
+                tracing::info!(target: "okbs_spelling", job = self.spelling_id, ?target,
+                    interactive, chars = text.chars().count(), mode = ?settings.typed_mode,
+                    worker_available = self.spelling.is_some(), "check requested");
                 if let Some((worker, _)) = &self.spelling {
                     let _ = worker.send(SpellingJob {
                         id: self.spelling_id,
@@ -733,7 +742,12 @@ impl Controller {
                 self.settings.replace((*config).clone());
                 self.refresh_icon();
                 self.engine.send(Command::ApplyConfig(config));
-                tracing::info!("settings applied");
+                tracing::info!(
+                    typed_spelling = self.settings.config.spellcheck.check_typed_words,
+                    spelling_enabled = self.settings.config.spellcheck.enabled,
+                    spelling_mode = ?self.settings.config.spellcheck.typed_mode,
+                    "settings applied"
+                );
                 self.configure_autoreplace_ui();
                 self.configure_indicator();
                 self.history_entries
@@ -797,19 +811,30 @@ impl Controller {
                 });
             }
             SettingsEvent::ReplaceSpelling {
+                request_id,
                 target,
                 original,
                 corrected,
             } => {
-                self.spelling_target = None;
-                self.engine.send(Command::CorrectTypedSpelling {
+                tracing::info!(target: "okbs_spelling", request_id, ?target,
+                    original_chars = original.chars().count(),
+                    corrected_chars = corrected.chars().count(),
+                    "forwarding popup replacement to engine");
+                if !self.engine.send(Command::ReplaceTypedSpelling {
+                    request_id,
                     target: InputTarget {
                         window: target.0,
                         control: target.1,
                     },
                     original,
                     corrected,
-                });
+                }) && let Some(window) = &self.window
+                {
+                    window.send(SettingsInput::SpellingReplacementFinished {
+                        request_id,
+                        success: false,
+                    });
+                }
             }
         }
     }
@@ -961,12 +986,18 @@ impl Controller {
         if let Some((_, results)) = &self.spelling {
             while let Ok(result) = results.try_recv() {
                 if result.job.id != self.spelling_id || !self.settings.config.spellcheck.enabled {
+                    tracing::info!(target: "okbs_spelling", job = result.job.id,
+                        latest_job = self.spelling_id, enabled = self.settings.config.spellcheck.enabled,
+                        "check result discarded: superseded or disabled");
                     continue;
                 }
                 if result.job.interactive
                     && (!self.settings.config.spellcheck.check_typed_words
                         || result.misspellings.is_empty())
                 {
+                    tracing::info!(target: "okbs_spelling", job = result.job.id,
+                        typed_enabled = self.settings.config.spellcheck.check_typed_words,
+                        errors = result.misspellings.len(), "typed check has no popup");
                     continue;
                 }
                 if result.job.interactive
@@ -978,6 +1009,8 @@ impl Controller {
                             (suggestions.len() == 1).then(|| suggestions[0].clone())
                         });
                     if let (Some(target), Some(corrected)) = (result.job.target, candidate) {
+                        tracing::info!(target: "okbs_spelling", job = result.job.id, ?target,
+                            "automatic replacement requested");
                         self.engine.send(Command::CorrectTypedSpelling {
                             target,
                             original: result.job.text,
@@ -997,12 +1030,16 @@ impl Controller {
                             TextResult::spelling(result.job.text, result.misspellings)
                         };
                         if result.job.interactive {
-                            self.spelling_target = result.job.target;
+                            tracing::info!(target: "okbs_spelling", job = result.job.id,
+                                target = ?result.job.target, "opening suggestion popup");
                             window.show_text_passive(
                                 &self.settings.config,
                                 view,
                                 spelling_popup_position(result.job.target),
-                                result.job.target.map(|target| (target.window, target.control)),
+                                result
+                                    .job
+                                    .target
+                                    .map(|target| (target.window, target.control)),
                             );
                         } else {
                             window.show_text(&self.settings.config, view);
@@ -1018,14 +1055,6 @@ impl Controller {
                         corrected,
                     });
                 }
-            }
-        }
-        if let Some(target) = self.spelling_target
-            && !spelling_target_is_active(target)
-        {
-            self.spelling_target = None;
-            if let Some(window) = &self.window {
-                window.send(SettingsInput::SpellingTargetActive(false));
             }
         }
         if self.alert_until.is_some_and(|t| Instant::now() >= t) {

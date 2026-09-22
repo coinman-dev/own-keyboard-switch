@@ -125,7 +125,7 @@ jobs:
             '' \
             'Русский: Windows 10/11 x64. **okbswitch-portable.exe** — без установки; **okbswitch-install.exe** — мастер установки.' \
             '' \
-            'Settings and logs stay in the program folder (data/ and log/). / Настройки и журналы находятся в папке программы (data/ и log/).' \
+            'Settings and logs stay in the program folder (data/ and Logs/). / Настройки и журналы находятся в папке программы (data/ и Logs/).' \
             '' \
             'Linux: in development, no Linux artifacts yet. / Linux: в разработке, готовых сборок пока нет.' \
             '' \

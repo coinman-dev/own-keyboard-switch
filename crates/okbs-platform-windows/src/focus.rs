@@ -239,16 +239,23 @@ impl FocusInfo for WinFocus {
     }
 
     fn activate_target(&self, target: InputTarget) -> Result<()> {
+        let started = std::time::Instant::now();
+        tracing::info!(target: "okbs_input", ?target, current = ?input_target(),
+            "Windows focus restoration requested");
         let window = HWND(target.window as usize as *mut core::ffi::c_void);
         // SAFETY: opaque handles are checked before requesting activation.
         if !unsafe { IsWindow(Some(window)) }.as_bool() {
+            tracing::warn!(target: "okbs_input", ?target, "Windows target window no longer exists");
             return Err(PlatformError::Other("insertion window was closed".into()));
         }
         // SAFETY: activation is requested only by a user's insert command.
-        let _ = unsafe { SetForegroundWindow(window) };
+        let accepted = unsafe { SetForegroundWindow(window) }.as_bool();
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(150);
         loop {
             if input_target() == Some(target) {
+                tracing::info!(target: "okbs_input", ?target, accepted,
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    "Windows target control restored");
                 return Ok(());
             }
             if std::time::Instant::now() >= deadline {
@@ -256,6 +263,9 @@ impl FocusInfo for WinFocus {
             }
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
+        tracing::warn!(target: "okbs_input", ?target, accepted, current = ?input_target(),
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "Windows focus restoration timed out");
         Err(PlatformError::Other(
             "cannot restore the insertion control".into(),
         ))

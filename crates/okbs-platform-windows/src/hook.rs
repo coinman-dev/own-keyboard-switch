@@ -16,9 +16,10 @@ use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CANCEL, VK_CAPITAL, VK_PAUSE};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, SetWindowsHookExW,
-    UnhookWindowsHookEx, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_LBUTTONDOWN, WM_MBUTTONDOWN,
-    WM_RBUTTONDOWN, WM_SYSKEYDOWN, WM_XBUTTONDOWN,
+    CallNextHookEx, GetForegroundWindow, GetWindowThreadProcessId, HC_ACTION, KBDLLHOOKSTRUCT,
+    LLKHF_EXTENDED, MSLLHOOKSTRUCT, SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL,
+    WH_MOUSE_LL, WM_KEYDOWN, WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_RBUTTONDOWN, WM_SYSKEYDOWN,
+    WM_XBUTTONDOWN, WindowFromPoint,
 };
 
 struct HookState {
@@ -179,10 +180,30 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
             message,
             WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN
         ) {
+            // The low-level click arrives before Windows activates the clicked
+            // window. Record both owners to diagnose first-click focus races.
+            // SAFETY: HC_ACTION provides a live MSLLHOOKSTRUCT for this callback.
+            let point = unsafe { (*(lparam.0 as *const MSLLHOOKSTRUCT)).pt };
+            let mut clicked_pid = 0;
+            let mut foreground_pid = 0;
+            // SAFETY: query-only calls and valid output buffers.
+            let (clicked, foreground) = unsafe {
+                let clicked = WindowFromPoint(point);
+                let foreground = GetForegroundWindow();
+                GetWindowThreadProcessId(clicked, Some(&mut clicked_pid));
+                GetWindowThreadProcessId(foreground, Some(&mut foreground_pid));
+                (clicked, foreground)
+            };
+            if clicked_pid == std::process::id() || foreground_pid == std::process::id() {
+                tracing::info!(target: "okbs_input", clicked_pid, foreground_pid,
+                    clicked_window = clicked.0 as usize, foreground_window = foreground.0 as usize,
+                    "mouse down before activation involving application UI");
+            }
             STATE.with_borrow(|state| {
                 if let Some(state) = state {
                     let event = InputEvent::MouseButton {
                         time: Instant::now(),
+                        in_own_window: clicked_pid == std::process::id(),
                     };
                     state
                         .filter

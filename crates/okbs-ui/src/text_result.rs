@@ -13,6 +13,7 @@ pub struct TextResult {
     choices: Vec<Option<usize>>,
     copied: bool,
     compact: bool,
+    replacement_failed: bool,
 }
 
 impl std::fmt::Debug for TextResult {
@@ -33,6 +34,7 @@ impl TextResult {
             choices: Vec::new(),
             copied: false,
             compact: false,
+            replacement_failed: false,
         }
     }
 
@@ -45,6 +47,7 @@ impl TextResult {
             spelling: Some(misspellings),
             copied: false,
             compact,
+            replacement_failed: false,
         }
     }
 
@@ -55,6 +58,7 @@ impl TextResult {
             spelling: Some(misspellings),
             copied: false,
             compact: true,
+            replacement_failed: false,
         }
     }
 
@@ -64,6 +68,10 @@ impl TextResult {
 
     pub fn original(&self) -> &str {
         &self.original
+    }
+
+    pub(crate) fn replacement_failed(&mut self, failed: bool) {
+        self.replacement_failed = failed;
     }
 
     /// Localized window title.
@@ -102,9 +110,10 @@ impl TextResult {
     /// Shows suggestions and a selectable result preview. Copying is explicit
     /// and goes through eframe's clipboard output on the window thread.
     pub fn ui(&mut self, ui: &mut Ui, lang: Lang, can_replace: bool) -> Option<String> {
-        ui.painter()
-            .rect_filled(ui.max_rect(), 0.0, ui.visuals().panel_fill);
-        crate::settings::content_style(ui);
+        crate::appearance::panel(ui, |ui| self.content_ui(ui, lang, can_replace)).inner
+    }
+
+    fn content_ui(&mut self, ui: &mut Ui, lang: Lang, can_replace: bool) -> Option<String> {
         if self.compact {
             return self.compact_ui(ui, lang, can_replace);
         }
@@ -203,14 +212,27 @@ impl TextResult {
                     });
             });
         }
-        if ui
-            .add_enabled(can_replace, crate::settings::action_button(tr(Text::SpellcheckReplaceWord, lang)))
-            .clicked()
-        {
+        let mut replace = false;
+        ui.vertical_centered(|ui| {
+            replace = ui
+                .add_enabled(
+                    can_replace,
+                    crate::appearance::action_button(tr(Text::SpellcheckReplaceWord, lang)),
+                )
+                .clicked();
+        });
+        if replace {
             return Some(self.text());
         }
         if !can_replace {
-            ui.label(RichText::new(tr(Text::SpellcheckTargetChanged, lang)).weak().small());
+            ui.label(
+                RichText::new(tr(Text::SpellcheckTargetChanged, lang))
+                    .weak()
+                    .small(),
+            );
+        }
+        if self.replacement_failed {
+            ui.label(tr(Text::SpellcheckReplacementFailed, lang));
         }
         None
     }
@@ -307,5 +329,56 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn compact_replace_button_is_centered() {
+        let mut view = TextResult::spelling_popup(
+            "wrold".into(),
+            vec![Misspelling {
+                range: 0..5,
+                word: "wrold".into(),
+                lang: Lang::En,
+                suggestions: vec!["world".into()],
+            }],
+        );
+        let ctx = egui::Context::default();
+        let width = 390.0;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(width, 160.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                let _ = view.ui(ui, Lang::En, true);
+            },
+        );
+        output.textures_delta.clear();
+        let heading_left = output.shapes.iter().find_map(|shape| {
+            if let egui::Shape::Text(text) = &shape.shape
+                && text.galley.text() == tr(Text::SpellcheckWordTitle, Lang::En)
+            {
+                return Some(text.galley.rect.translate(text.pos.to_vec2()).left());
+            }
+            None
+        });
+        let text_center = output.shapes.iter().find_map(|shape| {
+            if let egui::Shape::Text(text) = &shape.shape
+                && text.galley.text() == tr(Text::SpellcheckReplaceWord, Lang::En)
+            {
+                return Some(text.galley.rect.translate(text.pos.to_vec2()).center().x);
+            }
+            None
+        });
+        let text_center = text_center.expect("replace button");
+        assert!(
+            (text_center - width / 2.0).abs() < 1.0,
+            "replace button center {text_center} != window center {}",
+            width / 2.0
+        );
+        assert!(heading_left.expect("heading") > 0.0);
     }
 }

@@ -4,6 +4,7 @@
 /data/sources/
 .DS_Store
 /log/
+/Logs/
 /switcher/
 /.ai/
 /tmp/

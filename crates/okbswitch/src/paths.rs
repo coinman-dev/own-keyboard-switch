@@ -1,4 +1,4 @@
-//! Writable program files stay in the installation directory: data/ and log/.
+//! Writable program files stay in the installation directory: data/ and Logs/.
 //! Profile directories are read only as migration sources, never as a fallback.
 
 use anyhow::{Context, Result, bail};
@@ -53,7 +53,7 @@ impl AppPaths {
         };
         Ok(Self {
             config_file,
-            log_dir: directory.join("log"),
+            log_dir: directory.join("Logs"),
             lock_file: state_dir.join(format!("{APP_ID}.lock")),
             state_dir,
             custom_config,
@@ -230,7 +230,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let paths = AppPaths::in_directory(directory.path(), None).unwrap();
         assert_eq!(paths.config_file, directory.path().join("data/config.toml"));
-        assert_eq!(paths.log_dir, directory.path().join("log"));
+        assert_eq!(paths.log_dir, directory.path().join("Logs"));
         assert!(!paths.state_dir.exists());
         assert!(
             AppPaths::in_directory(directory.path(), Some("../elsewhere.toml".into())).is_err()

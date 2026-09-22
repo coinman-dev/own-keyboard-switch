@@ -145,6 +145,15 @@ struct LastWord {
     target: Option<InputTarget>,
 }
 
+/// Word snapshot kept while its spelling is checked and the suggestion window
+/// is open. The normal typing state is reset when that window receives focus.
+#[derive(Debug, Clone, PartialEq)]
+struct PendingSpelling {
+    original: String,
+    last: LastWord,
+    captured_at: Instant,
+}
+
 impl LastWord {
     fn all_keys(&self) -> impl Iterator<Item = KeyPress> + '_ {
         self.keys.iter().chain(&self.separator).copied()
@@ -248,6 +257,7 @@ pub struct Processor {
     word_blocked: bool,
     block_next_word: bool,
     last: Option<LastWord>,
+    pending_spelling: Option<PendingSpelling>,
     deferred: Vec<Deferred>,
     cancels: HashMap<String, u32>,
     last_key_time: Option<Instant>,
@@ -311,6 +321,7 @@ impl Processor {
             word_blocked: false,
             block_next_word: false,
             last: None,
+            pending_spelling: None,
             deferred: Vec::new(),
             cancels: HashMap::new(),
             last_key_time: None,
@@ -374,6 +385,10 @@ impl Processor {
         self.detector = Detector::from_config(&config);
         self.autoreplacer = AutoReplacer::new(&config.autoreplace);
         self.config = config;
+        if self.pending_spelling.is_some() {
+            tracing::info!(target: "okbs_spelling", reason = "config_changed", "snapshot invalidated");
+        }
+        self.pending_spelling = None;
         self.reset_all();
     }
 
@@ -509,6 +524,25 @@ impl Processor {
         if matches!(event, FocusEvent::MenuClosed) {
             return;
         }
+        let own_window = matches!(
+            event,
+            FocusEvent::WindowChanged(Some(window))
+                if window.pid == Some(std::process::id())
+        );
+        let original_target = self
+            .pending_spelling
+            .as_ref()
+            .is_some_and(|pending| self.target_matches(pending.last.target));
+        if let Some(pending) = &self.pending_spelling {
+            tracing::info!(target: "okbs_spelling", expected = ?pending.last.target,
+                current = ?self.backends.focus.as_ref().and_then(|f| f.input_target().ok().flatten()),
+                own_window, original_target, retained = own_window || original_target,
+                age_ms = pending.captured_at.elapsed().as_millis() as u64,
+                "focus event while spelling pending");
+        }
+        if !own_window && !original_target {
+            self.pending_spelling = None;
+        }
         self.remember_target();
         self.reset_all();
         self.block_next_word = false;
@@ -571,6 +605,47 @@ impl Processor {
             }
         ) {
             self.remember_target();
+        }
+        let user_action = matches!(
+            event,
+            InputEvent::Key {
+                pressed: true,
+                injected: false,
+                ..
+            } | InputEvent::UnknownKey { pressed: true, .. }
+                | InputEvent::MouseButton { .. }
+        );
+        let own_window = match event {
+            InputEvent::MouseButton { in_own_window, .. } => in_own_window,
+            _ => self.backends.focus.as_ref().is_some_and(|focus| {
+                matches!(
+                    focus.active_window(),
+                    Ok(Some(window)) if window.pid == Some(std::process::id())
+                )
+            }),
+        };
+        if user_action && let Some(pending) = &self.pending_spelling {
+            let kind = match event {
+                InputEvent::MouseButton { .. } => "mouse_button",
+                InputEvent::Key {
+                    key: PhysKey::Space,
+                    ..
+                } => "space",
+                InputEvent::Key {
+                    key: PhysKey::Enter | PhysKey::NumpadEnter,
+                    ..
+                } => "enter",
+                InputEvent::Key { .. } => "key",
+                _ => "unknown_key",
+            };
+            tracing::info!(target: "okbs_spelling", kind, own_window, retained = own_window,
+                expected = ?pending.last.target,
+                current = ?self.backends.focus.as_ref().and_then(|f| f.input_target().ok().flatten()),
+                age_ms = pending.captured_at.elapsed().as_millis() as u64,
+                "input event while spelling pending");
+        }
+        if user_action && !own_window {
+            self.pending_spelling = None;
         }
         let mut out = Vec::new();
         match event {
@@ -809,6 +884,27 @@ impl Processor {
                             gate.replayed(raw, lang, target);
                         }
                         out.extend(self.handle_input(raw));
+                        // A captured boundary is checked before it reaches the
+                        // editor. Its replay resets pending spelling and adds
+                        // the separator to LastWord. Snapshot that final state,
+                        // before publishing the already queued spelling request.
+                        if let Some(text) = out.iter().find_map(|event| match event {
+                            Event::CheckSpelling {
+                                text,
+                                interactive: true,
+                                ..
+                            } => Some(text),
+                            _ => None,
+                        }) && let Some(last) = self.last.clone()
+                        {
+                            self.pending_spelling = Some(PendingSpelling {
+                                original: text.clone(),
+                                last,
+                                captured_at: Instant::now(),
+                            });
+                            tracing::info!(target: "okbs_spelling", ?target, epoch,
+                                "snapshot refreshed after captured boundary replay");
+                        }
                     }
                     Err(err) => self.fail("cannot replay pending input", &err, &mut out),
                 }
@@ -1298,6 +1394,8 @@ impl Processor {
         let epoch = self
             .operation_epoch
             .or_else(|| self.input_gate.as_ref().map(|gate| gate.epoch()));
+        tracing::info!(target: "okbs_input", ?target, ?epoch, erase, caret_left,
+            chars = replacement.chars().count(), "paste preparation");
         if (target.is_some() && !self.target_matches(target)) || !self.epoch_matches(epoch) {
             return Err(PlatformError::Other("focused control changed".into()));
         }
@@ -1308,14 +1406,17 @@ impl Processor {
             .ok_or(PlatformError::Unsupported("clipboard"))?;
         let saved = clipboard.text()?;
         clipboard.set_text(replacement)?;
+        tracing::info!(target: "okbs_input", "temporary clipboard text set");
         let result = (|| {
             if (target.is_some() && !self.target_matches(target)) || !self.epoch_matches(epoch) {
                 return Err(PlatformError::Other("focused control changed".into()));
             }
             self.backends.injector.backspace(erase)?;
+            tracing::info!(target: "okbs_input", erase, "backspaces sent");
             self.backends
                 .injector
                 .tap(&[PhysKey::ControlLeft], PhysKey::KeyV)?;
+            tracing::info!(target: "okbs_input", "Ctrl+V sent");
             std::thread::sleep(self.timing.paste_settle);
             if (target.is_some() && !self.target_matches(target)) || !self.epoch_matches(epoch) {
                 return Err(PlatformError::Other("focused control changed".into()));
@@ -1331,6 +1432,8 @@ impl Processor {
             self.backends.injector.send(&strokes)
         })();
         self.restore_clipboard(saved, replacement);
+        tracing::info!(target: "okbs_input", success = result.is_ok(),
+            "paste finished and clipboard restoration attempted");
         result
     }
 
@@ -1354,10 +1457,20 @@ impl Processor {
             && self.deferred.is_empty()
             && !out.iter().any(|event| matches!(event, Event::Error(_)))
             && !self.focus_blocks()
-            && let Some(last) = &self.last
+            && let Some(last) = self.last.clone()
         {
+            let text = layouts::render(&last.keys, self.detector.keymap(last.shown_in()));
+            self.pending_spelling = Some(PendingSpelling {
+                original: text.clone(),
+                last: last.clone(),
+                captured_at: Instant::now(),
+            });
+            tracing::info!(target: "okbs_spelling", target = ?last.target,
+                chars = text.chars().count(), separator_typed,
+                separator_count = last.separator.len(), separator = ?separator.key,
+                gated = self.input_gate.is_some(), "word snapshot created");
             out.push(Event::CheckSpelling {
-                text: layouts::render(&last.keys, self.detector.keymap(last.shown_in())),
+                text,
                 settings: self.config.spellcheck.clone(),
                 interactive: true,
                 target: last.target,
@@ -2278,32 +2391,73 @@ impl Processor {
         corrected: &str,
     ) -> Vec<Event> {
         let mut out = Vec::new();
-        if corrected.is_empty()
-            || corrected == original
-            || !self.word.is_empty()
-            || self.focus_blocks()
-            || !self.target_matches(Some(target))
-        {
+        tracing::info!(target: "okbs_spelling", ?target,
+            current = ?self.backends.focus.as_ref().and_then(|f| f.input_target().ok().flatten()),
+            pending = self.pending_spelling.is_some(), original_chars = original.chars().count(),
+            corrected_chars = corrected.chars().count(), modifiers_held = !self.mods.is_empty(),
+            "replacement command received");
+        if corrected.is_empty() || corrected == original {
+            tracing::warn!(target: "okbs_spelling", empty = corrected.is_empty(),
+                unchanged = corrected == original, "replacement rejected: no changed suggestion");
             return out;
         }
-        let Some(last) = self.last.clone() else {
+        let Some(pending) = self.pending_spelling.take() else {
+            tracing::warn!(target: "okbs_spelling", "replacement rejected: snapshot missing or invalidated");
             return out;
         };
-        if last.target != Some(target)
+        tracing::info!(target: "okbs_spelling",
+            age_ms = pending.captured_at.elapsed().as_millis() as u64,
+            snapshot_target = ?pending.last.target, separator_count = pending.last.separator.len(),
+            "validating replacement snapshot");
+        let last = pending.last;
+        if pending.original != original
+            || last.target != Some(target)
             || !matches!(last.separator.as_slice(), [separator] if separator.key == PhysKey::Space)
             || layouts::render(&last.keys, self.detector.keymap(last.shown_in())) != original
         {
+            tracing::warn!(target: "okbs_spelling",
+                original_matches = pending.original == original,
+                target_matches = last.target == Some(target),
+                space_terminated = matches!(last.separator.as_slice(), [s] if s.key == PhysKey::Space),
+                rendered_matches = layouts::render(&last.keys, self.detector.keymap(last.shown_in())) == original,
+                "replacement rejected: snapshot mismatch");
             return out;
         }
-        self.operation_target = Some(target);
-        let replacement = format!("{corrected} ");
-        let result = self.paste_replacement(&replacement, last.keys.len() + 1, 0);
+        let result = (|| {
+            let focus = self
+                .backends
+                .focus
+                .as_ref()
+                .ok_or(PlatformError::Unsupported("spelling correction target"))?;
+            tracing::info!(target: "okbs_spelling", ?target, "restoring editor focus");
+            focus.activate_target(target)?;
+            tracing::info!(target: "okbs_spelling", ?target, "editor focus restored");
+            if matches!(focus.is_password_field(), Ok(Some(true))) {
+                return Err(PlatformError::Other(
+                    "spelling correction is disabled in this control".into(),
+                ));
+            }
+            self.excluded_cache = None;
+            if !self.target_matches(Some(target)) || self.foreground_excluded() {
+                return Err(PlatformError::Other(
+                    "spelling correction target changed".into(),
+                ));
+            }
+            self.operation_target = Some(target);
+            let replacement = format!("{corrected} ");
+            tracing::info!(target: "okbs_spelling", erase = last.keys.len() + 1,
+                paste_chars = replacement.chars().count(), "starting spelling paste");
+            self.paste_replacement(&replacement, last.keys.len() + 1, 0)
+        })();
         self.operation_target = None;
         if let Err(err) = result {
+            tracing::warn!(target: "okbs_spelling", %err, "replacement failed");
             self.fail("spelling correction failed", &err, &mut out);
             return out;
         }
         self.reset_all();
+        tracing::info!(target: "okbs_spelling", ?target,
+            "replacement input sent successfully; editor text not read back");
         out.push(Event::SpellingCorrected);
         out
     }

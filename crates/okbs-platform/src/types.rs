@@ -51,6 +51,9 @@ pub enum InputEvent {
     MouseButton {
         /// When the event was observed.
         time: Instant,
+        /// Owner of the clicked window, captured before Windows activates it.
+        /// Never infer this from the foreground window later on the engine thread.
+        in_own_window: bool,
     },
 }
 

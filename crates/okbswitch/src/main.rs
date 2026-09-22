@@ -133,6 +133,10 @@ fn run(cli: Cli) -> Result<ExitCode> {
         version = okbs_core::VERSION,
         os = std::env::consts::OS,
         log_dir = %paths.log_dir.display(),
+        spelling_diagnostics = 1,
+        log_level = ?level,
+        typed_spelling = loaded.config.spellcheck.check_typed_words,
+        spelling_mode = ?loaded.config.spellcheck.typed_mode,
         "starting {}",
         okbs_core::APP_NAME
     );

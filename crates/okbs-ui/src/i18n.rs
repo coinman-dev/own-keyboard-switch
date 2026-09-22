@@ -245,6 +245,7 @@ texts! {
     SpellcheckWordTitle => "Возможная орфографическая ошибка", "Possible spelling error";
     SpellcheckReplaceWord => "Заменить слово", "Replace word";
     SpellcheckTargetChanged => "Поле ввода изменилось", "The input field changed";
+    SpellcheckReplacementFailed => "Слово не заменено. Повторите проверку в редакторе.", "The word was not replaced. Check it again in the editor.";
     CopyResult => "Скопировать результат", "Copy result";
     ResultCopied => "Результат скопирован", "Result copied";
     SpellingNoErrors => "Ошибок не найдено.", "No spelling errors found.";

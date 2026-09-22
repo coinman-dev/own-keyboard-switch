@@ -1066,6 +1066,7 @@ fn improvement_never_uses_an_older_word_or_another_input_location() {
                 h.events
                     .extend(h.processor.handle_input(InputEvent::MouseButton {
                         time: Instant::now(),
+                        in_own_window: false,
                     }));
             }
         }
@@ -1712,6 +1713,7 @@ fn mouse_click_and_ctrl_combos_reset_the_word() {
     h.events
         .extend(h.processor.handle_input(InputEvent::MouseButton {
             time: Instant::now(),
+            in_own_window: false,
         }));
     h.type_as("tn ", Lang::En);
     assert_eq!(h.text(), "ghbdtn ");
@@ -2228,6 +2230,196 @@ fn auto_spelling_replaces_only_the_current_space_terminated_word() {
     assert_eq!(h.text(), "хочешь ещё");
 }
 
+#[test]
+fn spelling_choice_restores_its_editor_after_the_popup_was_used() {
+    for gated in [false, true] {
+        let mut h = Harness::with_config(
+            Lang::Ru,
+            config_with(|config| config.spellcheck.check_typed_words = true),
+        );
+        if gated {
+            h.enable_gate();
+        }
+        h.type_as("хочеш ", Lang::Ru);
+        let target = h
+            .events
+            .iter()
+            .find_map(|event| match event {
+                Event::CheckSpelling {
+                    text,
+                    target: Some(target),
+                    ..
+                } if text == "хочеш" => Some(*target),
+                _ => None,
+            })
+            .expect("finished word has an input target");
+
+        // Windows delivers the hook event before activating the clicked popup.
+        h.processor.handle_input(InputEvent::MouseButton {
+            time: Instant::now(),
+            in_own_window: true,
+        });
+        h.desktop.lock().window_pid = std::process::id();
+        h.processor
+            .handle_focus(&okbs_platform::FocusEvent::WindowChanged(Some(
+                WindowInfo {
+                    pid: Some(std::process::id()),
+                    executable: None,
+                    title: Some("Possible spelling error".into()),
+                    app_id: None,
+                },
+            )));
+        h.processor.handle_input(InputEvent::MouseButton {
+            time: Instant::now(),
+            in_own_window: true,
+        });
+
+        // Hiding the popup returns foreground focus before the controller has
+        // forwarded its replacement command to the engine.
+        h.desktop.lock().window_pid = target.window as u32;
+        h.processor
+            .handle_focus(&okbs_platform::FocusEvent::WindowChanged(Some(
+                WindowInfo {
+                    pid: Some(target.window as u32),
+                    executable: None,
+                    title: Some("Document editor".into()),
+                    app_id: None,
+                },
+            )));
+
+        let events = h
+            .processor
+            .correct_typed_spelling(target, "хочеш", "хочешь");
+        assert!(matches!(events.as_slice(), [Event::SpellingCorrected]));
+        assert_eq!(h.text(), "хочешь ");
+        assert_eq!(h.desktop.lock().window_pid, target.window as u32);
+    }
+}
+
+#[test]
+fn spelling_choice_rejects_edits_after_the_checked_word() {
+    for gated in [false, true] {
+        for action in [
+            PhysKey::KeyA,
+            PhysKey::Space,
+            PhysKey::Enter,
+            PhysKey::ArrowLeft,
+        ] {
+            let mut h = Harness::with_config(
+                Lang::Ru,
+                config_with(|config| config.spellcheck.check_typed_words = true),
+            );
+            if gated {
+                h.enable_gate();
+            }
+            h.type_as("хочеш ", Lang::Ru);
+            let target = h
+                .events
+                .iter()
+                .find_map(|event| match event {
+                    Event::CheckSpelling { target, .. } => *target,
+                    _ => None,
+                })
+                .expect("spelling target");
+            h.tap(action);
+            let before = h.text();
+            let injected = h.desktop.lock().injected;
+            assert!(
+                h.processor
+                    .correct_typed_spelling(target, "хочеш", "хочешь")
+                    .is_empty()
+            );
+            assert_eq!(h.text(), before);
+            assert_eq!(h.desktop.lock().injected, injected);
+        }
+    }
+}
+
+#[test]
+fn spelling_click_back_into_editor_invalidates_before_activation() {
+    let mut h = Harness::with_config(
+        Lang::Ru,
+        config_with(|config| config.spellcheck.check_typed_words = true),
+    );
+    h.enable_gate();
+    h.type_as("хочеш ", Lang::Ru);
+    let target = h
+        .events
+        .iter()
+        .find_map(|event| match event {
+            Event::CheckSpelling { target, .. } => *target,
+            _ => None,
+        })
+        .expect("spelling target");
+    h.desktop.lock().window_pid = std::process::id();
+    h.processor.handle_input(InputEvent::MouseButton {
+        time: Instant::now(),
+        in_own_window: false,
+    });
+    let events = crate::handle_command(
+        &mut h.processor,
+        crate::Command::ReplaceTypedSpelling {
+            request_id: 7,
+            target,
+            original: "хочеш".into(),
+            corrected: "хочешь".into(),
+        },
+    );
+    assert_eq!(
+        events,
+        vec![Event::SpellingReplacementFinished {
+            request_id: 7,
+            success: false
+        }]
+    );
+    assert_eq!(h.text(), "хочеш ");
+    assert_eq!(h.desktop.lock().window_pid, std::process::id());
+}
+
+#[test]
+fn explicit_spelling_acknowledges_after_restoring_editor_and_pasting() {
+    let mut h = Harness::with_config(
+        Lang::Ru,
+        config_with(|config| config.spellcheck.check_typed_words = true),
+    );
+    h.enable_gate();
+    h.type_as("хочеш ", Lang::Ru);
+    let target = h
+        .events
+        .iter()
+        .find_map(|event| match event {
+            Event::CheckSpelling { target, .. } => *target,
+            _ => None,
+        })
+        .expect("spelling target");
+    h.processor.handle_input(InputEvent::MouseButton {
+        time: Instant::now(),
+        in_own_window: true,
+    });
+    h.desktop.lock().window_pid = std::process::id();
+    let events = crate::handle_command(
+        &mut h.processor,
+        crate::Command::ReplaceTypedSpelling {
+            request_id: 9,
+            target,
+            original: "хочеш".into(),
+            corrected: "хочешь".into(),
+        },
+    );
+    assert_eq!(
+        events,
+        vec![
+            Event::SpellingCorrected,
+            Event::SpellingReplacementFinished {
+                request_id: 9,
+                success: true
+            }
+        ]
+    );
+    assert_eq!(h.text(), "хочешь ");
+    assert_eq!(h.desktop.lock().window_pid, target.window as u32);
+}
+
 fn add_selection_config() -> Config {
     config_with(|c| {
         c.hotkeys.add_selection_to_autoreplace =
@@ -2605,6 +2797,7 @@ fn a_click_in_the_same_control_invalidates_delayed_replacement() {
     let confirm = h.source_event(PhysKey::Enter, true, false, Instant::now());
     let click = InputEvent::MouseButton {
         time: Instant::now(),
+        in_own_window: false,
     };
     h.gate.as_ref().unwrap().capture(click, None, None);
     h.desktop.lock().caret = Some(0); // Same HWND, different insertion point.
@@ -2730,6 +2923,7 @@ fn tray_insertion_uses_the_editor_at_the_click_even_before_any_typing() {
     h.gate.as_ref().unwrap().capture(
         InputEvent::MouseButton {
             time: Instant::now(),
+            in_own_window: false,
         },
         None,
         Some(InputTarget {

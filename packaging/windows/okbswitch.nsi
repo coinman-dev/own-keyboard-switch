@@ -447,12 +447,12 @@ Section "!${NAME}" SecMain
     ; let any account replace what the next administrator runs. Without this
     ; startup reports an error rather than creating data elsewhere.
     CreateDirectory "$INSTDIR\data"
-    CreateDirectory "$INSTDIR\log"
+    CreateDirectory "$INSTDIR\Logs"
     ${If} $MultiUser.InstallMode == "AllUsers"
         DetailPrint "$(GrantingLog)"
         nsExec::Exec '"$SYSDIR\icacls.exe" "$INSTDIR\data" /grant *S-1-5-32-545:(OI)(CI)M'
         Pop $0
-        nsExec::Exec '"$SYSDIR\icacls.exe" "$INSTDIR\log" /grant *S-1-5-32-545:(OI)(CI)M'
+        nsExec::Exec '"$SYSDIR\icacls.exe" "$INSTDIR\Logs" /grant *S-1-5-32-545:(OI)(CI)M'
         Pop $0
     ${EndIf}
 
@@ -526,6 +526,7 @@ Section "Uninstall"
     Delete "$INSTDIR\DICTIONARY-LICENSES.txt"
     Delete "$INSTDIR\THIRD-PARTY-NOTICES.txt"
     RMDir /r "$INSTDIR\log"
+    RMDir /r "$INSTDIR\Logs"
     Delete "$INSTDIR\data\${APP_ID}.lock"
 
     DeleteRegKey SHCTX "${UNINSTALL_KEY}"

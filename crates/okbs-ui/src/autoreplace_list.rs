@@ -195,8 +195,7 @@ impl ListView {
                 self.choose(ui.ctx());
             }
         }
-        egui::Frame::central_panel(ui.style()).show(ui, |ui| {
-            crate::settings::content_style(ui);
+        crate::appearance::panel(ui, |ui| {
             let footer_height =
                 ui.spacing().interact_size.y + ui.text_style_height(&egui::TextStyle::Small) + 24.0;
             let list_height = (ui.available_height() - footer_height).max(0.0);
@@ -236,14 +235,14 @@ impl ListView {
                 if ui
                     .add_enabled(
                         self.config.settings.enabled && self.selected_index.is_some(),
-                        crate::settings::action_button(&self.config.labels.insert),
+                        crate::appearance::action_button(&self.config.labels.insert),
                     )
                     .clicked()
                 {
                     self.choose(ui.ctx());
                 }
                 if ui
-                    .add(crate::settings::action_button(&self.config.labels.close))
+                    .add(crate::appearance::action_button(&self.config.labels.close))
                     .clicked()
                 {
                     self.close(ui.ctx());

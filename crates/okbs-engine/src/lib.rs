@@ -41,6 +41,13 @@ pub enum Command {
         original: String,
         corrected: String,
     },
+    /// An explicit popup replacement, acknowledged before the popup is hidden.
+    ReplaceTypedSpelling {
+        request_id: u64,
+        target: InputTarget,
+        original: String,
+        corrected: String,
+    },
     /// Insert the chosen, still-configured entry into its original application.
     InsertAutoreplace {
         item: AutoReplaceItem,
@@ -156,6 +163,8 @@ pub enum Event {
     Suspicious,
     /// A completed word was safely replaced by the spelling auto mode.
     SpellingCorrected,
+    /// Result for one explicit popup action; automatic corrections do not emit it.
+    SpellingReplacementFinished { request_id: u64, success: bool },
     /// The user undid conversions of a word several times: offer a rule.
     SuggestRule(Rule),
     /// Selected text to prefill an autoreplace entry; never log the payload.
@@ -290,6 +299,20 @@ fn handle_command(processor: &mut Processor, command: Command) -> Vec<Event> {
             original,
             corrected,
         } => processor.correct_typed_spelling(target, &original, &corrected),
+        Command::ReplaceTypedSpelling {
+            request_id,
+            target,
+            original,
+            corrected,
+        } => {
+            let mut events = processor.correct_typed_spelling(target, &original, &corrected);
+            let success = events.contains(&Event::SpellingCorrected);
+            events.push(Event::SpellingReplacementFinished {
+                request_id,
+                success,
+            });
+            events
+        }
         Command::InsertAutoreplace { item, target } => processor.insert_autoreplace(item, target),
         Command::InsertText { text, target } => processor.insert_text(&text, target),
         Command::AutoreplaceList { toggle } => processor.autoreplace_list(toggle),

@@ -7,13 +7,12 @@ use crate::clipboard_history::{ClipboardHistoryWindow, HistoryRequest, HistoryVi
 use crate::i18n::{Text, tr};
 use crate::settings::{
     LayoutEntry, Section, SettingsEvent, SettingsInput, SettingsView, WINDOW_SIZE, WindowAction,
-    configure_context,
 };
 use crate::text_result::TextResult;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use okbs_core::Lang;
 use okbs_core::config::{Config, Rule, Theme, UiLanguage};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
@@ -124,18 +123,10 @@ struct App {
     spellcheck_result: Option<TextResult>,
     spellcheck_position: Option<[f32; 2]>,
     spellcheck_target: Option<(u64, u64)>,
-    spellcheck_target_active: bool,
+    spellcheck_pending: Option<u64>,
     root: Root,
     list: ListView,
     history: HistoryView,
-}
-
-pub(crate) fn apply_theme(ctx: &egui::Context, theme: Theme) {
-    ctx.set_theme(match theme {
-        Theme::System => egui::ThemePreference::System,
-        Theme::Light => egui::ThemePreference::Light,
-        Theme::Dark => egui::ThemePreference::Dark,
-    });
 }
 
 impl App {
@@ -192,7 +183,7 @@ impl App {
         self.lang = language.resolve(self.system_language);
         if theme != self.theme {
             self.theme = theme;
-            apply_theme(ctx, theme);
+            crate::appearance::apply_theme(ctx, theme);
         }
         let title = if self.settings_visible {
             tr(Text::SettingsWindowTitle, self.lang)
@@ -244,7 +235,7 @@ impl App {
                         self.spellcheck_result = Some(result);
                         self.spellcheck_position = position;
                         self.spellcheck_target = target;
-                        self.spellcheck_target_active = target.is_some();
+                        self.spellcheck_pending = None;
                         ctx.send_viewport_cmd_to(
                             self.spellcheck_id(),
                             egui::ViewportCommand::Visible(true),
@@ -253,17 +244,21 @@ impl App {
                     }
                 }
                 Request::Input(input) => {
+                    if let SettingsInput::SpellingReplacementFinished {
+                        request_id,
+                        success,
+                    } = &input
+                    {
+                        self.finish_spelling_replacement(ctx, *request_id, *success);
+                    }
                     if let SettingsInput::ConfigChanged(config) = &input {
                         self.set_appearance(ctx, config.general.ui_language, config.general.theme);
-                    }
-                    if let SettingsInput::SpellingTargetActive(active) = &input {
-                        self.spellcheck_target_active = *active;
                     }
                     self.view.handle(input);
                 }
                 Request::List(request) => match request {
                     ListRequest::Configure(config) => {
-                        apply_theme(ctx, config.theme);
+                        crate::appearance::apply_theme(ctx, config.theme);
                         self.theme = config.theme;
                         self.list.configure(*config);
                         ctx.send_viewport_cmd_to(
@@ -275,7 +270,7 @@ impl App {
                     ListRequest::Show(list) => {
                         self.list = *list;
                         self.list.set_visible(true);
-                        apply_theme(ctx, self.list.config.theme);
+                        crate::appearance::apply_theme(ctx, self.list.config.theme);
                         self.theme = self.list.config.theme;
                         ctx.send_viewport_cmd_to(
                             self.list_id(),
@@ -301,7 +296,7 @@ impl App {
                 },
                 Request::History(request) => match request {
                     HistoryRequest::Configure(config) => {
-                        apply_theme(ctx, config.theme);
+                        crate::appearance::apply_theme(ctx, config.theme);
                         self.theme = config.theme;
                         self.history.configure(*config);
                         ctx.send_viewport_cmd_to(
@@ -313,7 +308,7 @@ impl App {
                     HistoryRequest::Show(history) => {
                         self.history = *history;
                         self.history.set_visible(true);
-                        apply_theme(ctx, self.history.config.theme);
+                        crate::appearance::apply_theme(ctx, self.history.config.theme);
                         self.theme = self.history.config.theme;
                         for command in [
                             egui::ViewportCommand::Title(self.history.config.labels.title.clone()),
@@ -354,26 +349,74 @@ impl App {
     }
 
     fn spellcheck_ui(&mut self, ui: &mut egui::Ui) {
-        let Some(result) = &mut self.spellcheck_result else { return };
-        if let Some(corrected) = result.ui(ui, self.lang, self.spellcheck_target_active)
-            && let Some(target) = self.spellcheck_target
-        {
-            let _ = self.events.send(SettingsEvent::ReplaceSpelling {
-                target,
-                original: result.original().to_string(),
-                corrected,
-            });
-            self.spellcheck_result = None;
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        let Some(result) = &mut self.spellcheck_result else {
+            return;
+        };
+        let corrected = ui
+            .add_enabled_ui(self.spellcheck_pending.is_none(), |ui| {
+                result.ui(ui, self.lang, self.spellcheck_target.is_some())
+            })
+            .inner;
+        if let Some(corrected) = corrected {
+            self.submit_spelling_replacement(corrected);
             return;
         }
         #[cfg(windows)]
-        let _ = crate::window_position::keep_visible(result.title(self.lang), self.spellcheck_position);
+        let _ =
+            crate::window_position::keep_visible(result.title(self.lang), self.spellcheck_position);
         if ui.ctx().input(|input| input.viewport().close_requested()) {
+            tracing::info!(target: "okbs_spelling", "suggestion popup dismissed");
             self.spellcheck_result = None;
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Visible(false));
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.spellcheck_pending = None;
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
+    }
+
+    fn submit_spelling_replacement(&mut self, corrected: String) {
+        if self.spellcheck_pending.is_some() {
+            return;
+        }
+        let (Some(result), Some(target)) = (&mut self.spellcheck_result, self.spellcheck_target)
+        else {
+            return;
+        };
+        static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
+        let request_id = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
+        tracing::info!(target: "okbs_spelling", request_id, ?target,
+            changed = corrected != result.original(), "replace button clicked; keeping popup until acknowledgement");
+        result.replacement_failed(false);
+        self.spellcheck_pending = Some(request_id);
+        if self
+            .events
+            .send(SettingsEvent::ReplaceSpelling {
+                request_id,
+                target,
+                original: result.original().to_string(),
+                corrected,
+            })
+            .is_err()
+        {
+            self.spellcheck_pending = None;
+            result.replacement_failed(true);
+            tracing::warn!(target: "okbs_spelling", request_id, "popup replacement channel disconnected");
+        }
+    }
+
+    fn finish_spelling_replacement(&mut self, ctx: &egui::Context, request_id: u64, success: bool) {
+        if self.spellcheck_pending != Some(request_id) {
+            return;
+        }
+        self.spellcheck_pending = None;
+        if success {
+            self.spellcheck_result = None;
+            ctx.send_viewport_cmd_to(self.spellcheck_id(), egui::ViewportCommand::Visible(false));
+        } else if let Some(result) = &mut self.spellcheck_result {
+            result.replacement_failed(true);
+        }
+        ctx.request_repaint_of(self.spellcheck_id());
     }
 
     fn settings_ui(&mut self, ui: &mut egui::Ui) {
@@ -467,10 +510,12 @@ impl eframe::App for App {
             .with_resizable(false)
             .with_maximize_button(false)
             .with_always_on_top()
-            .with_active(false)
+            .with_active(true)
             .with_visible(self.spellcheck_result.is_some())
             .with_position(self.spellcheck_position.unwrap_or([24.0, 24.0]));
-        ctx.show_viewport_immediate(self.spellcheck_id(), builder, |ui, _| self.spellcheck_ui(ui));
+        ctx.show_viewport_immediate(self.spellcheck_id(), builder, |ui, _| {
+            self.spellcheck_ui(ui)
+        });
     }
 }
 
@@ -581,8 +626,8 @@ impl SettingsWindow {
         self.shared.wake();
     }
 
-    /// Shows a completed-word spelling result without taking focus away from
-    /// the application where the user is typing.
+    /// Shows an interactive completed-word spelling result. The engine returns
+    /// focus to the original input control before applying the chosen fix.
     pub fn show_text_passive(
         &self,
         config: &Config,
@@ -666,7 +711,14 @@ fn window_thread(
                     initial_spellcheck_target = target;
                     (config, Section::General, None, Vec::new(), None, false)
                 } else {
-                    (config, Section::General, None, Vec::new(), Some((result, position)), false)
+                    (
+                        config,
+                        Section::General,
+                        None,
+                        Vec::new(),
+                        Some((result, position)),
+                        false,
+                    )
                 }
             }
             Request::Input(_) => continue,
@@ -767,8 +819,8 @@ fn window_thread(
             &title,
             options,
             Box::new(move |cc| {
-                configure_context(&cc.egui_ctx);
-                apply_theme(&cc.egui_ctx, theme);
+                crate::appearance::configure(&cc.egui_ctx);
+                crate::appearance::apply_theme(&cc.egui_ctx, theme);
                 cc.egui_ctx.request_repaint();
                 if let Ok(mut slot) = app_shared.context.lock() {
                     *slot = Some(cc.egui_ctx.clone());
@@ -787,7 +839,7 @@ fn window_thread(
                     spellcheck_result: initial_spellcheck,
                     spellcheck_position: initial_spellcheck_position,
                     spellcheck_target: initial_spellcheck_target,
-                    spellcheck_target_active: initial_spellcheck_target.is_some(),
+                    spellcheck_pending: None,
                     root,
                     list,
                     history,
@@ -813,6 +865,92 @@ mod tests {
     use super::*;
 
     #[test]
+    fn spelling_popup_waits_for_matching_success_before_hiding() {
+        let ctx = egui::Context::default();
+        let (tx, requests) = unbounded();
+        let (events, received) = unbounded();
+        let mut app = App {
+            view: SettingsView::new(Config::default(), Section::General, Lang::En),
+            requests,
+            events,
+            shared: Arc::default(),
+            theme: Theme::System,
+            lang: Lang::En,
+            system_language: Lang::En,
+            settings_visible: false,
+            text_result: None,
+            text_result_position: None,
+            spellcheck_result: Some(TextResult::spelling_popup("wrold".into(), Vec::new())),
+            spellcheck_position: None,
+            spellcheck_target: Some((10, 11)),
+            spellcheck_pending: None,
+            root: Root::Settings,
+            list: ListView::default(),
+            history: HistoryView::default(),
+        };
+        app.submit_spelling_replacement("world".into());
+        let SettingsEvent::ReplaceSpelling {
+            request_id: first, ..
+        } = received.try_recv().unwrap()
+        else {
+            panic!("replacement request")
+        };
+        assert!(app.spellcheck_result.is_some());
+        assert_eq!(app.spellcheck_pending, Some(first));
+        app.submit_spelling_replacement("world".into());
+        assert!(
+            received.try_recv().is_err(),
+            "double click must not send twice"
+        );
+        tx.send(Request::Input(SettingsInput::SpellingReplacementFinished {
+            request_id: first,
+            success: false,
+        }))
+        .unwrap();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            app.process_requests(ui.ctx())
+        });
+        output.textures_delta.clear();
+        assert!(
+            app.spellcheck_result.is_some(),
+            "failed replacement must remain visible"
+        );
+        assert_eq!(app.spellcheck_pending, None);
+        app.submit_spelling_replacement("world".into());
+        let SettingsEvent::ReplaceSpelling {
+            request_id: second, ..
+        } = received.try_recv().unwrap()
+        else {
+            panic!("replacement retry")
+        };
+        tx.send(Request::Input(SettingsInput::SpellingReplacementFinished {
+            request_id: first,
+            success: true,
+        }))
+        .unwrap();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            app.process_requests(ui.ctx())
+        });
+        output.textures_delta.clear();
+        assert!(
+            app.spellcheck_result.is_some(),
+            "old acknowledgement must not close a newer request"
+        );
+        assert_eq!(app.spellcheck_pending, Some(second));
+        tx.send(Request::Input(SettingsInput::SpellingReplacementFinished {
+            request_id: second,
+            success: true,
+        }))
+        .unwrap();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            app.process_requests(ui.ctx())
+        });
+        output.textures_delta.clear();
+        assert!(app.spellcheck_result.is_none());
+        assert_eq!(app.spellcheck_pending, None);
+    }
+
+    #[test]
     fn shutdown_is_not_canceled_by_the_normal_hide_on_close_handler() {
         for root in [Root::Settings, Root::List, Root::History] {
             let ctx = egui::Context::default();
@@ -832,7 +970,7 @@ mod tests {
                 spellcheck_result: None,
                 spellcheck_position: None,
                 spellcheck_target: None,
-                spellcheck_target_active: false,
+                spellcheck_pending: None,
                 root,
                 list: ListView::default(),
                 history: HistoryView::default(),
@@ -878,7 +1016,7 @@ mod tests {
             spellcheck_result: None,
             spellcheck_position: None,
             spellcheck_target: None,
-            spellcheck_target_active: false,
+            spellcheck_pending: None,
             root: Root::Settings,
             list: ListView::default(),
             history: HistoryView::default(),

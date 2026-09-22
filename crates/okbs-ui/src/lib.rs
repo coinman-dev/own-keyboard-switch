@@ -8,6 +8,7 @@
 //! * [`tray`]: tray icon with menu (Windows, Linux);
 //! * [`window`]: the settings window thread (Windows, Linux).
 
+mod appearance;
 #[cfg(any(windows, target_os = "linux"))]
 pub mod autoreplace_list;
 mod branding;

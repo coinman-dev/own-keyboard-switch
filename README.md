@@ -68,7 +68,7 @@ All runtime files are stored **inside the program directory**:
 | Settings and autoreplace entries | `data/config.toml` |
 | Persistent clipboard history, if enabled | `data/clipboard-history.txt` |
 | Instance lock | `data/okbswitch.lock` |
-| Daily logs | `log/okbswitch.<date>.log` |
+| Daily logs | `Logs/okbswitch.<date>.log` |
 
 The portable edition needs a writable folder. The all-users installer grants
 write access to `data` and `log` while keeping the executable protected.
