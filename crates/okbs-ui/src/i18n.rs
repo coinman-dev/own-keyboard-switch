@@ -82,10 +82,13 @@ texts! {
     OptScrollLockAsCapsLock => "Использовать Scroll Lock как Caps Lock", "Use Scroll Lock as Caps Lock";
     OptFixLayoutInMenus => "Исправлять раскладку при работе с меню, содержащим горячие клавиши", "Correct layout in menus with access keys";
     OptShowClipboardConversionWindow => "Показывать окно с результатами конвертации буфера", "Show clipboard conversion result window";
-    OptSpellcheckEnabled => "Включить проверку орфографии", "Enable spell checking";
+    OptSpellcheckEnabled => "Проверять выделение / буфер по команде", "Check selection / clipboard on command";
     OptSpellcheckTypedWords => "Проверять завершённые слова при наборе", "Check finished words while typing";
+    SpellcheckTypedMode => "При наборе:", "While typing:";
+    SpellcheckSuggestions => "Показывать варианты", "Show suggestions";
+    SpellcheckAuto => "Автоисправление только однозначных ошибок", "Automatically fix only unambiguous errors";
     OptSpellcheckSelectionFirst => "По горячей клавише проверять выделение, затем буфер обмена", "On hotkey, check selection before clipboard";
-    SpellcheckHint => "Проверка идёт локально по встроенным русскому и английскому словарям. Слова не отправляются в сеть.", "Checking is local with built-in Russian and English dictionaries. Words are never sent over the network.";
+    SpellcheckHint => "Проверка идёт локально. При наборе показываются варианты для завершённого слова; автоматически текст не меняется. Для проверки готового текста скопируйте его и выберите в трее «Буфер обмена → Проверить орфографию». Слова не отправляются в сеть.", "Checking is local. While typing, suggestions are shown for a finished word; text is not changed automatically. To check existing text, copy it and choose Clipboard → Check spelling in the tray. Words are never sent over the network.";
     SpellcheckLanguages => "Проверять языки:", "Languages to check:";
     SpellcheckExtraDictionaries => "Дополнительные словари", "Additional dictionaries";
     SpellcheckDownloadEnGb => "Скачать английский (Великобритания)", "Download English (United Kingdom)";
@@ -232,11 +235,14 @@ texts! {
     SoundEvCaseFixed => "Исправление регистра", "Case corrected";
     SoundEvClipboardConvert => "Конвертация буфера обмена", "Clipboard converted";
     SoundEvError => "Ошибка конвертации", "Conversion error";
+    SoundEvSpellingError => "Найдена орфографическая ошибка", "Spelling error found";
+    SoundEvSpellingCorrected => "Орфографическая ошибка исправлена", "Spelling correction applied";
 
     // Settings window, additions
     InDevelopment => "в разработке", "in development";
     ClipboardResultTitle => "Результат конвертации буфера обмена", "Clipboard conversion result";
     SpellcheckTitle => "Проверка орфографии буфера обмена", "Clipboard spell check";
+    SpellcheckWordTitle => "Возможная орфографическая ошибка", "Possible spelling error";
     CopyResult => "Скопировать результат", "Copy result";
     ResultCopied => "Результат скопирован", "Result copied";
     SpellingNoErrors => "Ошибок не найдено.", "No spelling errors found.";

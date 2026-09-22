@@ -35,6 +35,12 @@ pub enum Command {
     SpellcheckClipboard,
     /// Apply background corrections only if the clipboard still has the checked text.
     CorrectClipboard { original: String, corrected: String },
+    /// Safely replace the last completed typed word after a background spelling check.
+    CorrectTypedSpelling {
+        target: InputTarget,
+        original: String,
+        corrected: String,
+    },
     /// Insert the chosen, still-configured entry into its original application.
     InsertAutoreplace {
         item: AutoReplaceItem,
@@ -143,9 +149,13 @@ pub enum Event {
         settings: okbs_core::config::Spellcheck,
         /// Never silently change text that originated from typing.
         interactive: bool,
+        /// Input element that owned the word when it was completed.
+        target: Option<InputTarget>,
     },
     /// A word looks like a typo in both layouts.
     Suspicious,
+    /// A completed word was safely replaced by the spelling auto mode.
+    SpellingCorrected,
     /// The user undid conversions of a word several times: offer a rule.
     SuggestRule(Rule),
     /// Selected text to prefill an autoreplace entry; never log the payload.
@@ -275,6 +285,11 @@ fn handle_command(processor: &mut Processor, command: Command) -> Vec<Event> {
             original,
             corrected,
         } => processor.correct_clipboard(&original, &corrected),
+        Command::CorrectTypedSpelling {
+            target,
+            original,
+            corrected,
+        } => processor.correct_typed_spelling(target, &original, &corrected),
         Command::InsertAutoreplace { item, target } => processor.insert_autoreplace(item, target),
         Command::InsertText { text, target } => processor.insert_text(&text, target),
         Command::AutoreplaceList { toggle } => processor.autoreplace_list(toggle),

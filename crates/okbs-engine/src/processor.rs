@@ -142,6 +142,7 @@ struct LastWord {
     /// Layout the keys were typed in.
     typed_in: Lang,
     conversion: Option<Conversion>,
+    target: Option<InputTarget>,
 }
 
 impl LastWord {
@@ -1343,6 +1344,33 @@ impl Processor {
         separator_typed: bool,
         out: &mut Vec<Event>,
     ) {
+        let check = !self.word.is_empty()
+            && !self.word_blocked
+            && self.current_lang() == self.word_lang
+            && self.config.spellcheck.enabled
+            && self.config.spellcheck.check_typed_words;
+        self.finish_word_layout(separator, separator_typed, out);
+        if check
+            && self.deferred.is_empty()
+            && !out.iter().any(|event| matches!(event, Event::Error(_)))
+            && !self.focus_blocks()
+            && let Some(last) = &self.last
+        {
+            out.push(Event::CheckSpelling {
+                text: layouts::render(&last.keys, self.detector.keymap(last.shown_in())),
+                settings: self.config.spellcheck.clone(),
+                interactive: true,
+                target: last.target,
+            });
+        }
+    }
+
+    fn finish_word_layout(
+        &mut self,
+        separator: KeyPress,
+        separator_typed: bool,
+        out: &mut Vec<Event>,
+    ) {
         let improve = self.config.rules_options.improve_switching;
         if self.word.is_empty() {
             if improve && separator.key != PhysKey::Space {
@@ -1381,6 +1409,7 @@ impl Processor {
             },
             typed_in,
             conversion: None,
+            target: self.last_input_target,
         });
         if blocked || manual_change_blocks {
             if improve {
@@ -1459,24 +1488,6 @@ impl Processor {
         }
         let final_lang = target.unwrap_or(typed_in);
         let fix = self.case_fix(&keys_of(&self.last), final_lang);
-        // Layout conversion and case repair are decided first. Spell checking
-        // sees that resulting layout, never participates in the decision and
-        // is always interactive, so it cannot replace text on its own.
-        if self.config.spellcheck.enabled
-            && self.config.spellcheck.check_typed_words
-            && !self.focus_blocks()
-        {
-            let text = if target.is_some() {
-                analysis.other.text.clone()
-            } else {
-                analysis.current.text.clone()
-            };
-            out.push(Event::CheckSpelling {
-                text,
-                settings: self.config.spellcheck.clone(),
-                interactive: true,
-            });
-        }
         if target.is_none() && fix.is_none() {
             if autoswitch && analysis.decision == Decision::Suspicious {
                 out.push(Event::Suspicious);
@@ -2026,6 +2037,8 @@ impl Processor {
             Sound::CaseFixed => &events.case_fixed,
             Sound::ClipboardConvert => &events.clipboard_convert,
             Sound::Error => &events.error,
+            Sound::SpellingError => &events.spelling_error,
+            Sound::SpellingCorrected => &events.spelling_corrected,
         };
         if !setting.enabled {
             return;
@@ -2187,7 +2200,7 @@ impl Processor {
 
     /// Snapshot for the spelling worker, which must not block keyboard input.
     pub fn spellcheck_clipboard(&mut self) -> Vec<Event> {
-        if !self.config.spellcheck.enabled {
+        if !self.config.spellcheck.enabled || !self.config.spellcheck.check_on_command {
             return Vec::new();
         }
         let Some(clipboard) = self.backends.clipboard.as_mut() else {
@@ -2198,6 +2211,7 @@ impl Processor {
                 text,
                 settings: self.config.spellcheck.clone(),
                 interactive: false,
+                target: None,
             }],
             Ok(None) => Vec::new(),
             Err(err) => {
@@ -2212,7 +2226,7 @@ impl Processor {
     /// is restored before the background checker starts, so a result can never
     /// overwrite a later copy operation.
     pub fn spellcheck_selection_or_clipboard(&mut self) -> Vec<Event> {
-        if !self.config.spellcheck.enabled {
+        if !self.config.spellcheck.enabled || !self.config.spellcheck.check_on_command {
             return Vec::new();
         }
         if self.config.spellcheck.prefer_selection {
@@ -2223,6 +2237,7 @@ impl Processor {
                         text,
                         settings: self.config.spellcheck.clone(),
                         interactive: false,
+                        target: None,
                     }];
                 }
                 Ok(Some((text, saved))) => self.restore_clipboard(saved, &text),
@@ -2250,6 +2265,46 @@ impl Processor {
         if let Err(err) = result {
             self.fail("cannot write spelling corrections", &err, &mut out);
         }
+        out
+    }
+
+    /// Replaces only the still-current last word. The result of a slow
+    /// spelling query must never alter a word after the user continued typing,
+    /// moved to another control, or pressed Enter.
+    pub fn correct_typed_spelling(
+        &mut self,
+        target: InputTarget,
+        original: &str,
+        corrected: &str,
+    ) -> Vec<Event> {
+        let mut out = Vec::new();
+        if corrected.is_empty()
+            || corrected == original
+            || !self.word.is_empty()
+            || self.focus_blocks()
+            || !self.target_matches(Some(target))
+        {
+            return out;
+        }
+        let Some(last) = self.last.clone() else {
+            return out;
+        };
+        if last.target != Some(target)
+            || !matches!(last.separator.as_slice(), [separator] if separator.key == PhysKey::Space)
+            || layouts::render(&last.keys, self.detector.keymap(last.shown_in())) != original
+        {
+            return out;
+        }
+        self.operation_target = Some(target);
+        let replacement = format!("{corrected} ");
+        let result = self.paste_replacement(&replacement, last.keys.len() + 1, 0);
+        self.operation_target = None;
+        if let Err(err) = result {
+            self.fail("spelling correction failed", &err, &mut out);
+            return out;
+        }
+        self.reset_all();
+        out.push(Event::SpellingCorrected);
         out
     }
 

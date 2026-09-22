@@ -3,7 +3,7 @@
 use crate::clipboard_history::History;
 use crate::settings::Settings;
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use okbs_core::config::Config;
+use okbs_core::config::{Config, TypedSpellcheckMode};
 use okbs_engine::sounds::{self, Sound};
 use okbs_engine::{Command, EngineHandle, Event, TextOp, UiRequest};
 use okbs_platform::{
@@ -14,7 +14,9 @@ use okbs_ui::clipboard_history::{
     ClipboardHistoryConfig, ClipboardHistoryLabels, ClipboardHistoryWindow, HistoryChoice,
 };
 use okbs_ui::icon::{ICON_SIZE, IconState};
-use okbs_ui::settings::{DictionaryState, LayoutEntry, Section, SettingsEvent, SettingsInput, SoundId};
+use okbs_ui::settings::{
+    DictionaryState, LayoutEntry, Section, SettingsEvent, SettingsInput, SoundId,
+};
 use okbs_ui::text_result::TextResult;
 use okbs_ui::tray::{Tray, TrayCommand, TrayState};
 use okbs_ui::window::SettingsWindow;
@@ -30,6 +32,7 @@ struct SpellingJob {
     text: String,
     settings: okbs_core::config::Spellcheck,
     interactive: bool,
+    target: Option<InputTarget>,
 }
 
 struct SpellingResult {
@@ -54,7 +57,7 @@ impl DictionaryProvider {
     }
 
     fn select(&mut self, id: Option<&str>) {
-        if self.selected_english.as_deref() == id {
+        if self.selected_english.as_deref() == id && (id.is_none() || self.english.is_some()) {
             return;
         }
         self.selected_english = id.map(str::to_string);
@@ -62,11 +65,7 @@ impl DictionaryProvider {
     }
 
     fn load(&self, id: &str) -> Option<spellbook::Dictionary> {
-        let directory = crate::dictionaries::package(id)
-            .map(|package| crate::dictionaries::package_dir(&self.root, package))?;
-        let aff = std::fs::read_to_string(directory.join("dictionary.aff")).ok()?;
-        let dic = std::fs::read_to_string(directory.join("dictionary.dic")).ok()?;
-        spellbook::Dictionary::new(&aff, &dic).ok()
+        crate::dictionaries::load(&self.root, crate::dictionaries::package(id)?).ok()
     }
 
     fn dictionary(&self, lang: okbs_core::Lang) -> &spellbook::Dictionary {
@@ -203,6 +202,17 @@ fn cursor_position() -> [f32; 2] {
     #[cfg(not(windows))]
     {
         [24.0, 24.0]
+    }
+}
+
+fn spelling_popup_position() -> Option<[f32; 2]> {
+    #[cfg(windows)]
+    {
+        okbs_platform_windows::focus::foreground_window_position()
+    }
+    #[cfg(not(windows))]
+    {
+        None
     }
 }
 
@@ -496,6 +506,8 @@ impl Controller {
             SoundId::CaseFixed => Sound::CaseFixed,
             SoundId::ClipboardConvert => Sound::ClipboardConvert,
             SoundId::Error => Sound::Error,
+            SoundId::SpellingError => Sound::SpellingError,
+            SoundId::SpellingCorrected => Sound::SpellingCorrected,
         };
         let result = if beep {
             player.beep()
@@ -514,6 +526,30 @@ impl Controller {
             window.send(SettingsInput::ConfigChanged(Box::new(
                 self.settings.config.clone(),
             )));
+        }
+    }
+
+    fn play_configured(&self, sound: SoundId) {
+        let sounds = &self.settings.config.sounds;
+        let event = match sound {
+            SoundId::Autoswitch => &sounds.events.autoswitch,
+            SoundId::ManualConvert => &sounds.events.manual_convert,
+            SoundId::LayoutChanged => &sounds.events.layout_changed,
+            SoundId::Cancel => &sounds.events.cancel,
+            SoundId::Suspicious => &sounds.events.suspicious,
+            SoundId::Autoreplace => &sounds.events.autoreplace,
+            SoundId::CaseFixed => &sounds.events.case_fixed,
+            SoundId::ClipboardConvert => &sounds.events.clipboard_convert,
+            SoundId::Error => &sounds.events.error,
+            SoundId::SpellingError => &sounds.events.spelling_error,
+            SoundId::SpellingCorrected => &sounds.events.spelling_corrected,
+        };
+        if sounds.enabled && event.enabled {
+            self.play(
+                sound,
+                (!event.file.is_empty()).then(|| event.file.clone()),
+                matches!(sounds.mode, okbs_core::config::SoundMode::Beep),
+            );
         }
     }
 
@@ -564,6 +600,7 @@ impl Controller {
                 self.refresh_icon();
             }
             Event::Error(message) => tracing::warn!("{message}"),
+            Event::SpellingCorrected => self.play_configured(SoundId::SpellingCorrected),
             Event::SuggestRule(rule) => {
                 let layouts = self.layout_entries();
                 if let Some(window) = &self.window {
@@ -631,6 +668,7 @@ impl Controller {
                 text,
                 settings,
                 interactive,
+                target,
             } => {
                 self.spelling_id = self.spelling_id.wrapping_add(1);
                 if let Some((worker, _)) = &self.spelling {
@@ -639,6 +677,7 @@ impl Controller {
                         text,
                         settings,
                         interactive,
+                        target,
                     });
                 }
             }
@@ -720,25 +759,23 @@ impl Controller {
                         state: DictionaryState::Downloading,
                     });
                 }
-                std::thread::spawn(move || {
-                    match crate::dictionaries::install(&root, package) {
-                        Ok(()) => {
-                            tracing::info!(package = package.id, "dictionary downloaded");
-                            if let Some(notifier) = notifier {
-                                notifier.send(SettingsInput::DictionaryState {
-                                    id: package.id.into(),
-                                    state: DictionaryState::Available,
-                                });
-                            }
+                std::thread::spawn(move || match crate::dictionaries::install(&root, package) {
+                    Ok(()) => {
+                        tracing::info!(package = package.id, "dictionary downloaded");
+                        if let Some(notifier) = notifier {
+                            notifier.send(SettingsInput::DictionaryState {
+                                id: package.id.into(),
+                                state: DictionaryState::Available,
+                            });
                         }
-                        Err(err) => {
-                            tracing::warn!(package = package.id, "dictionary download failed: {err:#}");
-                            if let Some(notifier) = notifier {
-                                notifier.send(SettingsInput::DictionaryState {
-                                    id: package.id.into(),
-                                    state: DictionaryState::Failed,
-                                });
-                            }
+                    }
+                    Err(err) => {
+                        tracing::warn!(package = package.id, "dictionary download failed: {err:#}");
+                        if let Some(notifier) = notifier {
+                            notifier.send(SettingsInput::DictionaryState {
+                                id: package.id.into(),
+                                state: DictionaryState::Failed,
+                            });
                         }
                     }
                 });
@@ -895,11 +932,45 @@ impl Controller {
                 if result.job.id != self.spelling_id || !self.settings.config.spellcheck.enabled {
                     continue;
                 }
+                if result.job.interactive
+                    && (!self.settings.config.spellcheck.check_typed_words
+                        || result.misspellings.is_empty())
+                {
+                    continue;
+                }
+                if result.job.interactive
+                    && result.job.settings.typed_mode == TypedSpellcheckMode::Auto
+                {
+                    let candidate = (result.misspellings.len() == 1)
+                        .then(|| result.misspellings[0].suggestions.as_slice())
+                        .and_then(|suggestions| {
+                            (suggestions.len() == 1).then(|| suggestions[0].clone())
+                        });
+                    if let (Some(target), Some(corrected)) = (result.job.target, candidate) {
+                        self.engine.send(Command::CorrectTypedSpelling {
+                            target,
+                            original: result.job.text,
+                            corrected,
+                        });
+                    }
+                    continue;
+                }
+                if result.job.interactive {
+                    self.play_configured(SoundId::SpellingError);
+                }
                 if result.job.interactive || result.job.settings.show_result_window {
                     if let Some(window) = &self.window {
-                        let view = TextResult::spelling(result.job.text, result.misspellings);
+                        let view = if result.job.interactive {
+                            TextResult::spelling_popup(result.job.text, result.misspellings)
+                        } else {
+                            TextResult::spelling(result.job.text, result.misspellings)
+                        };
                         if result.job.interactive {
-                            window.show_text_passive(&self.settings.config, view);
+                            window.show_text_passive(
+                                &self.settings.config,
+                                view,
+                                spelling_popup_position(),
+                            );
                         } else {
                             window.show_text(&self.settings.config, view);
                         }
@@ -1008,6 +1079,7 @@ mod tests {
                 id: 17,
                 text: "Превет, wrold!".into(),
                 interactive: false,
+                target: None,
                 settings: okbs_core::config::Spellcheck {
                     languages: vec![okbs_core::Lang::En],
                     max_suggestions: 3,

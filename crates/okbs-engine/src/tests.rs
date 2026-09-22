@@ -2140,7 +2140,7 @@ fn spelling_requests_snapshot_options_and_preserve_newer_clipboard() {
     let mut h = Harness::new(Lang::En);
     h.desktop.lock().clipboard = Some("wrold".into());
     assert!(matches!(h.processor.spellcheck_clipboard().as_slice(),
-        [Event::CheckSpelling { text, settings, interactive: false }] if text == "wrold" && settings.languages == Lang::ALL));
+        [Event::CheckSpelling { text, settings, interactive: false, target: None }] if text == "wrold" && settings.languages == Lang::ALL));
     h.processor.correct_clipboard("wrold", "world");
     assert_eq!(h.desktop.lock().clipboard.as_deref(), Some("world"));
     h.desktop.lock().clipboard = Some("newer".into());
@@ -2150,6 +2150,82 @@ fn spelling_requests_snapshot_options_and_preserve_newer_clipboard() {
     config.spellcheck.enabled = false;
     h.processor.apply_config(config);
     assert!(h.processor.spellcheck_clipboard().is_empty());
+}
+
+#[test]
+fn typed_spelling_uses_final_text_and_respects_enabled_modes() {
+    for gate in [false, true] {
+        for autoswitch in [false, true] {
+            for enabled in [false, true] {
+                let mut config = Config::default();
+                config.general.autoswitch = autoswitch;
+                config.spellcheck.check_typed_words = enabled;
+                let mut h = Harness::with_config(Lang::Ru, config);
+                if gate {
+                    h.enable_gate();
+                }
+                h.type_as("хочеш ", Lang::Ru);
+                assert_eq!(h.text(), "хочеш ");
+                let requests: Vec<_> = h
+                    .events
+                    .iter()
+                    .filter_map(|event| match event {
+                        Event::CheckSpelling {
+                            text,
+                            interactive: true,
+                            ..
+                        } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(requests, if enabled { vec!["хочеш"] } else { vec![] });
+            }
+        }
+        let mut config = Config::default();
+        config.spellcheck.check_typed_words = true;
+        let mut h = Harness::with_config(Lang::En, config);
+        if gate {
+            h.enable_gate();
+        }
+        h.type_as("привет ", Lang::Ru);
+        assert_eq!(h.text(), "привет ");
+        assert!(h.events.iter().any(|event| matches!(event,
+            Event::CheckSpelling { text, .. } if text == "привет")));
+    }
+}
+
+#[test]
+fn auto_spelling_replaces_only_the_current_space_terminated_word() {
+    let mut h = Harness::with_config(
+        Lang::Ru,
+        config_with(|config| config.spellcheck.check_typed_words = true),
+    );
+    h.type_as("хочеш ", Lang::Ru);
+    let target = h
+        .events
+        .iter()
+        .find_map(|event| match event {
+            Event::CheckSpelling {
+                text,
+                target: Some(target),
+                ..
+            } if text == "хочеш" => Some(*target),
+            _ => None,
+        })
+        .expect("finished word has an input target");
+    let events = h
+        .processor
+        .correct_typed_spelling(target, "хочеш", "хочешь");
+    assert!(matches!(events.as_slice(), [Event::SpellingCorrected]));
+    assert_eq!(h.text(), "хочешь ");
+
+    h.type_as("ещё", Lang::Ru);
+    assert!(
+        h.processor
+            .correct_typed_spelling(target, "хочеш", "хочешь")
+            .is_empty()
+    );
+    assert_eq!(h.text(), "хочешь ещё");
 }
 
 fn add_selection_config() -> Config {

@@ -33,7 +33,7 @@ pub const EN_GB: Package = Package {
     id: "en-gb",
     language: "en",
     label: "English (United Kingdom)",
-    license: "SCOWL / permissive licenses; see LibreOffice dictionary notice",
+    license: "LGPL; see README_en_GB.txt",
     aff_path: "en/en_GB.aff",
     aff_sha256: "0fd6ed120ef28957847d98ba5149b117e27116cf81b5aa36208453f6755a36fd",
     dic_path: "en/en_GB.dic",
@@ -54,35 +54,60 @@ pub fn package_dir(root: &Path, package: Package) -> PathBuf {
 
 /// Whether a fully downloaded, parseable package is present.
 pub fn is_installed(root: &Path, package: Package) -> bool {
+    load(root, package).is_ok()
+}
+
+pub fn load(root: &Path, package: Package) -> Result<spellbook::Dictionary> {
     let directory = package_dir(root, package);
-    let (Ok(aff), Ok(dic)) = (
-        fs::read_to_string(directory.join("dictionary.aff")),
-        fs::read_to_string(directory.join("dictionary.dic")),
-    ) else {
-        return false;
-    };
-    spellbook::Dictionary::new(&aff, &dic).is_ok()
+    let aff = fs::read(directory.join("dictionary.aff"))?;
+    let dic = fs::read(directory.join("dictionary.dic"))?;
+    parse_checked(package, &aff, &dic)
+}
+
+fn checked_text<'a>(data: &'a [u8], expected: &str) -> Result<&'a str> {
+    if format!("{:x}", Sha256::digest(data)) != expected {
+        bail!("dictionary SHA-256 mismatch");
+    }
+    Ok(std::str::from_utf8(data)?.trim_start_matches('\u{feff}'))
+}
+
+fn parse_checked(package: Package, aff: &[u8], dic: &[u8]) -> Result<spellbook::Dictionary> {
+    let aff = checked_text(aff, package.aff_sha256)?;
+    let dic = checked_text(dic, package.dic_sha256)?;
+    spellbook::Dictionary::new(aff, dic)
+        .map_err(|err| anyhow::anyhow!("cannot parse Hunspell dictionary: {err}"))
 }
 
 /// Downloads, hashes and atomically installs a package.
 pub fn install(root: &Path, package: Package) -> Result<()> {
+    let aff = fetch(package.aff_path)?;
+    let dic = fetch(package.dic_path)?;
+    parse_checked(package, &aff, &dic)?;
+    let notice = fetch("en/README_en_GB.txt")?;
+    checked_text(
+        &notice,
+        "18b5833de60a52ffcb6e5b6b5048bb5a5d910acfecd5b096985b77058223880c",
+    )?;
+    // Validate the complete pair before touching installed files. Since this
+    // catalogue is pinned, existing verified files are byte-for-byte identical.
     let directory = package_dir(root, package);
-    fs::create_dir_all(&directory)
-        .with_context(|| format!("cannot create {}", directory.display()))?;
-    fetch_checked(
-        package.aff_path,
-        package.aff_sha256,
-        &directory.join("dictionary.aff"),
-    )?;
-    fetch_checked(
-        package.dic_path,
-        package.dic_sha256,
-        &directory.join("dictionary.dic"),
-    )?;
+    fs::create_dir_all(&directory)?;
+    for (name, data) in [
+        ("README_en_GB.txt", &notice),
+        ("dictionary.aff", &aff),
+        ("dictionary.dic", &dic),
+    ] {
+        let mut temporary = tempfile::NamedTempFile::new_in(&directory)?;
+        temporary.write_all(data)?;
+        temporary.as_file().sync_all()?;
+        temporary
+            .persist(directory.join(name))
+            .map_err(|err| err.error)?;
+    }
     Ok(())
 }
 
-fn fetch_checked(source: &str, expected_hash: &str, target: &Path) -> Result<()> {
+fn fetch(source: &str) -> Result<Vec<u8>> {
     let url = format!(
         "https://raw.githubusercontent.com/LibreOffice/dictionaries/{LIBREOFFICE_COMMIT}/{source}"
     );
@@ -93,33 +118,42 @@ fn fetch_checked(source: &str, expected_hash: &str, target: &Path) -> Result<()>
         .body_mut()
         .read_to_vec()
         .with_context(|| format!("cannot read dictionary file {source}"))?;
-    let actual = format!("{:x}", Sha256::digest(&data));
-    if actual != expected_hash {
-        bail!("dictionary file {source} did not match its published SHA-256");
-    }
-    let text = std::str::from_utf8(&data)
-        .with_context(|| format!("dictionary file {source} is not UTF-8"))?;
-    if source.ends_with(".aff") && !text.lines().any(|line| line.starts_with("SET ")) {
-        bail!("dictionary affix file {source} is not a Hunspell UTF-8 file");
-    }
-    if source.ends_with(".dic")
-        && !text
-            .lines()
-            .next()
-            .is_some_and(|line| line.trim().parse::<usize>().is_ok())
-    {
-        bail!("dictionary word list {source} is not a Hunspell dictionary");
-    }
-    let parent = target.parent().context("dictionary target has no parent")?;
-    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-    temporary.write_all(&data)?;
-    temporary.persist(target).map_err(|err| err.error)?;
-    Ok(())
+    Ok(data)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bom_and_comments_are_valid_but_corruption_is_not() {
+        let aff = "\u{feff}# header\nSET UTF-8\n".as_bytes();
+        let dic = "\u{feff}1\ncolour\n".as_bytes();
+        let aff_hash = format!("{:x}", Sha256::digest(aff));
+        let dic_hash = format!("{:x}", Sha256::digest(dic));
+        let dictionary = spellbook::Dictionary::new(
+            checked_text(aff, &aff_hash).unwrap(),
+            checked_text(dic, &dic_hash).unwrap(),
+        )
+        .unwrap();
+        assert!(dictionary.check("colour"));
+        assert!(checked_text(b"corrupt", &dic_hash).is_err());
+    }
+
+    #[test]
+    #[ignore = "downloads the pinned public dictionary into a temporary directory"]
+    fn real_download_install_reload_and_repair() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(!is_installed(root.path(), EN_GB));
+        install(root.path(), EN_GB).unwrap();
+        assert!(is_installed(root.path(), EN_GB));
+        assert!(load(root.path(), EN_GB).unwrap().check("colour"));
+        let file = package_dir(root.path(), EN_GB).join("dictionary.dic");
+        fs::write(&file, "1\ncorrupt\n").unwrap();
+        assert!(!is_installed(root.path(), EN_GB));
+        install(root.path(), EN_GB).unwrap();
+        assert!(load(root.path(), EN_GB).unwrap().check("colour"));
+    }
 
     #[test]
     fn catalogue_has_unique_safe_package_locations() {

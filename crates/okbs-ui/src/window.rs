@@ -24,7 +24,7 @@ pub(crate) enum Request {
         Option<SettingsInput>,
         Vec<LayoutEntry>,
     ),
-    OpenText(Box<Config>, TextResult, bool),
+    OpenText(Box<Config>, TextResult, bool, Option<[f32; 2]>),
     Input(SettingsInput),
     List(ListRequest),
     History(HistoryRequest),
@@ -43,11 +43,19 @@ pub(crate) enum Root {
 #[derive(Default)]
 pub(crate) struct Shared {
     context: Mutex<Option<egui::Context>>,
+    dictionary_state: Mutex<Option<SettingsInput>>,
     open: AtomicBool,
     shutdown: AtomicBool,
 }
 
 impl Shared {
+    fn restore_dictionary_state(&self, view: &mut SettingsView) {
+        if let Ok(state) = self.dictionary_state.lock()
+            && let Some(input) = state.clone()
+        {
+            view.handle(input);
+        }
+    }
     pub(crate) fn wake(&self) {
         if let Ok(slot) = self.context.lock()
             && let Some(ctx) = slot.as_ref()
@@ -78,6 +86,11 @@ impl std::fmt::Debug for SettingsNotifier {
 
 impl SettingsNotifier {
     pub fn send(&self, input: SettingsInput) {
+        if matches!(input, SettingsInput::DictionaryState { .. })
+            && let Ok(mut state) = self.shared.dictionary_state.lock()
+        {
+            *state = Some(input.clone());
+        }
         let _ = self.requests.send(Request::Input(input));
         self.shared.wake();
     }
@@ -101,6 +114,7 @@ struct App {
     system_language: Lang,
     settings_visible: bool,
     text_result: Option<TextResult>,
+    text_result_position: Option<[f32; 2]>,
     root: Root,
     list: ListView,
     history: HistoryView,
@@ -150,13 +164,19 @@ impl App {
         ctx.request_repaint();
     }
 
-    fn show_settings_passive(&self, ctx: &egui::Context) {
+    fn show_settings_passive(&self, ctx: &egui::Context, position: Option<[f32; 2]>) {
         self.shared.open.store(true, Ordering::SeqCst);
         for command in [
             egui::ViewportCommand::Visible(true),
             egui::ViewportCommand::Minimized(false),
         ] {
             ctx.send_viewport_cmd_to(self.settings_id(), command);
+        }
+        if let Some(position) = position {
+            ctx.send_viewport_cmd_to(
+                self.settings_id(),
+                egui::ViewportCommand::OuterPosition(position.into()),
+            );
         }
         ctx.request_repaint();
     }
@@ -206,6 +226,7 @@ impl App {
                     let (language, theme) = (config.general.ui_language, config.general.theme);
                     if !self.settings_visible {
                         self.view = SettingsView::new(*config, section, self.system_language);
+                        self.shared.restore_dictionary_state(&mut self.view);
                     }
                     self.settings_visible = true;
                     self.view.open_section(section);
@@ -216,13 +237,14 @@ impl App {
                         self.view.handle(input);
                     }
                 }
-                Request::OpenText(config, result, focus) => {
+                Request::OpenText(config, result, focus, position) => {
                     self.text_result = Some(result);
+                    self.text_result_position = position;
                     self.set_appearance(ctx, config.general.ui_language, config.general.theme);
                     if focus {
                         self.show_settings(ctx);
                     } else {
-                        self.show_settings_passive(ctx);
+                        self.show_settings_passive(ctx, position);
                     }
                 }
                 Request::Input(input) => {
@@ -349,6 +371,13 @@ impl App {
                 }
             } else {
                 result.ui(ui, self.lang);
+                #[cfg(windows)]
+                if result.is_compact() {
+                    let _ = crate::window_position::keep_visible(
+                        result.title(self.lang),
+                        self.text_result_position,
+                    );
+                }
             }
         }
         for event in events {
@@ -496,18 +525,29 @@ impl SettingsWindow {
 
     /// Opens a clipboard result, preserving any settings draft already open.
     pub fn show_text(&self, config: &Config, result: TextResult) {
-        let _ = self
-            .requests
-            .send(Request::OpenText(Box::new(config.clone()), result, true));
+        let _ = self.requests.send(Request::OpenText(
+            Box::new(config.clone()),
+            result,
+            true,
+            None,
+        ));
         self.shared.wake();
     }
 
     /// Shows a completed-word spelling result without taking focus away from
     /// the application where the user is typing.
-    pub fn show_text_passive(&self, config: &Config, result: TextResult) {
-        let _ = self
-            .requests
-            .send(Request::OpenText(Box::new(config.clone()), result, false));
+    pub fn show_text_passive(
+        &self,
+        config: &Config,
+        result: TextResult,
+        position: Option<[f32; 2]>,
+    ) {
+        let _ = self.requests.send(Request::OpenText(
+            Box::new(config.clone()),
+            result,
+            false,
+            position,
+        ));
         self.shared.wake();
     }
 }
@@ -560,18 +600,19 @@ fn window_thread(
     system_language: Lang,
 ) {
     while let Ok(request) = requests.recv() {
+        let passive = matches!(&request, Request::OpenText(_, _, false, _));
         let mut initial_list = None;
         let mut initial_history = None;
         let (config, section, input, layouts, text_result, settings_visible) = match request {
             Request::Open(config, section, input, layouts) => {
                 (config, section, input, layouts, None, true)
             }
-            Request::OpenText(config, result, _) => (
+            Request::OpenText(config, result, _, position) => (
                 config,
                 Section::General,
                 None,
                 Vec::new(),
-                Some(result),
+                Some((result, position)),
                 false,
             ),
             Request::Input(_) => continue,
@@ -608,6 +649,7 @@ fn window_thread(
         let lang = config.general.ui_language.resolve(system_language);
         let theme = config.general.theme;
         let mut view = SettingsView::new(*config, section, system_language);
+        shared.restore_dictionary_state(&mut view);
         view.set_layouts(layouts);
         if let Some(input) = input {
             view.handle(input);
@@ -627,13 +669,30 @@ fn window_thread(
         let app_shared = shared.clone();
         let settings_title = text_result
             .as_ref()
-            .map_or(tr(Text::SettingsWindowTitle, lang), |r| r.title(lang));
+            .map_or(tr(Text::SettingsWindowTitle, lang), |(r, _)| r.title(lang));
         let title = match root {
             Root::List => list.config.labels.title.clone(),
             Root::History => history.config.labels.title.clone(),
             Root::Settings => settings_title.into(),
         };
         let mut options = native_options(&title);
+        if let Some((result, position)) = &text_result
+            && result.is_compact()
+        {
+            options.viewport = egui::ViewportBuilder::default()
+                .with_title(result.title(lang))
+                .with_icon(crate::branding::icon())
+                .with_inner_size([390.0, 160.0])
+                .with_min_inner_size([300.0, 120.0])
+                .with_max_inner_size([520.0, 220.0])
+                .with_resizable(false)
+                .with_maximize_button(false)
+                .with_active(false)
+                .with_position(position.unwrap_or([24.0, 24.0]));
+        }
+        if passive {
+            options.viewport = options.viewport.with_active(false);
+        }
         match root {
             Root::List => {
                 options.viewport = list.builder().with_visible(true);
@@ -645,6 +704,10 @@ fn window_thread(
             }
             Root::Settings => {}
         }
+        let (text_result, text_result_position) = match text_result {
+            Some((result, position)) => (Some(result), position),
+            None => (None, None),
+        };
         let result = eframe::run_native(
             &title,
             options,
@@ -665,6 +728,7 @@ fn window_thread(
                     system_language,
                     settings_visible,
                     text_result,
+                    text_result_position,
                     root,
                     list,
                     history,
@@ -705,6 +769,7 @@ mod tests {
                 system_language: Lang::En,
                 settings_visible: true,
                 text_result: None,
+                text_result_position: None,
                 root,
                 list: ListView::default(),
                 history: HistoryView::default(),
@@ -746,6 +811,7 @@ mod tests {
             system_language: Lang::Ru,
             settings_visible: true,
             text_result: Some(TextResult::conversion("test".into())),
+            text_result_position: None,
             root: Root::Settings,
             list: ListView::default(),
             history: HistoryView::default(),

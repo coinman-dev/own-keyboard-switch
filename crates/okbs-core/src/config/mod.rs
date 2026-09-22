@@ -663,6 +663,10 @@ pub struct SoundEvents {
     pub clipboard_convert: SoundEvent,
     /// Conversion impossible.
     pub error: SoundEvent,
+    /// A completed word was not found in the active spelling dictionary.
+    pub spelling_error: SoundEvent,
+    /// A spelling replacement was successfully applied.
+    pub spelling_corrected: SoundEvent,
 }
 
 impl Default for SoundEvents {
@@ -677,6 +681,8 @@ impl Default for SoundEvents {
             case_fixed: SoundEvent::on(),
             clipboard_convert: SoundEvent::on(),
             error: SoundEvent::on(),
+            spelling_error: SoundEvent::off(),
+            spelling_corrected: SoundEvent::on(),
         }
     }
 }
@@ -723,13 +729,28 @@ impl Default for Clipboard {
 }
 
 /// Проверка орфографии.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TypedSpellcheckMode {
+    /// Show a compact suggestion popup and wait for an explicit choice.
+    #[default]
+    Suggestions,
+    /// Replace only a uniquely suggested, still-current word.
+    Auto,
+}
+
+/// Проверка орфографии.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Spellcheck {
     /// Master switch.
     pub enabled: bool,
+    /// Check selection or clipboard only after an explicit command.
+    pub check_on_command: bool,
     /// Check a finished word after layout switching and autoreplace have run.
     pub check_typed_words: bool,
+    /// Behaviour after a typo is found while typing.
+    pub typed_mode: TypedSpellcheckMode,
     /// A spellcheck command uses selected text before falling back to clipboard text.
     pub prefer_selection: bool,
     /// Identifier of an optional downloaded English dictionary, if installed.
@@ -748,7 +769,9 @@ impl Default for Spellcheck {
     fn default() -> Self {
         Self {
             enabled: true,
+            check_on_command: true,
             check_typed_words: false,
+            typed_mode: TypedSpellcheckMode::Suggestions,
             prefer_selection: true,
             english_dictionary: None,
             custom_words: Vec::new(),

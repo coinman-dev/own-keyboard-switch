@@ -23,6 +23,10 @@ pub enum Sound {
     ClipboardConvert,
     /// Operation failed.
     Error,
+    /// A spelling error was found.
+    SpellingError,
+    /// A spelling correction was applied.
+    SpellingCorrected,
 }
 
 const RATE: u32 = 22_050;
@@ -39,6 +43,8 @@ fn melody(sound: Sound) -> &'static [(f32, u32)] {
         Sound::CaseFixed => &[(1568.0, 35)],
         Sound::ClipboardConvert => &[(784.0, 30), (1047.0, 40)],
         Sound::Error => &[(220.0, 60), (0.0, 30), (220.0, 60)],
+        Sound::SpellingError => &[(392.0, 45), (330.0, 70)],
+        Sound::SpellingCorrected => &[(1047.0, 30), (1568.0, 45)],
     }
 }
 
@@ -80,7 +86,7 @@ fn synthesize(sound: Sound) -> Vec<u8> {
 
 /// WAV data (PCM 16-bit mono) of a built-in sound.
 pub fn wav(sound: Sound) -> &'static [u8] {
-    const ALL: [Sound; 9] = [
+    const ALL: [Sound; 11] = [
         Sound::Autoswitch,
         Sound::ManualConvert,
         Sound::LayoutChanged,
@@ -90,6 +96,8 @@ pub fn wav(sound: Sound) -> &'static [u8] {
         Sound::CaseFixed,
         Sound::ClipboardConvert,
         Sound::Error,
+        Sound::SpellingError,
+        Sound::SpellingCorrected,
     ];
     static CACHE: OnceLock<Vec<Vec<u8>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| ALL.iter().map(|&s| synthesize(s)).collect());

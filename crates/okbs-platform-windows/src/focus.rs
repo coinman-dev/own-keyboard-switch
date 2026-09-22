@@ -7,7 +7,7 @@ use okbs_platform::{
 };
 use std::cell::RefCell;
 use std::path::PathBuf;
-use windows::Win32::Foundation::{CloseHandle, HWND};
+use windows::Win32::Foundation::{CloseHandle, HWND, RECT};
 use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
 };
@@ -20,8 +20,8 @@ use windows::Win32::UI::Accessibility::{
 use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MENUEND, GUITHREADINFO, GWL_STYLE, GetClassNameW,
     GetForegroundWindow, GetGUIThreadInfo, GetMenu, GetMenuItemCount, GetMenuStringW,
-    GetPhysicalCursorPos, GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, IsWindow,
-    MF_BYPOSITION, SetForegroundWindow, WINEVENT_OUTOFCONTEXT,
+    GetPhysicalCursorPos, GetWindowLongPtrW, GetWindowRect, GetWindowTextW,
+    GetWindowThreadProcessId, IsWindow, MF_BYPOSITION, SetForegroundWindow, WINEVENT_OUTOFCONTEXT,
 };
 use windows::core::Interface;
 use windows::core::PWSTR;
@@ -37,6 +37,24 @@ pub fn cursor_position() -> [f32; 2] {
         [point.x as f32, point.y as f32]
     } else {
         [24.0, 24.0]
+    }
+}
+
+/// A placement point on the monitor containing the foreground editor.
+/// The mouse may be on another monitor while text is being typed.
+pub fn foreground_window_position() -> Option<[f32; 2]> {
+    // SAFETY: query-only call with a valid output buffer.
+    unsafe {
+        let window = GetForegroundWindow();
+        if window.is_invalid() {
+            return None;
+        }
+        let mut rect = RECT::default();
+        GetWindowRect(window, &mut rect).ok()?;
+        Some([
+            rect.left.saturating_add(24) as f32,
+            rect.top.saturating_add(72) as f32,
+        ])
     }
 }
 

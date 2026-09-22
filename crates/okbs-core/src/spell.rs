@@ -129,6 +129,31 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(feature = "builtin-data")]
+    fn writer_reported_typos_have_suggestions() {
+        for (word, expected) in [
+            ("арфографии", "орфографии"),
+            ("паботает", "работает"),
+            ("хочеш", "хочешь"),
+            ("теасты", "тесты"),
+            ("ничегно", "ничего"),
+            ("поши", "пошли"),
+            ("разробраться", "разобраться"),
+        ] {
+            let text = format!("{word}!");
+            let found = check_text(&text, &[Lang::Ru], 5, crate::data::dictionary);
+            assert_eq!(found.len(), 1, "not detected: {word}");
+            assert!(
+                found[0].suggestions.iter().any(|s| s == expected),
+                "{word}: {:?}",
+                found[0].suggestions
+            );
+        }
+        let correct = "моя собака вчера ходила к соседям и она не знала что там делать";
+        assert!(check_text(correct, &[Lang::Ru], 5, crate::data::dictionary).is_empty());
+    }
+
+    #[test]
     fn splits_words() {
         let text = "Привет, мир! It's из-за b2b 42 x_y -минус";
         let w: Vec<&str> = words(text).into_iter().map(|(_, w)| w).collect();

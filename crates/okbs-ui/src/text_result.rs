@@ -12,6 +12,7 @@ pub struct TextResult {
     spelling: Option<Vec<Misspelling>>,
     choices: Vec<Option<usize>>,
     copied: bool,
+    compact: bool,
 }
 
 impl std::fmt::Debug for TextResult {
@@ -31,6 +32,7 @@ impl TextResult {
             spelling: None,
             choices: Vec::new(),
             copied: false,
+            compact: false,
         }
     }
 
@@ -41,7 +43,22 @@ impl TextResult {
             choices: vec![None; misspellings.len()],
             spelling: Some(misspellings),
             copied: false,
+            compact: false,
         }
+    }
+
+    pub fn spelling_popup(text: String, misspellings: Vec<Misspelling>) -> Self {
+        Self {
+            original: text,
+            choices: vec![None; misspellings.len()],
+            spelling: Some(misspellings),
+            copied: false,
+            compact: true,
+        }
+    }
+
+    pub fn is_compact(&self) -> bool {
+        self.compact
     }
 
     /// Localized window title.
@@ -78,6 +95,10 @@ impl TextResult {
     /// Shows suggestions and a selectable result preview. Copying is explicit
     /// and goes through eframe's clipboard output on the window thread.
     pub fn ui(&mut self, ui: &mut Ui, lang: Lang) {
+        crate::settings::content_style(ui);
+        if self.compact {
+            return self.compact_ui(ui, lang);
+        }
         ui.heading(self.title(lang));
         if let Some(misspellings) = &self.spelling {
             if misspellings.is_empty() {
@@ -144,6 +165,36 @@ impl TextResult {
             });
         if ui.button(tr(Text::CopyResult, lang)).clicked() {
             ui.ctx().copy_text(result);
+            self.copied = true;
+        }
+        if self.copied {
+            ui.label(tr(Text::ResultCopied, lang));
+        }
+    }
+
+    fn compact_ui(&mut self, ui: &mut Ui, lang: Lang) {
+        ui.heading(tr(Text::SpellcheckWordTitle, lang));
+        let Some(misspellings) = &self.spelling else {
+            return;
+        };
+        if let Some((misspelling, choice)) = misspellings.iter().zip(&mut self.choices).next() {
+            ui.horizontal(|ui| {
+                ui.label(&misspelling.word);
+                let label = choice
+                    .and_then(|index| misspelling.suggestions.get(index))
+                    .map_or(tr(Text::SpellingKeep, lang), String::as_str);
+                egui::ComboBox::from_id_salt("spelling_popup_choice")
+                    .selected_text(label)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(choice, None, tr(Text::SpellingKeep, lang));
+                        for (index, suggestion) in misspelling.suggestions.iter().enumerate() {
+                            ui.selectable_value(choice, Some(index), suggestion);
+                        }
+                    });
+            });
+        }
+        if ui.button(tr(Text::CopyResult, lang)).clicked() {
+            ui.ctx().copy_text(self.text());
             self.copied = true;
         }
         if self.copied {

@@ -10,7 +10,7 @@ use egui::{Color32, RichText, Ui};
 use okbs_core::config::{
     AutoReplaceItem, AutoReplaceTrigger, Config, ExecutableExclusion, FolderExclusion,
     HotkeyAction, HotkeyBinding, MatchKind, Rule, RuleAction, SoundEvent, SoundMode, SwitchKey,
-    Theme, TitleExclusion, UiLanguage,
+    Theme, TitleExclusion, TypedSpellcheckMode, UiLanguage,
 };
 use okbs_core::{Hotkey, Lang};
 
@@ -44,10 +44,10 @@ pub enum Section {
     Troubleshooting,
     /// «Автозамена».
     Autoreplace,
-    /// «Звуки».
-    Sounds,
     /// «Проверка орфографии».
     Spellcheck,
+    /// «Звуки».
+    Sounds,
 }
 
 impl Section {
@@ -59,8 +59,8 @@ impl Section {
         Section::Exclusions,
         Section::Troubleshooting,
         Section::Autoreplace,
-        Section::Sounds,
         Section::Spellcheck,
+        Section::Sounds,
     ];
 
     fn text(self) -> Text {
@@ -71,8 +71,8 @@ impl Section {
             Section::Exclusions => Text::SectionExclusions,
             Section::Troubleshooting => Text::SectionTroubleshooting,
             Section::Autoreplace => Text::SectionAutoreplace,
-            Section::Sounds => Text::SectionSounds,
             Section::Spellcheck => Text::SectionSpellcheck,
+            Section::Sounds => Text::SectionSounds,
         }
     }
 }
@@ -98,11 +98,15 @@ pub enum SoundId {
     ClipboardConvert,
     /// Error.
     Error,
+    /// Spelling error found.
+    SpellingError,
+    /// Spelling correction applied.
+    SpellingCorrected,
 }
 
 impl SoundId {
     /// All events.
-    pub const ALL: [SoundId; 9] = [
+    pub const ALL: [SoundId; 11] = [
         SoundId::Autoswitch,
         SoundId::ManualConvert,
         SoundId::LayoutChanged,
@@ -112,6 +116,8 @@ impl SoundId {
         SoundId::CaseFixed,
         SoundId::ClipboardConvert,
         SoundId::Error,
+        SoundId::SpellingError,
+        SoundId::SpellingCorrected,
     ];
 
     fn text(self) -> Text {
@@ -125,6 +131,8 @@ impl SoundId {
             SoundId::CaseFixed => Text::SoundEvCaseFixed,
             SoundId::ClipboardConvert => Text::SoundEvClipboardConvert,
             SoundId::Error => Text::SoundEvError,
+            SoundId::SpellingError => Text::SoundEvSpellingError,
+            SoundId::SpellingCorrected => Text::SoundEvSpellingCorrected,
         }
     }
 
@@ -141,6 +149,8 @@ impl SoundId {
             SoundId::CaseFixed => &mut e.case_fixed,
             SoundId::ClipboardConvert => &mut e.clipboard_convert,
             SoundId::Error => &mut e.error,
+            SoundId::SpellingError => &mut e.spelling_error,
+            SoundId::SpellingCorrected => &mut e.spelling_corrected,
         }
     }
 }
@@ -197,7 +207,10 @@ pub enum SettingsInput {
         /// A restart was already attempted and did not happen.
         failed: bool,
     },
-    DictionaryState { id: String, state: DictionaryState },
+    DictionaryState {
+        id: String,
+        state: DictionaryState,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1469,92 +1482,131 @@ impl SettingsView {
         let spellcheck = &mut self.draft.spellcheck;
         checkbox(
             ui,
-            &mut spellcheck.enabled,
+            &mut spellcheck.check_on_command,
             Text::OptSpellcheckEnabled,
             lang,
             true,
         );
-        ui.add_enabled_ui(spellcheck.enabled, |ui| {
-            checkbox(
-                ui,
-                &mut spellcheck.check_typed_words,
-                Text::OptSpellcheckTypedWords,
-                lang,
-                true,
-            );
-            checkbox(
-                ui,
-                &mut spellcheck.prefer_selection,
-                Text::OptSpellcheckSelectionFirst,
-                lang,
-                true,
-            );
-            ui.add_space(6.0);
-            ui.label(tr(Text::SpellcheckLanguages, lang));
-            ui.horizontal(|ui| {
-                for (language, label) in
-                    [(Lang::Ru, Text::LangRussian), (Lang::En, Text::LangEnglish)]
-                {
-                    let mut selected = spellcheck.languages.contains(&language);
-                    if ui.checkbox(&mut selected, tr(label, lang)).changed() {
-                        if selected {
-                            spellcheck.languages.push(language);
-                        } else {
-                            spellcheck.languages.retain(|item| *item != language);
-                        }
-                    }
-                }
-            });
-            ui.add_space(8.0);
-            ui.label(RichText::new(tr(Text::SpellcheckHint, lang)).weak().small());
-            ui.add_space(12.0);
-            ui.label(tr(Text::SpellcheckExtraDictionaries, lang));
-            egui::ComboBox::from_id_salt("english_dictionary")
-                .selected_text(match spellcheck.english_dictionary.as_deref() {
-                    Some("en-gb") => tr(Text::SpellcheckEnGb, lang),
-                    _ => tr(Text::SpellcheckBuiltinEn, lang),
-                })
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut spellcheck.english_dictionary, None, tr(Text::SpellcheckBuiltinEn, lang));
-                    ui.add_enabled_ui(self.en_gb_state == DictionaryState::Available, |ui| {
-                        ui.selectable_value(&mut spellcheck.english_dictionary, Some("en-gb".into()), tr(Text::SpellcheckEnGb, lang));
+        checkbox(
+            ui,
+            &mut spellcheck.check_typed_words,
+            Text::OptSpellcheckTypedWords,
+            lang,
+            true,
+        );
+        ui.add_enabled_ui(spellcheck.check_typed_words, |ui| {
+            form_row(ui, tr(Text::SpellcheckTypedMode, lang), |ui| {
+                egui::ComboBox::from_id_salt("typed_spellcheck_mode")
+                    .selected_text(match spellcheck.typed_mode {
+                        TypedSpellcheckMode::Suggestions => tr(Text::SpellcheckSuggestions, lang),
+                        TypedSpellcheckMode::Auto => tr(Text::SpellcheckAuto, lang),
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut spellcheck.typed_mode,
+                            TypedSpellcheckMode::Suggestions,
+                            tr(Text::SpellcheckSuggestions, lang),
+                        );
+                        ui.selectable_value(
+                            &mut spellcheck.typed_mode,
+                            TypedSpellcheckMode::Auto,
+                            tr(Text::SpellcheckAuto, lang),
+                        );
                     });
-                });
-            if ui.add_enabled(self.en_gb_state != DictionaryState::Downloading, egui::Button::new(tr(Text::SpellcheckDownloadEnGb, lang))).clicked() {
-                events.push(SettingsEvent::DownloadDictionary("en-gb".into()));
-            }
-            ui.label(RichText::new(tr(match self.en_gb_state {
-                DictionaryState::Unavailable => Text::DictionaryNotInstalled,
-                DictionaryState::Downloading => Text::DictionaryDownloading,
-                DictionaryState::Available => Text::DictionaryInstalled,
-                DictionaryState::Failed => Text::DictionaryDownloadFailed,
-            }, lang)).weak().small());
-            ui.add_space(12.0);
-            ui.label(tr(Text::SpellcheckPersonalWords, lang));
-            ui.horizontal(|ui| {
-                ui.text_edit_singleline(&mut self.new_spell_word);
-                if ui.button(tr(Text::SpellcheckAddWord, lang)).clicked()
-                    && !self.new_spell_word.trim().is_empty()
-                {
-                    spellcheck
-                        .custom_words
-                        .push(self.new_spell_word.trim().into());
-                    self.new_spell_word.clear();
-                }
             });
-            let mut remove = None;
-            for (index, word) in spellcheck.custom_words.iter().enumerate() {
-                ui.horizontal(|ui| {
-                    ui.label(word);
-                    if ui.small_button("×").clicked() {
-                        remove = Some(index);
+        });
+        checkbox(
+            ui,
+            &mut spellcheck.prefer_selection,
+            Text::OptSpellcheckSelectionFirst,
+            lang,
+            true,
+        );
+        ui.add_space(6.0);
+        ui.label(tr(Text::SpellcheckLanguages, lang));
+        ui.horizontal(|ui| {
+            for (language, label) in [(Lang::Ru, Text::LangRussian), (Lang::En, Text::LangEnglish)]
+            {
+                let mut selected = spellcheck.languages.contains(&language);
+                if ui.checkbox(&mut selected, tr(label, lang)).changed() {
+                    if selected {
+                        spellcheck.languages.push(language);
+                    } else {
+                        spellcheck.languages.retain(|item| *item != language);
                     }
-                });
-            }
-            if let Some(index) = remove {
-                spellcheck.custom_words.remove(index);
+                }
             }
         });
+        ui.add_space(8.0);
+        ui.label(RichText::new(tr(Text::SpellcheckHint, lang)).weak().small());
+        ui.add_space(12.0);
+        ui.label(tr(Text::SpellcheckExtraDictionaries, lang));
+        egui::ComboBox::from_id_salt("english_dictionary")
+            .selected_text(match spellcheck.english_dictionary.as_deref() {
+                Some("en-gb") => tr(Text::SpellcheckEnGb, lang),
+                _ => tr(Text::SpellcheckBuiltinEn, lang),
+            })
+            .show_ui(ui, |ui| {
+                ui.selectable_value(
+                    &mut spellcheck.english_dictionary,
+                    None,
+                    tr(Text::SpellcheckBuiltinEn, lang),
+                );
+                ui.add_enabled_ui(self.en_gb_state == DictionaryState::Available, |ui| {
+                    ui.selectable_value(
+                        &mut spellcheck.english_dictionary,
+                        Some("en-gb".into()),
+                        tr(Text::SpellcheckEnGb, lang),
+                    );
+                });
+            });
+        if ui
+            .add_enabled(
+                self.en_gb_state != DictionaryState::Downloading,
+                egui::Button::new(tr(Text::SpellcheckDownloadEnGb, lang)),
+            )
+            .clicked()
+        {
+            events.push(SettingsEvent::DownloadDictionary("en-gb".into()));
+        }
+        ui.label(
+            RichText::new(tr(
+                match self.en_gb_state {
+                    DictionaryState::Unavailable => Text::DictionaryNotInstalled,
+                    DictionaryState::Downloading => Text::DictionaryDownloading,
+                    DictionaryState::Available => Text::DictionaryInstalled,
+                    DictionaryState::Failed => Text::DictionaryDownloadFailed,
+                },
+                lang,
+            ))
+            .weak()
+            .small(),
+        );
+        ui.add_space(12.0);
+        ui.label(tr(Text::SpellcheckPersonalWords, lang));
+        ui.horizontal(|ui| {
+            ui.text_edit_singleline(&mut self.new_spell_word);
+            if ui.button(tr(Text::SpellcheckAddWord, lang)).clicked()
+                && !self.new_spell_word.trim().is_empty()
+            {
+                spellcheck
+                    .custom_words
+                    .push(self.new_spell_word.trim().into());
+                self.new_spell_word.clear();
+            }
+        });
+        let mut remove = None;
+        for (index, word) in spellcheck.custom_words.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(word);
+                if ui.small_button("×").clicked() {
+                    remove = Some(index);
+                }
+            });
+        }
+        if let Some(index) = remove {
+            spellcheck.custom_words.remove(index);
+        }
     }
 
     fn sounds(&mut self, ui: &mut Ui, lang: Lang, events: &mut Vec<SettingsEvent>) {
