@@ -141,6 +141,8 @@ pub enum Event {
         text: String,
         /// Options at the time the operation was requested.
         settings: okbs_core::config::Spellcheck,
+        /// Never silently change text that originated from typing.
+        interactive: bool,
     },
     /// A word looks like a typo in both layouts.
     Suspicious,
@@ -268,7 +270,7 @@ fn handle_command(processor: &mut Processor, command: Command) -> Vec<Event> {
             events
         }
         Command::ClipboardOp(op) => processor.clipboard_op(op),
-        Command::SpellcheckClipboard => processor.spellcheck_clipboard(),
+        Command::SpellcheckClipboard => processor.spellcheck_selection_or_clipboard(),
         Command::CorrectClipboard {
             original,
             corrected,

@@ -46,11 +46,13 @@ pub enum Section {
     Autoreplace,
     /// «Звуки».
     Sounds,
+    /// «Проверка орфографии».
+    Spellcheck,
 }
 
 impl Section {
     /// All sections.
-    pub const ALL: [Section; 7] = [
+    pub const ALL: [Section; 8] = [
         Section::General,
         Section::Hotkeys,
         Section::Rules,
@@ -58,6 +60,7 @@ impl Section {
         Section::Troubleshooting,
         Section::Autoreplace,
         Section::Sounds,
+        Section::Spellcheck,
     ];
 
     fn text(self) -> Text {
@@ -69,6 +72,7 @@ impl Section {
             Section::Troubleshooting => Text::SectionTroubleshooting,
             Section::Autoreplace => Text::SectionAutoreplace,
             Section::Sounds => Text::SectionSounds,
+            Section::Spellcheck => Text::SectionSpellcheck,
         }
     }
 }
@@ -724,6 +728,7 @@ impl SettingsView {
                         Section::Troubleshooting => self.troubleshooting(ui, lang),
                         Section::Autoreplace => self.autoreplace(ui, lang),
                         Section::Sounds => self.sounds(ui, lang, events),
+                        Section::Spellcheck => self.spellcheck(ui, lang),
                     }
                 });
         });
@@ -1435,6 +1440,51 @@ impl SettingsView {
                 (ui.available_width() - ui.spacing().interact_size.x - ui.spacing().item_spacing.x)
                     .max(80.0);
             ui.add(egui::Slider::new(&mut a.list_opacity, 0.1..=1.0));
+        });
+    }
+
+    fn spellcheck(&mut self, ui: &mut Ui, lang: Lang) {
+        let spellcheck = &mut self.draft.spellcheck;
+        checkbox(
+            ui,
+            &mut spellcheck.enabled,
+            Text::OptSpellcheckEnabled,
+            lang,
+            true,
+        );
+        ui.add_enabled_ui(spellcheck.enabled, |ui| {
+            checkbox(
+                ui,
+                &mut spellcheck.check_typed_words,
+                Text::OptSpellcheckTypedWords,
+                lang,
+                true,
+            );
+            checkbox(
+                ui,
+                &mut spellcheck.prefer_selection,
+                Text::OptSpellcheckSelectionFirst,
+                lang,
+                true,
+            );
+            ui.add_space(6.0);
+            ui.label(tr(Text::SpellcheckLanguages, lang));
+            ui.horizontal(|ui| {
+                for (language, label) in
+                    [(Lang::Ru, Text::LangRussian), (Lang::En, Text::LangEnglish)]
+                {
+                    let mut selected = spellcheck.languages.contains(&language);
+                    if ui.checkbox(&mut selected, tr(label, lang)).changed() {
+                        if selected {
+                            spellcheck.languages.push(language);
+                        } else {
+                            spellcheck.languages.retain(|item| *item != language);
+                        }
+                    }
+                }
+            });
+            ui.add_space(8.0);
+            ui.label(RichText::new(tr(Text::SpellcheckHint, lang)).weak().small());
         });
     }
 

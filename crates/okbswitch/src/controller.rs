@@ -29,6 +29,7 @@ struct SpellingJob {
     id: u64,
     text: String,
     settings: okbs_core::config::Spellcheck,
+    interactive: bool,
 }
 
 struct SpellingResult {
@@ -558,13 +559,18 @@ impl Controller {
                     window.show_text(&self.settings.config, TextResult::conversion(result));
                 }
             }
-            Event::CheckSpelling { text, settings } => {
+            Event::CheckSpelling {
+                text,
+                settings,
+                interactive,
+            } => {
                 self.spelling_id = self.spelling_id.wrapping_add(1);
                 if let Some((worker, _)) = &self.spelling {
                     let _ = worker.send(SpellingJob {
                         id: self.spelling_id,
                         text,
                         settings,
+                        interactive,
                     });
                 }
             }
@@ -785,7 +791,7 @@ impl Controller {
                 if result.job.id != self.spelling_id || !self.settings.config.spellcheck.enabled {
                     continue;
                 }
-                if result.job.settings.show_result_window {
+                if result.job.interactive || result.job.settings.show_result_window {
                     if let Some(window) = &self.window {
                         window.show_text(
                             &self.settings.config,
@@ -894,6 +900,7 @@ mod tests {
             .send(SpellingJob {
                 id: 17,
                 text: "Превет, wrold!".into(),
+                interactive: false,
                 settings: okbs_core::config::Spellcheck {
                     languages: vec![okbs_core::Lang::En],
                     max_suggestions: 3,

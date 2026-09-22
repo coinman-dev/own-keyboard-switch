@@ -1459,6 +1459,24 @@ impl Processor {
         }
         let final_lang = target.unwrap_or(typed_in);
         let fix = self.case_fix(&keys_of(&self.last), final_lang);
+        // Layout conversion and case repair are decided first. Spell checking
+        // sees that resulting layout, never participates in the decision and
+        // is always interactive, so it cannot replace text on its own.
+        if self.config.spellcheck.enabled
+            && self.config.spellcheck.check_typed_words
+            && !self.focus_blocks()
+        {
+            let text = if target.is_some() {
+                analysis.other.text.clone()
+            } else {
+                analysis.current.text.clone()
+            };
+            out.push(Event::CheckSpelling {
+                text,
+                settings: self.config.spellcheck.clone(),
+                interactive: true,
+            });
+        }
         if target.is_none() && fix.is_none() {
             if autoswitch && analysis.decision == Decision::Suspicious {
                 out.push(Event::Suspicious);
@@ -2179,6 +2197,7 @@ impl Processor {
             Ok(Some(text)) => vec![Event::CheckSpelling {
                 text,
                 settings: self.config.spellcheck.clone(),
+                interactive: false,
             }],
             Ok(None) => Vec::new(),
             Err(err) => {
@@ -2187,6 +2206,33 @@ impl Processor {
                 out
             }
         }
+    }
+
+    /// Checks selected text first when the user chose that mode. The clipboard
+    /// is restored before the background checker starts, so a result can never
+    /// overwrite a later copy operation.
+    pub fn spellcheck_selection_or_clipboard(&mut self) -> Vec<Event> {
+        if !self.config.spellcheck.enabled {
+            return Vec::new();
+        }
+        if self.config.spellcheck.prefer_selection {
+            match self.copy_selection() {
+                Ok(Some((text, saved))) if !text.trim().is_empty() => {
+                    self.restore_clipboard(saved, &text);
+                    return vec![Event::CheckSpelling {
+                        text,
+                        settings: self.config.spellcheck.clone(),
+                        interactive: false,
+                    }];
+                }
+                Ok(Some((text, saved))) => self.restore_clipboard(saved, &text),
+                Ok(None) => {}
+                Err(err) => {
+                    tracing::debug!("cannot copy selection for spellcheck: {err}");
+                }
+            }
+        }
+        self.spellcheck_clipboard()
     }
 
     /// Background spelling results must not overwrite a newer copy operation.

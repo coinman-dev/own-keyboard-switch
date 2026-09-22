@@ -2140,7 +2140,7 @@ fn spelling_requests_snapshot_options_and_preserve_newer_clipboard() {
     let mut h = Harness::new(Lang::En);
     h.desktop.lock().clipboard = Some("wrold".into());
     assert!(matches!(h.processor.spellcheck_clipboard().as_slice(),
-        [Event::CheckSpelling { text, settings }] if text == "wrold" && settings.languages == Lang::ALL));
+        [Event::CheckSpelling { text, settings, interactive: false }] if text == "wrold" && settings.languages == Lang::ALL));
     h.processor.correct_clipboard("wrold", "world");
     assert_eq!(h.desktop.lock().clipboard.as_deref(), Some("world"));
     h.desktop.lock().clipboard = Some("newer".into());

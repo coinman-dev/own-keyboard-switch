@@ -728,6 +728,10 @@ impl Default for Clipboard {
 pub struct Spellcheck {
     /// Master switch.
     pub enabled: bool,
+    /// Check a finished word after layout switching and autoreplace have run.
+    pub check_typed_words: bool,
+    /// A spellcheck command uses selected text before falling back to clipboard text.
+    pub prefer_selection: bool,
     /// Dictionaries to use.
     pub languages: Vec<Lang>,
     /// Suggestions shown per misspelled word.
@@ -740,6 +744,8 @@ impl Default for Spellcheck {
     fn default() -> Self {
         Self {
             enabled: true,
+            check_typed_words: false,
+            prefer_selection: true,
             languages: vec![Lang::Ru, Lang::En],
             max_suggestions: 5,
             show_result_window: true,
