@@ -6,7 +6,11 @@
 
 use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
-use std::{fs, io::Write, path::{Path, PathBuf}};
+use std::{
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 const LIBREOFFICE_COMMIT: &str = "32b006a2c22a4ac7e8ed3f03346f7b3d85a970a4";
 
@@ -53,8 +57,16 @@ pub fn install(root: &Path, package: Package) -> Result<()> {
     let directory = package_dir(root, package);
     fs::create_dir_all(&directory)
         .with_context(|| format!("cannot create {}", directory.display()))?;
-    fetch_checked(package.aff_path, package.aff_sha256, &directory.join("dictionary.aff"))?;
-    fetch_checked(package.dic_path, package.dic_sha256, &directory.join("dictionary.dic"))?;
+    fetch_checked(
+        package.aff_path,
+        package.aff_sha256,
+        &directory.join("dictionary.aff"),
+    )?;
+    fetch_checked(
+        package.dic_path,
+        package.dic_sha256,
+        &directory.join("dictionary.dic"),
+    )?;
     Ok(())
 }
 
