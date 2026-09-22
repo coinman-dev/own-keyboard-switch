@@ -197,21 +197,42 @@ impl TextResult {
             return None;
         };
         if let Some((misspelling, choice)) = misspellings.iter().zip(&mut self.choices).next() {
-            ui.vertical_centered(|ui| {
-                ui.horizontal(|ui| {
-                    ui.label(&misspelling.word);
-                    let label = choice
-                        .and_then(|index| misspelling.suggestions.get(index))
-                        .map_or(tr(Text::SpellingKeep, lang), String::as_str);
-                    egui::ComboBox::from_id_salt("spelling_popup_choice")
-                        .selected_text(label)
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(choice, None, tr(Text::SpellingKeep, lang));
-                            for (index, suggestion) in misspelling.suggestions.iter().enumerate() {
-                                ui.selectable_value(choice, Some(index), suggestion);
-                            }
-                        });
-                });
+            let label_width = ui.fonts_mut(|fonts| {
+                fonts
+                    .layout_no_wrap(
+                        misspelling.word.clone(),
+                        egui::TextStyle::Body.resolve(ui.style()),
+                        ui.visuals().text_color(),
+                    )
+                    .size()
+                    .x
+            });
+            let combo_width = ui.spacing().combo_width;
+            let row_width =
+                (label_width + ui.spacing().item_spacing.x + combo_width).min(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.add_space(((ui.available_width() - row_width) / 2.0).max(0.0));
+                ui.allocate_ui_with_layout(
+                    egui::vec2(row_width, crate::appearance::CONTROL_HEIGHT),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.label(&misspelling.word);
+                        let label = choice
+                            .and_then(|index| misspelling.suggestions.get(index))
+                            .map_or(tr(Text::SpellingKeep, lang), String::as_str);
+                        egui::ComboBox::from_id_salt("spelling_popup_choice")
+                            .width(combo_width)
+                            .selected_text(label)
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(choice, None, tr(Text::SpellingKeep, lang));
+                                for (index, suggestion) in
+                                    misspelling.suggestions.iter().enumerate()
+                                {
+                                    ui.selectable_value(choice, Some(index), suggestion);
+                                }
+                            });
+                    },
+                );
             });
         }
         let mut replace = false;
@@ -375,6 +396,14 @@ mod tests {
             }
             None
         });
+        let word_rect = output.shapes.iter().find_map(|shape| {
+            if let egui::Shape::Text(text) = &shape.shape
+                && text.galley.text() == "wrold"
+            {
+                return Some(text.galley.rect.translate(text.pos.to_vec2()));
+            }
+            None
+        });
         let text_center = text_center.expect("replace button");
         assert!(
             (text_center - width / 2.0).abs() < 1.0,
@@ -382,5 +411,12 @@ mod tests {
             width / 2.0
         );
         assert!(heading_left.expect("heading") > 0.0);
+        let word_rect = word_rect.expect("misspelled word");
+        let expected_left = (width - (word_rect.width() + 10.0 + 200.0)) / 2.0;
+        assert!(
+            (word_rect.left() - expected_left).abs() < 1.0,
+            "replacement row left {} != expected {expected_left}",
+            word_rect.left()
+        );
     }
 }
