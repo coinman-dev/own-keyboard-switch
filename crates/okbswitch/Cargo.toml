@@ -19,6 +19,7 @@ clap.workspace = true
 crossbeam-channel.workspace = true
 ctrlc.workspace = true
 directories.workspace = true
+encoding_rs.workspace = true
 okbs-core = { workspace = true, features = ["builtin-data"] }
 okbs-engine.workspace = true
 okbs-platform.workspace = true

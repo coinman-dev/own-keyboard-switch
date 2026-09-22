@@ -98,9 +98,9 @@ The installed executable is named `okbswitch.exe`. `--paths` is read-only and
 shows the resolved locations. `--diagnose` does not migrate profile data.
 An optional `--config` path must remain inside the program directory.
 
-Enable **Detailed log (Debug)** under Troubleshooting when reporting a problem.
-It applies without restarting. Logs contain events and detection decisions,
-not typed text. Debug logging is off by default.
+Enable **Write a program diagnostic log** under Troubleshooting and choose
+Error, Info, or Debug. Changes apply without restarting. When disabled, no log
+file is created. Logs contain events and detection decisions, not typed text.
 
 ## Building
 

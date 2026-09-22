@@ -48,17 +48,17 @@ pub(crate) enum Root {
 #[derive(Default)]
 pub(crate) struct Shared {
     context: Mutex<Option<egui::Context>>,
-    dictionary_state: Mutex<Option<SettingsInput>>,
+    dictionary_states: Mutex<std::collections::BTreeMap<String, SettingsInput>>,
     open: AtomicBool,
     shutdown: AtomicBool,
 }
 
 impl Shared {
     fn restore_dictionary_state(&self, view: &mut SettingsView) {
-        if let Ok(state) = self.dictionary_state.lock()
-            && let Some(input) = state.clone()
-        {
-            view.handle(input);
+        if let Ok(states) = self.dictionary_states.lock() {
+            for input in states.values().cloned() {
+                view.handle(input);
+            }
         }
     }
     pub(crate) fn wake(&self) {
@@ -91,10 +91,10 @@ impl std::fmt::Debug for SettingsNotifier {
 
 impl SettingsNotifier {
     pub fn send(&self, input: SettingsInput) {
-        if matches!(input, SettingsInput::DictionaryState { .. })
-            && let Ok(mut state) = self.shared.dictionary_state.lock()
+        if let SettingsInput::DictionaryState { id, .. } = &input
+            && let Ok(mut states) = self.shared.dictionary_states.lock()
         {
-            *state = Some(input.clone());
+            states.insert(id.clone(), input.clone());
         }
         let _ = self.requests.send(Request::Input(input));
         self.shared.wake();
@@ -365,7 +365,7 @@ impl App {
         let _ =
             crate::window_position::keep_visible(result.title(self.lang), self.spellcheck_position);
         if ui.ctx().input(|input| input.viewport().close_requested()) {
-            tracing::info!(target: "okbs_spelling", "suggestion popup dismissed");
+            tracing::debug!(target: "okbs_spelling", "suggestion popup dismissed");
             self.spellcheck_result = None;
             self.spellcheck_pending = None;
             ui.ctx()
@@ -385,7 +385,7 @@ impl App {
         };
         static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
         let request_id = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
-        tracing::info!(target: "okbs_spelling", request_id, ?target,
+        tracing::debug!(target: "okbs_spelling", request_id, ?target,
             changed = corrected != result.original(), "replace button clicked; keeping popup until acknowledgement");
         result.replacement_failed(false);
         self.spellcheck_pending = Some(request_id);
@@ -401,7 +401,7 @@ impl App {
         {
             self.spellcheck_pending = None;
             result.replacement_failed(true);
-            tracing::warn!(target: "okbs_spelling", request_id, "popup replacement channel disconnected");
+            tracing::error!(target: "okbs_spelling", request_id, "popup replacement channel disconnected");
         }
     }
 
@@ -504,9 +504,9 @@ impl eframe::App for App {
         let builder = egui::ViewportBuilder::default()
             .with_title(tr(Text::SpellcheckWordTitle, self.lang))
             .with_icon(crate::branding::icon())
-            .with_inner_size([390.0, 160.0])
-            .with_min_inner_size([300.0, 120.0])
-            .with_max_inner_size([520.0, 220.0])
+            .with_inner_size([390.0, 130.0])
+            .with_min_inner_size([300.0, 115.0])
+            .with_max_inner_size([520.0, 170.0])
             .with_resizable(false)
             .with_maximize_button(false)
             .with_always_on_top()
@@ -788,9 +788,9 @@ fn window_thread(
             options.viewport = egui::ViewportBuilder::default()
                 .with_title(result.title(lang))
                 .with_icon(crate::branding::icon())
-                .with_inner_size([390.0, 160.0])
-                .with_min_inner_size([300.0, 120.0])
-                .with_max_inner_size([520.0, 220.0])
+                .with_inner_size([390.0, 130.0])
+                .with_min_inner_size([300.0, 115.0])
+                .with_max_inner_size([520.0, 170.0])
                 .with_resizable(false)
                 .with_maximize_button(false)
                 .with_active(false)

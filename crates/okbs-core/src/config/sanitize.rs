@@ -1,7 +1,7 @@
 //! Range checks and consistency fixes applied after deserialization.
 
 use super::load::ConfigIssue;
-use super::{Config, DirectKeys, SwitchKey};
+use super::{Config, DirectKeys, LogLevel, SwitchKey};
 use crate::hotkey::Hotkey;
 use crate::lang::Lang;
 use std::collections::BTreeMap;
@@ -225,6 +225,7 @@ impl Config {
             });
         }
         sp.english_dictionary = sp.english_dictionary.take().filter(|id| id == "en-gb");
+        sp.russian_dictionary = sp.russian_dictionary.take().filter(|id| id == "ru-modern");
         sp.custom_words.retain(|word| {
             word.chars().filter(|c| c.is_alphabetic()).count() >= 2
                 && word
@@ -237,6 +238,11 @@ impl Config {
             .dedup_by(|left, right| left.eq_ignore_ascii_case(right));
 
         clamp_u32(&mut self.log.keep_files, 1, 365, "log.keep_files", i);
+        self.log.level = match self.log.level {
+            LogLevel::Warn => LogLevel::Info,
+            LogLevel::Trace => LogLevel::Debug,
+            level => level,
+        };
 
         let mut by_hotkey: BTreeMap<String, (Hotkey, Vec<&'static str>)> = BTreeMap::new();
         for (action, binding) in self.hotkeys.iter() {

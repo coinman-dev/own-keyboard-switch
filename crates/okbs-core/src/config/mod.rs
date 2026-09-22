@@ -755,6 +755,8 @@ pub struct Spellcheck {
     pub prefer_selection: bool,
     /// Identifier of an optional downloaded English dictionary, if installed.
     pub english_dictionary: Option<String>,
+    /// Identifier of an optional downloaded Russian dictionary, if installed.
+    pub russian_dictionary: Option<String>,
     /// Words accepted locally in addition to Hunspell.
     pub custom_words: Vec<String>,
     /// Dictionaries to use.
@@ -774,6 +776,7 @@ impl Default for Spellcheck {
             typed_mode: TypedSpellcheckMode::Suggestions,
             prefer_selection: true,
             english_dictionary: None,
+            russian_dictionary: None,
             custom_words: Vec::new(),
             languages: vec![Lang::Ru, Lang::En],
             max_suggestions: 5,
@@ -847,10 +850,10 @@ pub enum LogLevel {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Log {
-    /// «Диагностика (подробный журнал)»: raises the verbosity to `debug`
-    /// whatever `level` says, for a problem report.
-    pub debug: bool,
-    /// Verbosity used while `debug` is off.
+    /// Whether the program writes a log file at all.
+    #[serde(alias = "debug")]
+    pub enabled: bool,
+    /// Verbosity used while logging is enabled.
     pub level: LogLevel,
     /// Number of daily log files to keep.
     pub keep_files: u32,
@@ -859,7 +862,7 @@ pub struct Log {
 impl Default for Log {
     fn default() -> Self {
         Self {
-            debug: false,
+            enabled: false,
             level: LogLevel::Info,
             keep_files: 7,
         }
@@ -867,13 +870,6 @@ impl Default for Log {
 }
 
 impl Log {
-    /// Verbosity the program actually logs at.
-    #[must_use]
-    pub fn effective_level(&self) -> LogLevel {
-        if self.debug {
-            self.level.max(LogLevel::Debug)
-        } else {
-            self.level
-        }
-    }
+    /// The three modes exposed in settings.
+    pub const LEVELS: [LogLevel; 3] = [LogLevel::Error, LogLevel::Info, LogLevel::Debug];
 }

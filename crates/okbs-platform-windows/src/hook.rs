@@ -195,7 +195,7 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
                 (clicked, foreground)
             };
             if clicked_pid == std::process::id() || foreground_pid == std::process::id() {
-                tracing::info!(target: "okbs_input", clicked_pid, foreground_pid,
+                tracing::debug!(target: "okbs_input", clicked_pid, foreground_pid,
                     clicked_window = clicked.0 as usize, foreground_window = foreground.0 as usize,
                     "mouse down before activation involving application UI");
             }

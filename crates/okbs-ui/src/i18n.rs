@@ -93,13 +93,19 @@ texts! {
     SpellcheckExtraDictionaries => "Дополнительные словари", "Additional dictionaries";
     SpellcheckDownloadEnGb => "Скачать английский (Великобритания)", "Download English (United Kingdom)";
     SpellcheckBuiltinEn => "Встроенный английский (США)", "Built-in English (United States)";
+    SpellcheckBuiltinRu => "Встроенный русский", "Built-in Russian";
+    SpellcheckEnglishDictionary => "Английский словарь:", "English dictionary:";
+    SpellcheckRussianDictionary => "Русский словарь:", "Russian dictionary:";
     SpellcheckEnGb => "Английский (Великобритания)", "English (United Kingdom)";
+    SpellcheckRuModern => "Русский современный расширенный", "Modern expanded Russian";
     SpellcheckPersonalWords => "Мои слова", "My words";
     SpellcheckAddWord => "Добавить", "Add";
     DictionaryNotInstalled => "Словарь не установлен", "Dictionary is not installed";
     DictionaryDownloading => "Словарь скачивается…", "Downloading dictionary…";
     DictionaryInstalled => "Словарь установлен", "Dictionary is installed";
     DictionaryDownloadFailed => "Не удалось скачать словарь", "Dictionary download failed";
+    DictionaryDownload => "Загрузить", "Download";
+    DictionaryDelete => "Удалить", "Delete";
     OptClipboardHistory => "Следить за буфером обмена", "Watch the clipboard";
     OptClipboardHistoryPersist => "Сохранять историю буфера обмена после перезагрузки", "Keep clipboard history after restart";
     OptShowTooltips => "Показывать всплывающие подсказки", "Show tooltips";
@@ -205,8 +211,12 @@ texts! {
 
     // Troubleshooting → diagnostics
     GroupDiagnostics => "Диагностика", "Diagnostics";
-    OptLogDebug => "Подробный журнал (Debug)", "Detailed log (debug)";
-    LogDebugHint => "Включайте, только чтобы приложить журнал к сообщению о проблеме. Журнал пишется в папку «log» рядом с программой; набранный текст и пароли в него не попадают.", "Turn this on only to attach the log to a problem report. The log goes to the “log” folder next to the program; typed text and passwords never reach it.";
+    OptLogEnabled => "Вести отладочный журнал программы", "Write a program diagnostic log";
+    LogLevel => "Режим журнала:", "Log mode:";
+    LogLevelError => "Error — ошибки", "Error";
+    LogLevelInfo => "Info — обычный", "Info";
+    LogLevelDebug => "Debug — отладочный", "Debug";
+    LogDebugHint => "Если флажок выключен, программа не пишет журнал. Файлы находятся в папке «Logs» рядом с программой; набранный текст и пароли в них не попадают.", "When disabled, the program writes no log. Files are stored in the “Logs” folder next to the program; typed text and passwords are never logged.";
 
     // Administrator rights
     ElevationTitle => "Права Администратора", "Administrator rights";

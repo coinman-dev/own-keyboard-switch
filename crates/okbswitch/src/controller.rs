@@ -44,7 +44,9 @@ struct SpellingResult {
 struct DictionaryProvider {
     root: PathBuf,
     selected_english: Option<String>,
+    selected_russian: Option<String>,
     english: Option<spellbook::Dictionary>,
+    russian: Option<spellbook::Dictionary>,
 }
 
 impl DictionaryProvider {
@@ -52,16 +54,25 @@ impl DictionaryProvider {
         Self {
             root,
             selected_english: None,
+            selected_russian: None,
             english: None,
+            russian: None,
         }
     }
 
-    fn select(&mut self, id: Option<&str>) {
-        if self.selected_english.as_deref() == id && (id.is_none() || self.english.is_some()) {
-            return;
+    fn select(&mut self, english: Option<&str>, russian: Option<&str>) {
+        if self.selected_english.as_deref() != english
+            || (english.is_some() && self.english.is_none())
+        {
+            self.selected_english = english.map(str::to_string);
+            self.english = english.and_then(|id| self.load(id));
         }
-        self.selected_english = id.map(str::to_string);
-        self.english = id.and_then(|id| self.load(id));
+        if self.selected_russian.as_deref() != russian
+            || (russian.is_some() && self.russian.is_none())
+        {
+            self.selected_russian = russian.map(str::to_string);
+            self.russian = russian.and_then(|id| self.load(id));
+        }
     }
 
     fn load(&self, id: &str) -> Option<spellbook::Dictionary> {
@@ -69,12 +80,10 @@ impl DictionaryProvider {
     }
 
     fn dictionary(&self, lang: okbs_core::Lang) -> &spellbook::Dictionary {
-        if lang == okbs_core::Lang::En
-            && let Some(dictionary) = &self.english
-        {
-            dictionary
-        } else {
-            okbs_core::data::dictionary(lang)
+        match (lang, self.english.as_ref(), self.russian.as_ref()) {
+            (okbs_core::Lang::En, Some(dictionary), _) => dictionary,
+            (okbs_core::Lang::Ru, _, Some(dictionary)) => dictionary,
+            _ => okbs_core::data::dictionary(lang),
         }
     }
 }
@@ -92,12 +101,15 @@ fn spelling_worker(
             while let Ok(mut job) = input.recv() {
                 // Rapid repeated requests only need the most recent snapshot.
                 for newer in input.try_iter() {
-                    tracing::info!(target: "okbs_spelling", skipped_job = job.id,
+                    tracing::debug!(target: "okbs_spelling", skipped_job = job.id,
                         newer_job = newer.id, "queued check superseded");
                     job = newer;
                 }
                 let started = Instant::now();
-                dictionaries.select(job.settings.english_dictionary.as_deref());
+                dictionaries.select(
+                    job.settings.english_dictionary.as_deref(),
+                    job.settings.russian_dictionary.as_deref(),
+                );
                 let misspellings = okbs_core::spell::check_text_with_words(
                     &job.text,
                     &job.settings.languages,
@@ -105,7 +117,7 @@ fn spelling_worker(
                     &job.settings.custom_words,
                     |lang| dictionaries.dictionary(lang),
                 );
-                tracing::info!(target: "okbs_spelling", job = job.id,
+                tracing::debug!(target: "okbs_spelling", job = job.id,
                     elapsed_ms = started.elapsed().as_millis() as u64,
                     errors = misspellings.len(),
                     suggestions = misspellings.iter().map(|m| m.suggestions.len()).sum::<usize>(),
@@ -331,17 +343,19 @@ impl Controller {
             restart_elevated: false,
         };
         if let Some(window) = &controller.window {
-            window.send(SettingsInput::DictionaryState {
-                id: "en-gb".into(),
-                state: if crate::dictionaries::is_installed(
-                    &controller.dictionary_root,
-                    crate::dictionaries::EN_GB,
-                ) {
-                    DictionaryState::Available
-                } else {
-                    DictionaryState::Unavailable
-                },
-            });
+            for package in crate::dictionaries::PACKAGES {
+                window.send(SettingsInput::DictionaryState {
+                    id: package.id.into(),
+                    state: if crate::dictionaries::is_installed(
+                        &controller.dictionary_root,
+                        *package,
+                    ) {
+                        DictionaryState::Available
+                    } else {
+                        DictionaryState::Unavailable
+                    },
+                });
+            }
         }
         controller.rebuild_tray();
         controller.configure_autoreplace_ui();
@@ -615,7 +629,7 @@ impl Controller {
                 request_id,
                 success,
             } => {
-                tracing::info!(target: "okbs_spelling", request_id, success, "replacement acknowledged by engine");
+                tracing::debug!(target: "okbs_spelling", request_id, success, "replacement acknowledged by engine");
                 if let Some(window) = &self.window {
                     window.send(SettingsInput::SpellingReplacementFinished {
                         request_id,
@@ -693,7 +707,7 @@ impl Controller {
                 target,
             } => {
                 self.spelling_id = self.spelling_id.wrapping_add(1);
-                tracing::info!(target: "okbs_spelling", job = self.spelling_id, ?target,
+                tracing::debug!(target: "okbs_spelling", job = self.spelling_id, ?target,
                     interactive, chars = text.chars().count(), mode = ?settings.typed_mode,
                     worker_available = self.spelling.is_some(), "check requested");
                 if let Some((worker, _)) = &self.spelling {
@@ -738,7 +752,7 @@ impl Controller {
                     on_apply(&config);
                 }
                 self.state.sounds = config.sounds.enabled;
-                crate::logging::set_level(config.log.effective_level());
+                crate::logging::set_level(config.log.enabled, config.log.level);
                 self.settings.replace((*config).clone());
                 self.refresh_icon();
                 self.engine.send(Command::ApplyConfig(config));
@@ -810,13 +824,33 @@ impl Controller {
                     }
                 });
             }
+            SettingsEvent::DeleteDictionary(id) => {
+                let Some(package) = crate::dictionaries::package(&id) else {
+                    tracing::warn!(%id, "unknown dictionary package requested for deletion");
+                    return;
+                };
+                match crate::dictionaries::uninstall(&self.dictionary_root, package) {
+                    Ok(()) => {
+                        tracing::info!(package = package.id, "dictionary removed");
+                        if let Some(window) = &self.window {
+                            window.send(SettingsInput::DictionaryState {
+                                id,
+                                state: DictionaryState::Unavailable,
+                            });
+                        }
+                    }
+                    Err(err) => {
+                        tracing::error!(package = package.id, "dictionary removal failed: {err:#}")
+                    }
+                }
+            }
             SettingsEvent::ReplaceSpelling {
                 request_id,
                 target,
                 original,
                 corrected,
             } => {
-                tracing::info!(target: "okbs_spelling", request_id, ?target,
+                tracing::debug!(target: "okbs_spelling", request_id, ?target,
                     original_chars = original.chars().count(),
                     corrected_chars = corrected.chars().count(),
                     "forwarding popup replacement to engine");
@@ -986,7 +1020,7 @@ impl Controller {
         if let Some((_, results)) = &self.spelling {
             while let Ok(result) = results.try_recv() {
                 if result.job.id != self.spelling_id || !self.settings.config.spellcheck.enabled {
-                    tracing::info!(target: "okbs_spelling", job = result.job.id,
+                    tracing::debug!(target: "okbs_spelling", job = result.job.id,
                         latest_job = self.spelling_id, enabled = self.settings.config.spellcheck.enabled,
                         "check result discarded: superseded or disabled");
                     continue;
@@ -995,7 +1029,7 @@ impl Controller {
                     && (!self.settings.config.spellcheck.check_typed_words
                         || result.misspellings.is_empty())
                 {
-                    tracing::info!(target: "okbs_spelling", job = result.job.id,
+                    tracing::debug!(target: "okbs_spelling", job = result.job.id,
                         typed_enabled = self.settings.config.spellcheck.check_typed_words,
                         errors = result.misspellings.len(), "typed check has no popup");
                     continue;
@@ -1009,7 +1043,7 @@ impl Controller {
                             (suggestions.len() == 1).then(|| suggestions[0].clone())
                         });
                     if let (Some(target), Some(corrected)) = (result.job.target, candidate) {
-                        tracing::info!(target: "okbs_spelling", job = result.job.id, ?target,
+                        tracing::debug!(target: "okbs_spelling", job = result.job.id, ?target,
                             "automatic replacement requested");
                         self.engine.send(Command::CorrectTypedSpelling {
                             target,
@@ -1030,7 +1064,7 @@ impl Controller {
                             TextResult::spelling(result.job.text, result.misspellings)
                         };
                         if result.job.interactive {
-                            tracing::info!(target: "okbs_spelling", job = result.job.id,
+                            tracing::debug!(target: "okbs_spelling", job = result.job.id,
                                 target = ?result.job.target, "opening suggestion popup");
                             window.show_text_passive(
                                 &self.settings.config,

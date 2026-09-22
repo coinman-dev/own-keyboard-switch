@@ -386,7 +386,7 @@ impl Processor {
         self.autoreplacer = AutoReplacer::new(&config.autoreplace);
         self.config = config;
         if self.pending_spelling.is_some() {
-            tracing::info!(target: "okbs_spelling", reason = "config_changed", "snapshot invalidated");
+            tracing::debug!(target: "okbs_spelling", reason = "config_changed", "snapshot invalidated");
         }
         self.pending_spelling = None;
         self.reset_all();
@@ -534,7 +534,7 @@ impl Processor {
             .as_ref()
             .is_some_and(|pending| self.target_matches(pending.last.target));
         if let Some(pending) = &self.pending_spelling {
-            tracing::info!(target: "okbs_spelling", expected = ?pending.last.target,
+            tracing::debug!(target: "okbs_spelling", expected = ?pending.last.target,
                 current = ?self.backends.focus.as_ref().and_then(|f| f.input_target().ok().flatten()),
                 own_window, original_target, retained = own_window || original_target,
                 age_ms = pending.captured_at.elapsed().as_millis() as u64,
@@ -638,7 +638,7 @@ impl Processor {
                 InputEvent::Key { .. } => "key",
                 _ => "unknown_key",
             };
-            tracing::info!(target: "okbs_spelling", kind, own_window, retained = own_window,
+            tracing::debug!(target: "okbs_spelling", kind, own_window, retained = own_window,
                 expected = ?pending.last.target,
                 current = ?self.backends.focus.as_ref().and_then(|f| f.input_target().ok().flatten()),
                 age_ms = pending.captured_at.elapsed().as_millis() as u64,
@@ -902,7 +902,7 @@ impl Processor {
                                 last,
                                 captured_at: Instant::now(),
                             });
-                            tracing::info!(target: "okbs_spelling", ?target, epoch,
+                            tracing::debug!(target: "okbs_spelling", ?target, epoch,
                                 "snapshot refreshed after captured boundary replay");
                         }
                     }
@@ -1394,7 +1394,7 @@ impl Processor {
         let epoch = self
             .operation_epoch
             .or_else(|| self.input_gate.as_ref().map(|gate| gate.epoch()));
-        tracing::info!(target: "okbs_input", ?target, ?epoch, erase, caret_left,
+        tracing::debug!(target: "okbs_input", ?target, ?epoch, erase, caret_left,
             chars = replacement.chars().count(), "paste preparation");
         if (target.is_some() && !self.target_matches(target)) || !self.epoch_matches(epoch) {
             return Err(PlatformError::Other("focused control changed".into()));
@@ -1406,17 +1406,17 @@ impl Processor {
             .ok_or(PlatformError::Unsupported("clipboard"))?;
         let saved = clipboard.text()?;
         clipboard.set_text(replacement)?;
-        tracing::info!(target: "okbs_input", "temporary clipboard text set");
+        tracing::debug!(target: "okbs_input", "temporary clipboard text set");
         let result = (|| {
             if (target.is_some() && !self.target_matches(target)) || !self.epoch_matches(epoch) {
                 return Err(PlatformError::Other("focused control changed".into()));
             }
             self.backends.injector.backspace(erase)?;
-            tracing::info!(target: "okbs_input", erase, "backspaces sent");
+            tracing::debug!(target: "okbs_input", erase, "backspaces sent");
             self.backends
                 .injector
                 .tap(&[PhysKey::ControlLeft], PhysKey::KeyV)?;
-            tracing::info!(target: "okbs_input", "Ctrl+V sent");
+            tracing::debug!(target: "okbs_input", "Ctrl+V sent");
             std::thread::sleep(self.timing.paste_settle);
             if (target.is_some() && !self.target_matches(target)) || !self.epoch_matches(epoch) {
                 return Err(PlatformError::Other("focused control changed".into()));
@@ -1432,7 +1432,7 @@ impl Processor {
             self.backends.injector.send(&strokes)
         })();
         self.restore_clipboard(saved, replacement);
-        tracing::info!(target: "okbs_input", success = result.is_ok(),
+        tracing::debug!(target: "okbs_input", success = result.is_ok(),
             "paste finished and clipboard restoration attempted");
         result
     }
@@ -1465,7 +1465,7 @@ impl Processor {
                 last: last.clone(),
                 captured_at: Instant::now(),
             });
-            tracing::info!(target: "okbs_spelling", target = ?last.target,
+            tracing::debug!(target: "okbs_spelling", target = ?last.target,
                 chars = text.chars().count(), separator_typed,
                 separator_count = last.separator.len(), separator = ?separator.key,
                 gated = self.input_gate.is_some(), "word snapshot created");
@@ -1969,7 +1969,7 @@ impl Processor {
     }
 
     fn fail(&mut self, what: &str, err: &PlatformError, out: &mut Vec<Event>) {
-        tracing::warn!("{what}: {err}");
+        tracing::error!("{what}: {err}");
         out.push(Event::Error(format!("{what}: {err}")));
         self.play(Sound::Error);
         self.reset_all();
@@ -2391,21 +2391,21 @@ impl Processor {
         corrected: &str,
     ) -> Vec<Event> {
         let mut out = Vec::new();
-        tracing::info!(target: "okbs_spelling", ?target,
+        tracing::debug!(target: "okbs_spelling", ?target,
             current = ?self.backends.focus.as_ref().and_then(|f| f.input_target().ok().flatten()),
             pending = self.pending_spelling.is_some(), original_chars = original.chars().count(),
             corrected_chars = corrected.chars().count(), modifiers_held = !self.mods.is_empty(),
             "replacement command received");
         if corrected.is_empty() || corrected == original {
-            tracing::warn!(target: "okbs_spelling", empty = corrected.is_empty(),
+            tracing::debug!(target: "okbs_spelling", empty = corrected.is_empty(),
                 unchanged = corrected == original, "replacement rejected: no changed suggestion");
             return out;
         }
         let Some(pending) = self.pending_spelling.take() else {
-            tracing::warn!(target: "okbs_spelling", "replacement rejected: snapshot missing or invalidated");
+            tracing::debug!(target: "okbs_spelling", "replacement rejected: snapshot missing or invalidated");
             return out;
         };
-        tracing::info!(target: "okbs_spelling",
+        tracing::debug!(target: "okbs_spelling",
             age_ms = pending.captured_at.elapsed().as_millis() as u64,
             snapshot_target = ?pending.last.target, separator_count = pending.last.separator.len(),
             "validating replacement snapshot");
@@ -2415,7 +2415,7 @@ impl Processor {
             || !matches!(last.separator.as_slice(), [separator] if separator.key == PhysKey::Space)
             || layouts::render(&last.keys, self.detector.keymap(last.shown_in())) != original
         {
-            tracing::warn!(target: "okbs_spelling",
+            tracing::debug!(target: "okbs_spelling",
                 original_matches = pending.original == original,
                 target_matches = last.target == Some(target),
                 space_terminated = matches!(last.separator.as_slice(), [s] if s.key == PhysKey::Space),
@@ -2429,9 +2429,9 @@ impl Processor {
                 .focus
                 .as_ref()
                 .ok_or(PlatformError::Unsupported("spelling correction target"))?;
-            tracing::info!(target: "okbs_spelling", ?target, "restoring editor focus");
+            tracing::debug!(target: "okbs_spelling", ?target, "restoring editor focus");
             focus.activate_target(target)?;
-            tracing::info!(target: "okbs_spelling", ?target, "editor focus restored");
+            tracing::debug!(target: "okbs_spelling", ?target, "editor focus restored");
             if matches!(focus.is_password_field(), Ok(Some(true))) {
                 return Err(PlatformError::Other(
                     "spelling correction is disabled in this control".into(),
@@ -2445,18 +2445,18 @@ impl Processor {
             }
             self.operation_target = Some(target);
             let replacement = format!("{corrected} ");
-            tracing::info!(target: "okbs_spelling", erase = last.keys.len() + 1,
+            tracing::debug!(target: "okbs_spelling", erase = last.keys.len() + 1,
                 paste_chars = replacement.chars().count(), "starting spelling paste");
             self.paste_replacement(&replacement, last.keys.len() + 1, 0)
         })();
         self.operation_target = None;
         if let Err(err) = result {
-            tracing::warn!(target: "okbs_spelling", %err, "replacement failed");
+            tracing::debug!(target: "okbs_spelling", %err, "replacement failed");
             self.fail("spelling correction failed", &err, &mut out);
             return out;
         }
         self.reset_all();
-        tracing::info!(target: "okbs_spelling", ?target,
+        tracing::debug!(target: "okbs_spelling", ?target,
             "replacement input sent successfully; editor text not read back");
         out.push(Event::SpellingCorrected);
         out

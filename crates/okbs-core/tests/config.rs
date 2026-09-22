@@ -503,33 +503,20 @@ fn save_is_atomic_and_readable() {
     assert_eq!(loaded.config, cfg);
 }
 
-/// «Диагностика» only raises the verbosity; it never lowers a level the user
-/// set in the file by hand.
 #[test]
-fn diagnostics_raise_the_log_level_without_losing_the_configured_one() {
+fn logging_is_disabled_by_default_and_exposes_three_ui_levels() {
     use okbs_core::config::{Log, LogLevel};
-    let quiet = Log {
-        debug: false,
-        level: LogLevel::Warn,
+    let configured = Log {
+        enabled: true,
+        level: LogLevel::Error,
         keep_files: 7,
     };
-    assert_eq!(quiet.effective_level(), LogLevel::Warn);
+    assert!(configured.enabled);
     assert_eq!(
-        Log {
-            debug: true,
-            ..quiet.clone()
-        }
-        .effective_level(),
-        LogLevel::Debug
+        Log::LEVELS,
+        [LogLevel::Error, LogLevel::Info, LogLevel::Debug]
     );
-    let verbose = Log {
-        debug: true,
-        level: LogLevel::Trace,
-        keep_files: 7,
-    };
-    assert_eq!(verbose.effective_level(), LogLevel::Trace);
-    assert!(!Log::default().debug, "diagnostics are off by default");
-    assert_eq!(Log::default().effective_level(), LogLevel::Info);
+    assert!(!Log::default().enabled, "logging is off by default");
 }
 
 /// Configurations written before the option existed keep working.
@@ -539,12 +526,15 @@ fn a_config_without_the_diagnostics_key_loads_with_it_off() {
     let path = dir.path().join("config.toml");
     std::fs::write(&path, "[log]\nlevel = \"warn\"\nkeep_files = 3\n").unwrap();
     let loaded = config::load_or_create(&path).unwrap();
-    assert!(!loaded.config.log.debug);
+    assert!(!loaded.config.log.enabled);
     assert_eq!(loaded.config.log.keep_files, 3);
     assert!(!loaded.issues.iter().any(ConfigIssue::is_error));
 
     std::fs::write(&path, "[log]\ndebug = true\n").unwrap();
     let loaded = config::load_or_create(&path).unwrap();
-    assert!(loaded.config.log.debug);
-    assert_eq!(loaded.config.log.effective_level(), config::LogLevel::Debug);
+    assert!(
+        loaded.config.log.enabled,
+        "the old debug key enables logging"
+    );
+    assert_eq!(loaded.config.log.level, config::LogLevel::Info);
 }

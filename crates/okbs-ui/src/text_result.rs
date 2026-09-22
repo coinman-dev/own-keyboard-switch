@@ -197,19 +197,21 @@ impl TextResult {
             return None;
         };
         if let Some((misspelling, choice)) = misspellings.iter().zip(&mut self.choices).next() {
-            ui.horizontal(|ui| {
-                ui.label(&misspelling.word);
-                let label = choice
-                    .and_then(|index| misspelling.suggestions.get(index))
-                    .map_or(tr(Text::SpellingKeep, lang), String::as_str);
-                egui::ComboBox::from_id_salt("spelling_popup_choice")
-                    .selected_text(label)
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(choice, None, tr(Text::SpellingKeep, lang));
-                        for (index, suggestion) in misspelling.suggestions.iter().enumerate() {
-                            ui.selectable_value(choice, Some(index), suggestion);
-                        }
-                    });
+            ui.vertical_centered(|ui| {
+                ui.horizontal(|ui| {
+                    ui.label(&misspelling.word);
+                    let label = choice
+                        .and_then(|index| misspelling.suggestions.get(index))
+                        .map_or(tr(Text::SpellingKeep, lang), String::as_str);
+                    egui::ComboBox::from_id_salt("spelling_popup_choice")
+                        .selected_text(label)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(choice, None, tr(Text::SpellingKeep, lang));
+                            for (index, suggestion) in misspelling.suggestions.iter().enumerate() {
+                                ui.selectable_value(choice, Some(index), suggestion);
+                            }
+                        });
+                });
             });
         }
         let mut replace = false;

@@ -119,12 +119,13 @@ fn run(cli: Cli) -> Result<ExitCode> {
 
     // «Диагностика» in the settings window, or `--debug` for a single run.
     let level = if cli.debug {
-        LogLevel::Debug.max(loaded.config.log.level)
+        LogLevel::Debug
     } else {
-        loaded.config.log.effective_level()
+        loaded.config.log.level
     };
     let _log = logging::init(
         &paths.log_dir,
+        loaded.config.log.enabled,
         level,
         loaded.config.log.keep_files,
         cli.debug,
@@ -134,6 +135,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         os = std::env::consts::OS,
         log_dir = %paths.log_dir.display(),
         spelling_diagnostics = 1,
+        log_enabled = loaded.config.log.enabled || cli.debug,
         log_level = ?level,
         typed_spelling = loaded.config.spellcheck.check_typed_words,
         spelling_mode = ?loaded.config.spellcheck.typed_mode,

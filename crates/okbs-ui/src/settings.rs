@@ -12,8 +12,8 @@ use crate::i18n::{Text, hotkey_action_text, tr};
 use egui::{Color32, RichText, Ui};
 use okbs_core::config::{
     AutoReplaceItem, AutoReplaceTrigger, Config, ExecutableExclusion, FolderExclusion,
-    HotkeyAction, HotkeyBinding, MatchKind, Rule, RuleAction, SoundEvent, SoundMode, SwitchKey,
-    Theme, TitleExclusion, TypedSpellcheckMode, UiLanguage,
+    HotkeyAction, HotkeyBinding, LogLevel, MatchKind, Rule, RuleAction, SoundEvent, SoundMode,
+    SwitchKey, Theme, TitleExclusion, TypedSpellcheckMode, UiLanguage,
 };
 use okbs_core::{Hotkey, Lang};
 
@@ -166,6 +166,8 @@ pub enum SettingsEvent {
     },
     /// Download a vetted optional Hunspell package.
     DownloadDictionary(String),
+    /// Remove an installed optional Hunspell package.
+    DeleteDictionary(String),
     /// Apply an explicitly chosen spelling replacement to its original input target.
     ReplaceSpelling {
         request_id: u64,
@@ -342,7 +344,7 @@ pub struct SettingsView {
     flag_textures: FlagTextures,
     pending_autoreplace: std::collections::VecDeque<String>,
     new_spell_word: String,
-    en_gb_state: DictionaryState,
+    dictionary_states: std::collections::BTreeMap<String, DictionaryState>,
 }
 
 fn weak(ui: &mut Ui, text: &str) {
@@ -547,7 +549,10 @@ impl SettingsView {
             flag_textures: FlagTextures::default(),
             pending_autoreplace: std::collections::VecDeque::new(),
             new_spell_word: String::new(),
-            en_gb_state: DictionaryState::Unavailable,
+            dictionary_states: ["en-gb", "ru-modern"]
+                .into_iter()
+                .map(|id| (id.to_string(), DictionaryState::Unavailable))
+                .collect(),
         }
     }
 
@@ -617,13 +622,17 @@ impl SettingsView {
                 self.general_tab = GeneralTab::Basic;
                 self.dialog = Some(Dialog::Elevation { failed });
             }
-            SettingsInput::DictionaryState { id, state } if id == "en-gb" => {
-                self.en_gb_state = state;
+            SettingsInput::DictionaryState { id, state } => {
+                self.dictionary_states.insert(id.clone(), state);
                 if state != DictionaryState::Available {
-                    self.draft.spellcheck.english_dictionary = None;
+                    if self.draft.spellcheck.english_dictionary.as_deref() == Some(&id) {
+                        self.draft.spellcheck.english_dictionary = None;
+                    }
+                    if self.draft.spellcheck.russian_dictionary.as_deref() == Some(&id) {
+                        self.draft.spellcheck.russian_dictionary = None;
+                    }
                 }
             }
-            SettingsInput::DictionaryState { .. } => {}
             SettingsInput::SpellingReplacementFinished { .. } => {}
             SettingsInput::SuggestRule(rule) => {
                 self.section = Section::Rules;
@@ -1310,7 +1319,27 @@ impl SettingsView {
         ui.group(|ui| {
             ui.set_min_width(ui.available_width());
             ui.label(RichText::new(tr(Text::GroupDiagnostics, lang)).strong());
-            ui.checkbox(&mut self.draft.log.debug, tr(Text::OptLogDebug, lang));
+            ui.checkbox(&mut self.draft.log.enabled, tr(Text::OptLogEnabled, lang));
+            ui.add_enabled_ui(self.draft.log.enabled, |ui| {
+                let level_text = |level| match level {
+                    LogLevel::Error => Text::LogLevelError,
+                    LogLevel::Debug => Text::LogLevelDebug,
+                    _ => Text::LogLevelInfo,
+                };
+                form_row(ui, tr(Text::LogLevel, lang), |ui| {
+                    egui::ComboBox::from_id_salt("log_level")
+                        .selected_text(tr(level_text(self.draft.log.level), lang))
+                        .show_ui(ui, |ui| {
+                            for level in okbs_core::config::Log::LEVELS {
+                                ui.selectable_value(
+                                    &mut self.draft.log.level,
+                                    level,
+                                    tr(level_text(level), lang),
+                                );
+                            }
+                        });
+                });
+            });
             ui.label(RichText::new(tr(Text::LogDebugHint, lang)).weak().small());
         });
         ui.add_space(10.0);
@@ -1525,6 +1554,7 @@ impl SettingsView {
         ui.label(RichText::new(tr(Text::SpellcheckHint, lang)).weak().small());
         ui.add_space(12.0);
         ui.label(tr(Text::SpellcheckExtraDictionaries, lang));
+        ui.label(tr(Text::SpellcheckEnglishDictionary, lang));
         egui::ComboBox::from_id_salt("english_dictionary")
             .selected_text(match spellcheck.english_dictionary.as_deref() {
                 Some("en-gb") => tr(Text::SpellcheckEnGb, lang),
@@ -1536,36 +1566,87 @@ impl SettingsView {
                     None,
                     tr(Text::SpellcheckBuiltinEn, lang),
                 );
-                ui.add_enabled_ui(self.en_gb_state == DictionaryState::Available, |ui| {
+                if self.dictionary_states.get("en-gb") == Some(&DictionaryState::Available) {
                     ui.selectable_value(
                         &mut spellcheck.english_dictionary,
                         Some("en-gb".into()),
                         tr(Text::SpellcheckEnGb, lang),
                     );
+                }
+            });
+        ui.label(tr(Text::SpellcheckRussianDictionary, lang));
+        egui::ComboBox::from_id_salt("russian_dictionary")
+            .selected_text(match spellcheck.russian_dictionary.as_deref() {
+                Some("ru-modern") => tr(Text::SpellcheckRuModern, lang),
+                _ => tr(Text::SpellcheckBuiltinRu, lang),
+            })
+            .show_ui(ui, |ui| {
+                ui.selectable_value(
+                    &mut spellcheck.russian_dictionary,
+                    None,
+                    tr(Text::SpellcheckBuiltinRu, lang),
+                );
+                if self.dictionary_states.get("ru-modern") == Some(&DictionaryState::Available) {
+                    ui.selectable_value(
+                        &mut spellcheck.russian_dictionary,
+                        Some("ru-modern".into()),
+                        tr(Text::SpellcheckRuModern, lang),
+                    );
+                }
+            });
+        ui.add_space(8.0);
+        for (id, label) in [
+            ("en-gb", Text::SpellcheckEnGb),
+            ("ru-modern", Text::SpellcheckRuModern),
+        ] {
+            let state = self
+                .dictionary_states
+                .get(id)
+                .copied()
+                .unwrap_or(DictionaryState::Unavailable);
+            ui.horizontal(|ui| {
+                ui.label(tr(label, lang));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let (button, event) = if state == DictionaryState::Available {
+                        (
+                            Text::DictionaryDelete,
+                            SettingsEvent::DeleteDictionary(id.into()),
+                        )
+                    } else {
+                        (
+                            Text::DictionaryDownload,
+                            SettingsEvent::DownloadDictionary(id.into()),
+                        )
+                    };
+                    if ui
+                        .add_enabled(
+                            state != DictionaryState::Downloading,
+                            egui::Button::new(tr(button, lang)),
+                        )
+                        .clicked()
+                    {
+                        events.push(event);
+                    }
+                    ui.label(tr(
+                        match state {
+                            DictionaryState::Unavailable => Text::DictionaryNotInstalled,
+                            DictionaryState::Downloading => Text::DictionaryDownloading,
+                            DictionaryState::Available => Text::DictionaryInstalled,
+                            DictionaryState::Failed => Text::DictionaryDownloadFailed,
+                        },
+                        lang,
+                    ));
                 });
             });
-        if ui
-            .add_enabled(
-                self.en_gb_state != DictionaryState::Downloading,
-                egui::Button::new(tr(Text::SpellcheckDownloadEnGb, lang)),
-            )
-            .clicked()
-        {
-            events.push(SettingsEvent::DownloadDictionary("en-gb".into()));
+            if state == DictionaryState::Downloading {
+                ui.add(
+                    egui::ProgressBar::new(0.5)
+                        .animate(true)
+                        .desired_width(ui.available_width()),
+                );
+                ui.ctx().request_repaint();
+            }
         }
-        ui.label(
-            RichText::new(tr(
-                match self.en_gb_state {
-                    DictionaryState::Unavailable => Text::DictionaryNotInstalled,
-                    DictionaryState::Downloading => Text::DictionaryDownloading,
-                    DictionaryState::Available => Text::DictionaryInstalled,
-                    DictionaryState::Failed => Text::DictionaryDownloadFailed,
-                },
-                lang,
-            ))
-            .weak()
-            .small(),
-        );
         ui.add_space(12.0);
         ui.label(tr(Text::SpellcheckPersonalWords, lang));
         ui.horizontal(|ui| {
@@ -2269,22 +2350,23 @@ mod tests {
             let mut config = Config::default();
             config.general.ui_language = lang.into();
             let mut view = SettingsView::new(config, Section::Troubleshooting, Lang::Ru);
-            assert!(!view.draft.log.debug);
+            assert!(!view.draft.log.enabled);
             let shown: Vec<String> = drawn_texts(&mut view, &ctx)
                 .into_iter()
                 .map(|(text, _)| text)
                 .collect();
             assert!(
-                shown.iter().any(|t| t == tr(Text::OptLogDebug, lang)),
+                shown.iter().any(|t| t == tr(Text::OptLogEnabled, lang)),
                 "the option must be visible in {lang:?}: {shown:?}"
             );
             // The group sits at the end of a scrolling section, so the value
             // is set directly instead of clicking at a scrolled position.
-            view.draft.log.debug = true;
+            view.draft.log.enabled = true;
+            view.draft.log.level = LogLevel::Error;
             let mut events = Vec::new();
             view.apply(&mut events);
             assert!(
-                matches!(events.as_slice(), [SettingsEvent::Apply(config)] if config.log.debug),
+                matches!(events.as_slice(), [SettingsEvent::Apply(config)] if config.log.enabled && config.log.level == LogLevel::Error),
                 "applying carries the option to the program"
             );
         }
