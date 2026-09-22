@@ -24,6 +24,7 @@ okbs-engine.workspace = true
 okbs-platform.workspace = true
 okbs-ui.workspace = true
 sha2.workspace = true
+spellbook.workspace = true
 tracing.workspace = true
 tracing-appender.workspace = true
 tracing-subscriber.workspace = true

@@ -19,7 +19,7 @@ use okbs_ui::text_result::TextResult;
 use okbs_ui::tray::{Tray, TrayCommand, TrayState};
 use okbs_ui::window::SettingsWindow;
 use okbs_ui::{Text, tr};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 /// How long the icon stays amber after a possible typo.
@@ -37,23 +37,71 @@ struct SpellingResult {
     misspellings: Vec<okbs_core::spell::Misspelling>,
 }
 
+#[derive(Debug)]
+struct DictionaryProvider {
+    root: PathBuf,
+    selected_english: Option<String>,
+    english: Option<spellbook::Dictionary>,
+}
+
+impl DictionaryProvider {
+    fn new(root: PathBuf) -> Self {
+        Self {
+            root,
+            selected_english: None,
+            english: None,
+        }
+    }
+
+    fn select(&mut self, id: Option<&str>) {
+        if self.selected_english.as_deref() == id {
+            return;
+        }
+        self.selected_english = id.map(str::to_string);
+        self.english = id.and_then(|id| self.load(id));
+    }
+
+    fn load(&self, id: &str) -> Option<spellbook::Dictionary> {
+        let directory = crate::dictionaries::package(id)
+            .map(|package| crate::dictionaries::package_dir(&self.root, package))?;
+        let aff = std::fs::read_to_string(directory.join("dictionary.aff")).ok()?;
+        let dic = std::fs::read_to_string(directory.join("dictionary.dic")).ok()?;
+        spellbook::Dictionary::new(&aff, &dic).ok()
+    }
+
+    fn dictionary(&self, lang: okbs_core::Lang) -> &spellbook::Dictionary {
+        if lang == okbs_core::Lang::En
+            && let Some(dictionary) = &self.english
+        {
+            dictionary
+        } else {
+            okbs_core::data::dictionary(lang)
+        }
+    }
+}
+
 /// One worker keeps dictionary suggestions off the input and tray threads.
-fn spelling_worker() -> std::io::Result<(Sender<SpellingJob>, Receiver<SpellingResult>)> {
+fn spelling_worker(
+    root: PathBuf,
+) -> std::io::Result<(Sender<SpellingJob>, Receiver<SpellingResult>)> {
     let (requests, input) = unbounded::<SpellingJob>();
     let (output, results) = unbounded();
     std::thread::Builder::new()
         .name("okbs-spelling".into())
         .spawn(move || {
+            let mut dictionaries = DictionaryProvider::new(root);
             while let Ok(mut job) = input.recv() {
                 // Rapid repeated requests only need the most recent snapshot.
                 for newer in input.try_iter() {
                     job = newer;
                 }
-                let misspellings = okbs_core::spell::check_text(
+                dictionaries.select(job.settings.english_dictionary.as_deref());
+                let misspellings = okbs_core::spell::check_text_with_words(
                     &job.text,
                     &job.settings.languages,
                     job.settings.max_suggestions as usize,
-                    okbs_core::data::dictionary,
+                    &job.settings.custom_words,
+                    |lang| dictionaries.dictionary(lang),
                 );
                 if output.send(SpellingResult { job, misspellings }).is_err() {
                     break;
@@ -175,6 +223,11 @@ impl Controller {
         layout: Option<LayoutInfo>,
         use_tray: bool,
     ) -> Self {
+        let dictionary_root = settings
+            .path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("dictionaries");
         if let Some(autostart) = &platform.autostart {
             // Show the real state; the registry is only written when the user changes the option.
             match autostart.is_enabled() {
@@ -242,7 +295,7 @@ impl Controller {
             layouts,
             layout,
             alert_until: None,
-            spelling: spelling_worker()
+            spelling: spelling_worker(dictionary_root)
                 .map_err(|err| tracing::error!("cannot start spelling worker: {err}"))
                 .ok(),
             spelling_id: 0,
@@ -432,7 +485,7 @@ impl Controller {
         let result = if beep {
             player.beep()
         } else if let Some(file) = file {
-            player.play_file(std::path::Path::new(&file))
+            player.play_file(Path::new(&file))
         } else {
             player.play_wav(sounds::wav(builtin))
         };
@@ -644,12 +697,7 @@ impl Controller {
                     tracing::warn!(%id, "unknown dictionary package requested");
                     return;
                 };
-                let Some(data_dir) = self
-                    .settings
-                    .path
-                    .parent()
-                    .map(std::path::Path::to_path_buf)
-                else {
+                let Some(data_dir) = self.settings.path.parent().map(Path::to_path_buf) else {
                     tracing::warn!("dictionary directory is unavailable");
                     return;
                 };
@@ -922,7 +970,8 @@ mod tests {
 
     #[test]
     fn spelling_worker_checks_the_snapshot_with_requested_languages() {
-        let (requests, results) = spelling_worker().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let (requests, results) = spelling_worker(root.path().to_path_buf()).unwrap();
         requests
             .send(SpellingJob {
                 id: 17,

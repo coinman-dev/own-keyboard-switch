@@ -224,6 +224,17 @@ impl Config {
                 message: "empty list, using [\"ru\", \"en\"]".to_string(),
             });
         }
+        sp.english_dictionary = sp.english_dictionary.take().filter(|id| id == "en-gb");
+        sp.custom_words.retain(|word| {
+            word.chars().filter(|c| c.is_alphabetic()).count() >= 2
+                && word
+                    .chars()
+                    .all(|c| c.is_alphabetic() || crate::lm::is_joiner(c))
+        });
+        sp.custom_words
+            .sort_unstable_by_key(|word| word.to_lowercase());
+        sp.custom_words
+            .dedup_by(|left, right| left.eq_ignore_ascii_case(right));
 
         clamp_u32(&mut self.log.keep_files, 1, 365, "log.keep_files", i);
 

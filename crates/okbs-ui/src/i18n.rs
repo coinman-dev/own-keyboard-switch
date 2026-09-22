@@ -89,6 +89,10 @@ texts! {
     SpellcheckLanguages => "Проверять языки:", "Languages to check:";
     SpellcheckExtraDictionaries => "Дополнительные словари", "Additional dictionaries";
     SpellcheckDownloadEnGb => "Скачать английский (Великобритания)", "Download English (United Kingdom)";
+    SpellcheckBuiltinEn => "Встроенный английский (США)", "Built-in English (United States)";
+    SpellcheckEnGb => "Английский (Великобритания)", "English (United Kingdom)";
+    SpellcheckPersonalWords => "Мои слова", "My words";
+    SpellcheckAddWord => "Добавить", "Add";
     OptClipboardHistory => "Следить за буфером обмена", "Watch the clipboard";
     OptClipboardHistoryPersist => "Сохранять историю буфера обмена после перезагрузки", "Keep clipboard history after restart";
     OptShowTooltips => "Показывать всплывающие подсказки", "Show tooltips";

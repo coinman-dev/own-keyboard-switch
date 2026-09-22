@@ -65,6 +65,17 @@ pub fn check_text<'d>(
     max_suggestions: usize,
     dictionary: impl Fn(Lang) -> &'d spellbook::Dictionary,
 ) -> Vec<Misspelling> {
+    check_text_with_words(text, langs, max_suggestions, &[], dictionary)
+}
+
+/// Like [`check_text`], accepting additional user-approved words.
+pub fn check_text_with_words<'d>(
+    text: &str,
+    langs: &[Lang],
+    max_suggestions: usize,
+    accepted_words: &[String],
+    dictionary: impl Fn(Lang) -> &'d spellbook::Dictionary,
+) -> Vec<Misspelling> {
     let mut out = Vec::new();
     for (range, word) in words(text) {
         if word.chars().filter(|c| c.is_alphabetic()).count() < 2 {
@@ -74,7 +85,11 @@ pub fn check_text<'d>(
             continue;
         };
         let dict = dictionary(lang);
-        if dict.check(word) {
+        if dict.check(word)
+            || accepted_words
+                .iter()
+                .any(|known| known.eq_ignore_ascii_case(word))
+        {
             continue;
         }
         let mut suggestions = Vec::new();

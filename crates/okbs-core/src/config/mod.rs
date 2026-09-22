@@ -732,6 +732,10 @@ pub struct Spellcheck {
     pub check_typed_words: bool,
     /// A spellcheck command uses selected text before falling back to clipboard text.
     pub prefer_selection: bool,
+    /// Identifier of an optional downloaded English dictionary, if installed.
+    pub english_dictionary: Option<String>,
+    /// Words accepted locally in addition to Hunspell.
+    pub custom_words: Vec<String>,
     /// Dictionaries to use.
     pub languages: Vec<Lang>,
     /// Suggestions shown per misspelled word.
@@ -746,6 +750,8 @@ impl Default for Spellcheck {
             enabled: true,
             check_typed_words: false,
             prefer_selection: true,
+            english_dictionary: None,
+            custom_words: Vec::new(),
             languages: vec![Lang::Ru, Lang::En],
             max_suggestions: 5,
             show_result_window: true,

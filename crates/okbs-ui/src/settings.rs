@@ -316,6 +316,7 @@ pub struct SettingsView {
     layouts: Vec<LayoutEntry>,
     flag_textures: FlagTextures,
     pending_autoreplace: std::collections::VecDeque<String>,
+    new_spell_word: String,
 }
 
 fn weak(ui: &mut Ui, text: &str) {
@@ -539,6 +540,7 @@ impl SettingsView {
             layouts: Vec::new(),
             flag_textures: FlagTextures::default(),
             pending_autoreplace: std::collections::VecDeque::new(),
+            new_spell_word: String::new(),
         }
     }
 
@@ -1489,8 +1491,50 @@ impl SettingsView {
             ui.label(RichText::new(tr(Text::SpellcheckHint, lang)).weak().small());
             ui.add_space(12.0);
             ui.label(tr(Text::SpellcheckExtraDictionaries, lang));
+            egui::ComboBox::from_id_salt("english_dictionary")
+                .selected_text(match spellcheck.english_dictionary.as_deref() {
+                    Some("en-gb") => tr(Text::SpellcheckEnGb, lang),
+                    _ => tr(Text::SpellcheckBuiltinEn, lang),
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut spellcheck.english_dictionary,
+                        None,
+                        tr(Text::SpellcheckBuiltinEn, lang),
+                    );
+                    ui.selectable_value(
+                        &mut spellcheck.english_dictionary,
+                        Some("en-gb".into()),
+                        tr(Text::SpellcheckEnGb, lang),
+                    );
+                });
             if ui.button(tr(Text::SpellcheckDownloadEnGb, lang)).clicked() {
                 events.push(SettingsEvent::DownloadDictionary("en-gb".into()));
+            }
+            ui.add_space(12.0);
+            ui.label(tr(Text::SpellcheckPersonalWords, lang));
+            ui.horizontal(|ui| {
+                ui.text_edit_singleline(&mut self.new_spell_word);
+                if ui.button(tr(Text::SpellcheckAddWord, lang)).clicked()
+                    && !self.new_spell_word.trim().is_empty()
+                {
+                    spellcheck
+                        .custom_words
+                        .push(self.new_spell_word.trim().into());
+                    self.new_spell_word.clear();
+                }
+            });
+            let mut remove = None;
+            for (index, word) in spellcheck.custom_words.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.label(word);
+                    if ui.small_button("×").clicked() {
+                        remove = Some(index);
+                    }
+                });
+            }
+            if let Some(index) = remove {
+                spellcheck.custom_words.remove(index);
             }
         });
     }
