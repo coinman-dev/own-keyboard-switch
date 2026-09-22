@@ -175,6 +175,12 @@ pub enum SettingsEvent {
     },
     /// Download a vetted optional Hunspell package.
     DownloadDictionary(String),
+    /// Apply an explicitly chosen spelling replacement to its original input target.
+    ReplaceSpelling {
+        target: (u64, u64),
+        original: String,
+        corrected: String,
+    },
     /// Restart the program asking the system for administrator rights.
     RestartElevated,
     /// The window was closed.
@@ -211,6 +217,8 @@ pub enum SettingsInput {
         id: String,
         state: DictionaryState,
     },
+    /// The original input target of a spelling popup is still active.
+    SpellingTargetActive(bool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -641,6 +649,7 @@ impl SettingsView {
                 }
             }
             SettingsInput::DictionaryState { .. } => {}
+            SettingsInput::SpellingTargetActive(_) => {}
             SettingsInput::SuggestRule(rule) => {
                 self.section = Section::Rules;
                 self.dialog = Some(Dialog::Rule {

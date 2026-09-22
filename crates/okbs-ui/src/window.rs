@@ -24,7 +24,13 @@ pub(crate) enum Request {
         Option<SettingsInput>,
         Vec<LayoutEntry>,
     ),
-    OpenText(Box<Config>, TextResult, bool, Option<[f32; 2]>),
+    OpenText(
+        Box<Config>,
+        TextResult,
+        bool,
+        Option<[f32; 2]>,
+        Option<(u64, u64)>,
+    ),
     Input(SettingsInput),
     List(ListRequest),
     History(HistoryRequest),
@@ -115,6 +121,10 @@ struct App {
     settings_visible: bool,
     text_result: Option<TextResult>,
     text_result_position: Option<[f32; 2]>,
+    spellcheck_result: Option<TextResult>,
+    spellcheck_position: Option<[f32; 2]>,
+    spellcheck_target: Option<(u64, u64)>,
+    spellcheck_target_active: bool,
     root: Root,
     list: ListView,
     history: HistoryView,
@@ -152,6 +162,10 @@ impl App {
         self.id_of(Root::History)
     }
 
+    fn spellcheck_id(&self) -> egui::ViewportId {
+        egui::ViewportId::from_hash_of("spellcheck-popup")
+    }
+
     fn show_settings(&self, ctx: &egui::Context) {
         self.shared.open.store(true, Ordering::SeqCst);
         for command in [
@@ -160,23 +174,6 @@ impl App {
             egui::ViewportCommand::Focus,
         ] {
             ctx.send_viewport_cmd_to(self.settings_id(), command);
-        }
-        ctx.request_repaint();
-    }
-
-    fn show_settings_passive(&self, ctx: &egui::Context, position: Option<[f32; 2]>) {
-        self.shared.open.store(true, Ordering::SeqCst);
-        for command in [
-            egui::ViewportCommand::Visible(true),
-            egui::ViewportCommand::Minimized(false),
-        ] {
-            ctx.send_viewport_cmd_to(self.settings_id(), command);
-        }
-        if let Some(position) = position {
-            ctx.send_viewport_cmd_to(
-                self.settings_id(),
-                egui::ViewportCommand::OuterPosition(position.into()),
-            );
         }
         ctx.request_repaint();
     }
@@ -237,19 +234,30 @@ impl App {
                         self.view.handle(input);
                     }
                 }
-                Request::OpenText(config, result, focus, position) => {
-                    self.text_result = Some(result);
-                    self.text_result_position = position;
+                Request::OpenText(config, result, focus, position, target) => {
                     self.set_appearance(ctx, config.general.ui_language, config.general.theme);
                     if focus {
+                        self.text_result = Some(result);
+                        self.text_result_position = position;
                         self.show_settings(ctx);
                     } else {
-                        self.show_settings_passive(ctx, position);
+                        self.spellcheck_result = Some(result);
+                        self.spellcheck_position = position;
+                        self.spellcheck_target = target;
+                        self.spellcheck_target_active = target.is_some();
+                        ctx.send_viewport_cmd_to(
+                            self.spellcheck_id(),
+                            egui::ViewportCommand::Visible(true),
+                        );
+                        ctx.request_repaint_of(self.spellcheck_id());
                     }
                 }
                 Request::Input(input) => {
                     if let SettingsInput::ConfigChanged(config) = &input {
                         self.set_appearance(ctx, config.general.ui_language, config.general.theme);
+                    }
+                    if let SettingsInput::SpellingTargetActive(active) = &input {
+                        self.spellcheck_target_active = *active;
                     }
                     self.view.handle(input);
                 }
@@ -345,6 +353,29 @@ impl App {
         self.history.keep_on_screen(ctx);
     }
 
+    fn spellcheck_ui(&mut self, ui: &mut egui::Ui) {
+        let Some(result) = &mut self.spellcheck_result else { return };
+        if let Some(corrected) = result.ui(ui, self.lang, self.spellcheck_target_active)
+            && let Some(target) = self.spellcheck_target
+        {
+            let _ = self.events.send(SettingsEvent::ReplaceSpelling {
+                target,
+                original: result.original().to_string(),
+                corrected,
+            });
+            self.spellcheck_result = None;
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            return;
+        }
+        #[cfg(windows)]
+        let _ = crate::window_position::keep_visible(result.title(self.lang), self.spellcheck_position);
+        if ui.ctx().input(|input| input.viewport().close_requested()) {
+            self.spellcheck_result = None;
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        }
+    }
+
     fn settings_ui(&mut self, ui: &mut egui::Ui) {
         if ui.ctx().input(|i| i.viewport().close_requested()) {
             self.close_settings(ui.ctx());
@@ -365,12 +396,14 @@ impl App {
                     .id(egui::Id::new("clipboard_result"))
                     .default_width(560.0)
                     .open(&mut open)
-                    .show(ui.ctx(), |ui| result.ui(ui, self.lang));
+                    .show(ui.ctx(), |ui| {
+                        let _ = result.ui(ui, self.lang, false);
+                    });
                 if !open {
                     self.text_result = None;
                 }
             } else {
-                result.ui(ui, self.lang);
+                let _ = result.ui(ui, self.lang, false);
                 #[cfg(windows)]
                 if result.is_compact() {
                     let _ = crate::window_position::keep_visible(
@@ -425,6 +458,19 @@ impl eframe::App for App {
                 self.history.ui(ui)
             });
         }
+        let builder = egui::ViewportBuilder::default()
+            .with_title(tr(Text::SpellcheckWordTitle, self.lang))
+            .with_icon(crate::branding::icon())
+            .with_inner_size([390.0, 160.0])
+            .with_min_inner_size([300.0, 120.0])
+            .with_max_inner_size([520.0, 220.0])
+            .with_resizable(false)
+            .with_maximize_button(false)
+            .with_always_on_top()
+            .with_active(false)
+            .with_visible(self.spellcheck_result.is_some())
+            .with_position(self.spellcheck_position.unwrap_or([24.0, 24.0]));
+        ctx.show_viewport_immediate(self.spellcheck_id(), builder, |ui, _| self.spellcheck_ui(ui));
     }
 }
 
@@ -530,6 +576,7 @@ impl SettingsWindow {
             result,
             true,
             None,
+            None,
         ));
         self.shared.wake();
     }
@@ -541,12 +588,14 @@ impl SettingsWindow {
         config: &Config,
         result: TextResult,
         position: Option<[f32; 2]>,
+        target: Option<(u64, u64)>,
     ) {
         let _ = self.requests.send(Request::OpenText(
             Box::new(config.clone()),
             result,
             false,
             position,
+            target,
         ));
         self.shared.wake();
     }
@@ -600,21 +649,26 @@ fn window_thread(
     system_language: Lang,
 ) {
     while let Ok(request) = requests.recv() {
-        let passive = matches!(&request, Request::OpenText(_, _, false, _));
+        let passive = matches!(&request, Request::OpenText(_, _, false, _, _));
         let mut initial_list = None;
         let mut initial_history = None;
+        let mut initial_spellcheck = None;
+        let mut initial_spellcheck_position = None;
+        let mut initial_spellcheck_target = None;
         let (config, section, input, layouts, text_result, settings_visible) = match request {
             Request::Open(config, section, input, layouts) => {
                 (config, section, input, layouts, None, true)
             }
-            Request::OpenText(config, result, _, position) => (
-                config,
-                Section::General,
-                None,
-                Vec::new(),
-                Some((result, position)),
-                false,
-            ),
+            Request::OpenText(config, result, _, position, target) => {
+                if passive {
+                    initial_spellcheck = Some(result);
+                    initial_spellcheck_position = position;
+                    initial_spellcheck_target = target;
+                    (config, Section::General, None, Vec::new(), None, false)
+                } else {
+                    (config, Section::General, None, Vec::new(), Some((result, position)), false)
+                }
+            }
             Request::Input(_) => continue,
             Request::List(ListRequest::Show(list)) => {
                 let mut config = Config::default();
@@ -692,6 +746,7 @@ fn window_thread(
         }
         if passive {
             options.viewport = options.viewport.with_active(false);
+            options.viewport = options.viewport.with_visible(false);
         }
         match root {
             Root::List => {
@@ -729,6 +784,10 @@ fn window_thread(
                     settings_visible,
                     text_result,
                     text_result_position,
+                    spellcheck_result: initial_spellcheck,
+                    spellcheck_position: initial_spellcheck_position,
+                    spellcheck_target: initial_spellcheck_target,
+                    spellcheck_target_active: initial_spellcheck_target.is_some(),
                     root,
                     list,
                     history,
@@ -770,6 +829,10 @@ mod tests {
                 settings_visible: true,
                 text_result: None,
                 text_result_position: None,
+                spellcheck_result: None,
+                spellcheck_position: None,
+                spellcheck_target: None,
+                spellcheck_target_active: false,
                 root,
                 list: ListView::default(),
                 history: HistoryView::default(),
@@ -812,6 +875,10 @@ mod tests {
             settings_visible: true,
             text_result: Some(TextResult::conversion("test".into())),
             text_result_position: None,
+            spellcheck_result: None,
+            spellcheck_position: None,
+            spellcheck_target: None,
+            spellcheck_target_active: false,
             root: Root::Settings,
             list: ListView::default(),
             history: HistoryView::default(),

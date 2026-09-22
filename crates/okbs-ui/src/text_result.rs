@@ -1,7 +1,7 @@
 //! Clipboard conversion and spelling results; no text is persisted or logged.
 
 use crate::i18n::{Text, tr};
-use egui::Ui;
+use egui::{RichText, Ui};
 use okbs_core::Lang;
 use okbs_core::spell::{Misspelling, apply_first_suggestions};
 
@@ -62,6 +62,10 @@ impl TextResult {
         self.compact
     }
 
+    pub fn original(&self) -> &str {
+        &self.original
+    }
+
     /// Localized window title.
     pub fn title(&self, lang: Lang) -> &'static str {
         tr(
@@ -97,12 +101,12 @@ impl TextResult {
 
     /// Shows suggestions and a selectable result preview. Copying is explicit
     /// and goes through eframe's clipboard output on the window thread.
-    pub fn ui(&mut self, ui: &mut Ui, lang: Lang) {
+    pub fn ui(&mut self, ui: &mut Ui, lang: Lang, can_replace: bool) -> Option<String> {
         ui.painter()
             .rect_filled(ui.max_rect(), 0.0, ui.visuals().panel_fill);
         crate::settings::content_style(ui);
         if self.compact {
-            return self.compact_ui(ui, lang);
+            return self.compact_ui(ui, lang, can_replace);
         }
         ui.heading(self.title(lang));
         if let Some(misspellings) = &self.spelling {
@@ -175,12 +179,13 @@ impl TextResult {
         if self.copied {
             ui.label(tr(Text::ResultCopied, lang));
         }
+        None
     }
 
-    fn compact_ui(&mut self, ui: &mut Ui, lang: Lang) {
+    fn compact_ui(&mut self, ui: &mut Ui, lang: Lang, can_replace: bool) -> Option<String> {
         ui.heading(tr(Text::SpellcheckWordTitle, lang));
         let Some(misspellings) = &self.spelling else {
-            return;
+            return None;
         };
         if let Some((misspelling, choice)) = misspellings.iter().zip(&mut self.choices).next() {
             ui.horizontal(|ui| {
@@ -198,13 +203,16 @@ impl TextResult {
                     });
             });
         }
-        if ui.button(tr(Text::CopyResult, lang)).clicked() {
-            ui.ctx().copy_text(self.text());
-            self.copied = true;
+        if ui
+            .add_enabled(can_replace, crate::settings::action_button(tr(Text::SpellcheckReplaceWord, lang)))
+            .clicked()
+        {
+            return Some(self.text());
         }
-        if self.copied {
-            ui.label(tr(Text::ResultCopied, lang));
+        if !can_replace {
+            ui.label(RichText::new(tr(Text::SpellcheckTargetChanged, lang)).weak().small());
         }
+        None
     }
 }
 
@@ -244,10 +252,14 @@ mod tests {
             let mut view = TextResult::conversion("private clipboard text".into());
             assert!(!format!("{view:?}").contains("private"));
             let ctx = egui::Context::default();
-            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| view.ui(ui, lang));
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let _ = view.ui(ui, lang, false);
+            });
             output.textures_delta.clear();
             let mut view = TextResult::spelling(String::new(), Vec::new());
-            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| view.ui(ui, lang));
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let _ = view.ui(ui, lang, false);
+            });
             output.textures_delta.clear();
         }
     }
@@ -276,7 +288,9 @@ mod tests {
                         )),
                         ..Default::default()
                     },
-                    |ui| view.ui(ui, lang),
+                    |ui| {
+                        let _ = view.ui(ui, lang, false);
+                    },
                 );
                 output.textures_delta.clear();
                 for shape in &output.shapes {

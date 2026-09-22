@@ -168,6 +168,7 @@ pub struct Controller {
     alert_until: Option<Instant>,
     spelling: Option<(Sender<SpellingJob>, Receiver<SpellingResult>)>,
     spelling_id: u64,
+    spelling_target: Option<InputTarget>,
     dictionary_root: PathBuf,
     system_language: okbs_core::Lang,
     elevation: Option<Box<dyn Elevation>>,
@@ -215,6 +216,18 @@ fn spelling_popup_position(_target: Option<InputTarget>) -> Option<[f32; 2]> {
     #[cfg(not(windows))]
     {
         None
+    }
+}
+
+fn spelling_target_is_active(target: InputTarget) -> bool {
+    #[cfg(windows)]
+    {
+        okbs_platform_windows::focus::input_target() == Some(target)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = target;
+        true
     }
 }
 
@@ -312,6 +325,7 @@ impl Controller {
                 .map_err(|err| tracing::error!("cannot start spelling worker: {err}"))
                 .ok(),
             spelling_id: 0,
+            spelling_target: None,
             dictionary_root,
             system_language,
             elevation: platform.elevation,
@@ -782,6 +796,21 @@ impl Controller {
                     }
                 });
             }
+            SettingsEvent::ReplaceSpelling {
+                target,
+                original,
+                corrected,
+            } => {
+                self.spelling_target = None;
+                self.engine.send(Command::CorrectTypedSpelling {
+                    target: InputTarget {
+                        window: target.0,
+                        control: target.1,
+                    },
+                    original,
+                    corrected,
+                });
+            }
         }
     }
 
@@ -968,10 +997,12 @@ impl Controller {
                             TextResult::spelling(result.job.text, result.misspellings)
                         };
                         if result.job.interactive {
+                            self.spelling_target = result.job.target;
                             window.show_text_passive(
                                 &self.settings.config,
                                 view,
                                 spelling_popup_position(result.job.target),
+                                result.job.target.map(|target| (target.window, target.control)),
                             );
                         } else {
                             window.show_text(&self.settings.config, view);
@@ -987,6 +1018,14 @@ impl Controller {
                         corrected,
                     });
                 }
+            }
+        }
+        if let Some(target) = self.spelling_target
+            && !spelling_target_is_active(target)
+        {
+            self.spelling_target = None;
+            if let Some(window) = &self.window {
+                window.send(SettingsInput::SpellingTargetActive(false));
             }
         }
         if self.alert_until.is_some_and(|t| Instant::now() >= t) {

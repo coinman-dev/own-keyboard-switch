@@ -243,6 +243,8 @@ texts! {
     ClipboardResultTitle => "Результат конвертации буфера обмена", "Clipboard conversion result";
     SpellcheckTitle => "Проверка орфографии буфера обмена", "Clipboard spell check";
     SpellcheckWordTitle => "Возможная орфографическая ошибка", "Possible spelling error";
+    SpellcheckReplaceWord => "Заменить слово", "Replace word";
+    SpellcheckTargetChanged => "Поле ввода изменилось", "The input field changed";
     CopyResult => "Скопировать результат", "Copy result";
     ResultCopied => "Результат скопирован", "Result copied";
     SpellingNoErrors => "Ошибок не найдено.", "No spelling errors found.";
