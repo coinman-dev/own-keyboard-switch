@@ -2289,6 +2289,7 @@ dependencies = [
  "okbs-platform-windows",
  "okbs-ui",
  "sha2",
+ "spellbook",
  "tempfile",
  "tracing",
  "tracing-appender",
