@@ -87,6 +87,8 @@ texts! {
     OptSpellcheckSelectionFirst => "По горячей клавише проверять выделение, затем буфер обмена", "On hotkey, check selection before clipboard";
     SpellcheckHint => "Проверка идёт локально по встроенным русскому и английскому словарям. Слова не отправляются в сеть.", "Checking is local with built-in Russian and English dictionaries. Words are never sent over the network.";
     SpellcheckLanguages => "Проверять языки:", "Languages to check:";
+    SpellcheckExtraDictionaries => "Дополнительные словари", "Additional dictionaries";
+    SpellcheckDownloadEnGb => "Скачать английский (Великобритания)", "Download English (United Kingdom)";
     OptClipboardHistory => "Следить за буфером обмена", "Watch the clipboard";
     OptClipboardHistoryPersist => "Сохранять историю буфера обмена после перезагрузки", "Keep clipboard history after restart";
     OptShowTooltips => "Показывать всплывающие подсказки", "Show tooltips";

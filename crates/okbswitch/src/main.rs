@@ -12,6 +12,7 @@ mod clipboard_history;
 #[cfg(any(windows, target_os = "linux"))]
 mod controller;
 mod diagnose;
+mod dictionaries;
 mod instance;
 mod locale;
 mod logging;

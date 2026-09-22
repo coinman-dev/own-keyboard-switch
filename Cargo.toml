@@ -34,6 +34,7 @@ pretty_assertions = "1.4.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_ignored = "0.1.14"
 spellbook = "0.4.2"
+sha2 = "0.10.9"
 tempfile = "3.27.0"
 thiserror = "2.0.20"
 toml = "1.1.6"
@@ -43,6 +44,7 @@ tray-icon = { version = "0.25.1", default-features = false }
 tracing-subscriber = { version = "0.3.23", features = ["fmt", "ansi"] }
 windows = "0.62.2"
 winit = { version = "0.30.13", default-features = false }
+ureq = "3.1.2"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

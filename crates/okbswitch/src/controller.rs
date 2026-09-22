@@ -639,6 +639,31 @@ impl Controller {
                 self.engine.send(Command::CancelCapture);
             }
             SettingsEvent::PlaySound { sound, file, beep } => self.play(sound, file, beep),
+            SettingsEvent::DownloadDictionary(id) => {
+                let Some(package) = crate::dictionaries::package(&id) else {
+                    tracing::warn!(%id, "unknown dictionary package requested");
+                    return;
+                };
+                let Some(data_dir) = self
+                    .settings
+                    .path
+                    .parent()
+                    .map(std::path::Path::to_path_buf)
+                else {
+                    tracing::warn!("dictionary directory is unavailable");
+                    return;
+                };
+                std::thread::spawn(move || {
+                    let root = data_dir.join("dictionaries");
+                    match crate::dictionaries::install(&root, package) {
+                        Ok(()) => tracing::info!(package = package.id, "dictionary downloaded"),
+                        Err(err) => tracing::warn!(
+                            package = package.id,
+                            "dictionary download failed: {err:#}"
+                        ),
+                    }
+                });
+            }
         }
     }
 

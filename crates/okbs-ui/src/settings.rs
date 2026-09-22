@@ -163,6 +163,8 @@ pub enum SettingsEvent {
         /// Beep mode.
         beep: bool,
     },
+    /// Download a vetted optional Hunspell package.
+    DownloadDictionary(String),
     /// Restart the program asking the system for administrator rights.
     RestartElevated,
     /// The window was closed.
@@ -728,7 +730,7 @@ impl SettingsView {
                         Section::Troubleshooting => self.troubleshooting(ui, lang),
                         Section::Autoreplace => self.autoreplace(ui, lang),
                         Section::Sounds => self.sounds(ui, lang, events),
-                        Section::Spellcheck => self.spellcheck(ui, lang),
+                        Section::Spellcheck => self.spellcheck(ui, lang, events),
                     }
                 });
         });
@@ -1443,7 +1445,7 @@ impl SettingsView {
         });
     }
 
-    fn spellcheck(&mut self, ui: &mut Ui, lang: Lang) {
+    fn spellcheck(&mut self, ui: &mut Ui, lang: Lang, events: &mut Vec<SettingsEvent>) {
         let spellcheck = &mut self.draft.spellcheck;
         checkbox(
             ui,
@@ -1485,6 +1487,11 @@ impl SettingsView {
             });
             ui.add_space(8.0);
             ui.label(RichText::new(tr(Text::SpellcheckHint, lang)).weak().small());
+            ui.add_space(12.0);
+            ui.label(tr(Text::SpellcheckExtraDictionaries, lang));
+            if ui.button(tr(Text::SpellcheckDownloadEnGb, lang)).clicked() {
+                events.push(SettingsEvent::DownloadDictionary("en-gb".into()));
+            }
         });
     }
 
