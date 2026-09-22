@@ -58,6 +58,23 @@ pub fn foreground_window_position() -> Option<[f32; 2]> {
     }
 }
 
+/// Placement point for an input target captured before a background task.
+pub fn input_target_position(target: InputTarget) -> Option<[f32; 2]> {
+    // SAFETY: the opaque window handle is only queried and `rect` is valid.
+    unsafe {
+        let window = HWND(target.window as usize as *mut core::ffi::c_void);
+        if !IsWindow(Some(window)).as_bool() {
+            return None;
+        }
+        let mut rect = RECT::default();
+        GetWindowRect(window, &mut rect).ok()?;
+        Some([
+            rect.left.saturating_add(24) as f32,
+            rect.top.saturating_add(72) as f32,
+        ])
+    }
+}
+
 fn wide_to_string(buf: &[u16], len: i32) -> Option<String> {
     let len = usize::try_from(len).ok().filter(|&l| l > 0)?;
     Some(String::from_utf16_lossy(&buf[..len.min(buf.len())]))

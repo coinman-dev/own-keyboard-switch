@@ -205,10 +205,12 @@ fn cursor_position() -> [f32; 2] {
     }
 }
 
-fn spelling_popup_position() -> Option<[f32; 2]> {
+fn spelling_popup_position(_target: Option<InputTarget>) -> Option<[f32; 2]> {
     #[cfg(windows)]
     {
-        okbs_platform_windows::focus::foreground_window_position()
+        _target
+            .and_then(okbs_platform_windows::focus::input_target_position)
+            .or_else(okbs_platform_windows::focus::foreground_window_position)
     }
     #[cfg(not(windows))]
     {
@@ -969,7 +971,7 @@ impl Controller {
                             window.show_text_passive(
                                 &self.settings.config,
                                 view,
-                                spelling_popup_position(),
+                                spelling_popup_position(result.job.target),
                             );
                         } else {
                             window.show_text(&self.settings.config, view);

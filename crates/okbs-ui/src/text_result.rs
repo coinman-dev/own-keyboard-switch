@@ -38,12 +38,13 @@ impl TextResult {
 
     /// Suggestions are applied only when chosen by the user.
     pub fn spelling(text: String, misspellings: Vec<Misspelling>) -> Self {
+        let compact = misspellings.len() == 1 && text.split_whitespace().count() == 1;
         Self {
             original: text,
             choices: vec![None; misspellings.len()],
             spelling: Some(misspellings),
             copied: false,
-            compact: false,
+            compact,
         }
     }
 
@@ -64,7 +65,9 @@ impl TextResult {
     /// Localized window title.
     pub fn title(&self, lang: Lang) -> &'static str {
         tr(
-            if self.spelling.is_some() {
+            if self.compact {
+                Text::SpellcheckWordTitle
+            } else if self.spelling.is_some() {
                 Text::SpellcheckTitle
             } else {
                 Text::ClipboardResultTitle
@@ -95,6 +98,8 @@ impl TextResult {
     /// Shows suggestions and a selectable result preview. Copying is explicit
     /// and goes through eframe's clipboard output on the window thread.
     pub fn ui(&mut self, ui: &mut Ui, lang: Lang) {
+        ui.painter()
+            .rect_filled(ui.max_rect(), 0.0, ui.visuals().panel_fill);
         crate::settings::content_style(ui);
         if self.compact {
             return self.compact_ui(ui, lang);
