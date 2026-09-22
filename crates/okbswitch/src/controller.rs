@@ -14,7 +14,7 @@ use okbs_ui::clipboard_history::{
     ClipboardHistoryConfig, ClipboardHistoryLabels, ClipboardHistoryWindow, HistoryChoice,
 };
 use okbs_ui::icon::{ICON_SIZE, IconState};
-use okbs_ui::settings::{LayoutEntry, Section, SettingsEvent, SettingsInput, SoundId};
+use okbs_ui::settings::{DictionaryState, LayoutEntry, Section, SettingsEvent, SettingsInput, SoundId};
 use okbs_ui::text_result::TextResult;
 use okbs_ui::tray::{Tray, TrayCommand, TrayState};
 use okbs_ui::window::SettingsWindow;
@@ -169,6 +169,7 @@ pub struct Controller {
     alert_until: Option<Instant>,
     spelling: Option<(Sender<SpellingJob>, Receiver<SpellingResult>)>,
     spelling_id: u64,
+    dictionary_root: PathBuf,
     system_language: okbs_core::Lang,
     elevation: Option<Box<dyn Elevation>>,
     window_control: Option<Box<dyn WindowControl>>,
@@ -295,10 +296,11 @@ impl Controller {
             layouts,
             layout,
             alert_until: None,
-            spelling: spelling_worker(dictionary_root)
+            spelling: spelling_worker(dictionary_root.clone())
                 .map_err(|err| tracing::error!("cannot start spelling worker: {err}"))
                 .ok(),
             spelling_id: 0,
+            dictionary_root,
             system_language,
             elevation: platform.elevation,
             window_control: platform.window_control,
@@ -308,6 +310,19 @@ impl Controller {
             history_target: None,
             restart_elevated: false,
         };
+        if let Some(window) = &controller.window {
+            window.send(SettingsInput::DictionaryState {
+                id: "en-gb".into(),
+                state: if crate::dictionaries::is_installed(
+                    &controller.dictionary_root,
+                    crate::dictionaries::EN_GB,
+                ) {
+                    DictionaryState::Available
+                } else {
+                    DictionaryState::Unavailable
+                },
+            });
+        }
         controller.rebuild_tray();
         controller.configure_autoreplace_ui();
         controller.configure_history();
@@ -697,18 +712,34 @@ impl Controller {
                     tracing::warn!(%id, "unknown dictionary package requested");
                     return;
                 };
-                let Some(data_dir) = self.settings.path.parent().map(Path::to_path_buf) else {
-                    tracing::warn!("dictionary directory is unavailable");
-                    return;
-                };
+                let root = self.dictionary_root.clone();
+                let notifier = self.window.as_ref().map(SettingsWindow::notifier);
+                if let Some(notifier) = &notifier {
+                    notifier.send(SettingsInput::DictionaryState {
+                        id: id.clone(),
+                        state: DictionaryState::Downloading,
+                    });
+                }
                 std::thread::spawn(move || {
-                    let root = data_dir.join("dictionaries");
                     match crate::dictionaries::install(&root, package) {
-                        Ok(()) => tracing::info!(package = package.id, "dictionary downloaded"),
-                        Err(err) => tracing::warn!(
-                            package = package.id,
-                            "dictionary download failed: {err:#}"
-                        ),
+                        Ok(()) => {
+                            tracing::info!(package = package.id, "dictionary downloaded");
+                            if let Some(notifier) = notifier {
+                                notifier.send(SettingsInput::DictionaryState {
+                                    id: package.id.into(),
+                                    state: DictionaryState::Available,
+                                });
+                            }
+                        }
+                        Err(err) => {
+                            tracing::warn!(package = package.id, "dictionary download failed: {err:#}");
+                            if let Some(notifier) = notifier {
+                                notifier.send(SettingsInput::DictionaryState {
+                                    id: package.id.into(),
+                                    state: DictionaryState::Failed,
+                                });
+                            }
+                        }
                     }
                 });
             }

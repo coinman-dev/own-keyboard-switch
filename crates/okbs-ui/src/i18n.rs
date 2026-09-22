@@ -93,6 +93,10 @@ texts! {
     SpellcheckEnGb => "Английский (Великобритания)", "English (United Kingdom)";
     SpellcheckPersonalWords => "Мои слова", "My words";
     SpellcheckAddWord => "Добавить", "Add";
+    DictionaryNotInstalled => "Словарь не установлен", "Dictionary is not installed";
+    DictionaryDownloading => "Словарь скачивается…", "Downloading dictionary…";
+    DictionaryInstalled => "Словарь установлен", "Dictionary is installed";
+    DictionaryDownloadFailed => "Не удалось скачать словарь", "Dictionary download failed";
     OptClipboardHistory => "Следить за буфером обмена", "Watch the clipboard";
     OptClipboardHistoryPersist => "Сохранять историю буфера обмена после перезагрузки", "Keep clipboard history after restart";
     OptShowTooltips => "Показывать всплывающие подсказки", "Show tooltips";

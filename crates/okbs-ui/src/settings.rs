@@ -171,6 +171,14 @@ pub enum SettingsEvent {
     Closed,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DictionaryState {
+    Unavailable,
+    Downloading,
+    Available,
+    Failed,
+}
+
 /// Messages from the application to the settings window.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SettingsInput {
@@ -189,6 +197,7 @@ pub enum SettingsInput {
         /// A restart was already attempted and did not happen.
         failed: bool,
     },
+    DictionaryState { id: String, state: DictionaryState },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -317,6 +326,7 @@ pub struct SettingsView {
     flag_textures: FlagTextures,
     pending_autoreplace: std::collections::VecDeque<String>,
     new_spell_word: String,
+    en_gb_state: DictionaryState,
 }
 
 fn weak(ui: &mut Ui, text: &str) {
@@ -541,6 +551,7 @@ impl SettingsView {
             flag_textures: FlagTextures::default(),
             pending_autoreplace: std::collections::VecDeque::new(),
             new_spell_word: String::new(),
+            en_gb_state: DictionaryState::Unavailable,
         }
     }
 
@@ -610,6 +621,13 @@ impl SettingsView {
                 self.general_tab = GeneralTab::Basic;
                 self.dialog = Some(Dialog::Elevation { failed });
             }
+            SettingsInput::DictionaryState { id, state } if id == "en-gb" => {
+                self.en_gb_state = state;
+                if state != DictionaryState::Available {
+                    self.draft.spellcheck.english_dictionary = None;
+                }
+            }
+            SettingsInput::DictionaryState { .. } => {}
             SettingsInput::SuggestRule(rule) => {
                 self.section = Section::Rules;
                 self.dialog = Some(Dialog::Rule {
@@ -1497,20 +1515,20 @@ impl SettingsView {
                     _ => tr(Text::SpellcheckBuiltinEn, lang),
                 })
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(
-                        &mut spellcheck.english_dictionary,
-                        None,
-                        tr(Text::SpellcheckBuiltinEn, lang),
-                    );
-                    ui.selectable_value(
-                        &mut spellcheck.english_dictionary,
-                        Some("en-gb".into()),
-                        tr(Text::SpellcheckEnGb, lang),
-                    );
+                    ui.selectable_value(&mut spellcheck.english_dictionary, None, tr(Text::SpellcheckBuiltinEn, lang));
+                    ui.add_enabled_ui(self.en_gb_state == DictionaryState::Available, |ui| {
+                        ui.selectable_value(&mut spellcheck.english_dictionary, Some("en-gb".into()), tr(Text::SpellcheckEnGb, lang));
+                    });
                 });
-            if ui.button(tr(Text::SpellcheckDownloadEnGb, lang)).clicked() {
+            if ui.add_enabled(self.en_gb_state != DictionaryState::Downloading, egui::Button::new(tr(Text::SpellcheckDownloadEnGb, lang))).clicked() {
                 events.push(SettingsEvent::DownloadDictionary("en-gb".into()));
             }
+            ui.label(RichText::new(tr(match self.en_gb_state {
+                DictionaryState::Unavailable => Text::DictionaryNotInstalled,
+                DictionaryState::Downloading => Text::DictionaryDownloading,
+                DictionaryState::Available => Text::DictionaryInstalled,
+                DictionaryState::Failed => Text::DictionaryDownloadFailed,
+            }, lang)).weak().small());
             ui.add_space(12.0);
             ui.label(tr(Text::SpellcheckPersonalWords, lang));
             ui.horizontal(|ui| {

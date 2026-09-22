@@ -64,6 +64,25 @@ pub struct SettingsWindow {
     thread: Option<JoinHandle<()>>,
 }
 
+#[derive(Clone)]
+pub struct SettingsNotifier {
+    requests: Sender<Request>,
+    shared: Arc<Shared>,
+}
+
+impl std::fmt::Debug for SettingsNotifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SettingsNotifier").finish_non_exhaustive()
+    }
+}
+
+impl SettingsNotifier {
+    pub fn send(&self, input: SettingsInput) {
+        let _ = self.requests.send(Request::Input(input));
+        self.shared.wake();
+    }
+}
+
 impl std::fmt::Debug for SettingsWindow {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SettingsWindow")
@@ -465,9 +484,13 @@ impl SettingsWindow {
 
     /// Forwards a message to the open window.
     pub fn send(&self, input: SettingsInput) {
-        if self.is_open() {
-            let _ = self.requests.send(Request::Input(input));
-            self.shared.wake();
+        self.notifier().send(input);
+    }
+
+    pub fn notifier(&self) -> SettingsNotifier {
+        SettingsNotifier {
+            requests: self.requests.clone(),
+            shared: self.shared.clone(),
         }
     }
 

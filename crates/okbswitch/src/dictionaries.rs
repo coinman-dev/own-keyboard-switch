@@ -52,6 +52,18 @@ pub fn package_dir(root: &Path, package: Package) -> PathBuf {
     root.join(package.id)
 }
 
+/// Whether a fully downloaded, parseable package is present.
+pub fn is_installed(root: &Path, package: Package) -> bool {
+    let directory = package_dir(root, package);
+    let (Ok(aff), Ok(dic)) = (
+        fs::read_to_string(directory.join("dictionary.aff")),
+        fs::read_to_string(directory.join("dictionary.dic")),
+    ) else {
+        return false;
+    };
+    spellbook::Dictionary::new(&aff, &dic).is_ok()
+}
+
 /// Downloads, hashes and atomically installs a package.
 pub fn install(root: &Path, package: Package) -> Result<()> {
     let directory = package_dir(root, package);
