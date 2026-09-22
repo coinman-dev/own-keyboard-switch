@@ -24,7 +24,7 @@ pub(crate) enum Request {
         Option<SettingsInput>,
         Vec<LayoutEntry>,
     ),
-    OpenText(Box<Config>, TextResult),
+    OpenText(Box<Config>, TextResult, bool),
     Input(SettingsInput),
     List(ListRequest),
     History(HistoryRequest),
@@ -131,6 +131,17 @@ impl App {
         ctx.request_repaint();
     }
 
+    fn show_settings_passive(&self, ctx: &egui::Context) {
+        self.shared.open.store(true, Ordering::SeqCst);
+        for command in [
+            egui::ViewportCommand::Visible(true),
+            egui::ViewportCommand::Minimized(false),
+        ] {
+            ctx.send_viewport_cmd_to(self.settings_id(), command);
+        }
+        ctx.request_repaint();
+    }
+
     fn close_settings(&mut self, ctx: &egui::Context) {
         self.shared.open.store(false, Ordering::SeqCst);
         self.settings_visible = false;
@@ -186,10 +197,14 @@ impl App {
                         self.view.handle(input);
                     }
                 }
-                Request::OpenText(config, result) => {
+                Request::OpenText(config, result, focus) => {
                     self.text_result = Some(result);
                     self.set_appearance(ctx, config.general.ui_language, config.general.theme);
-                    self.show_settings(ctx);
+                    if focus {
+                        self.show_settings(ctx);
+                    } else {
+                        self.show_settings_passive(ctx);
+                    }
                 }
                 Request::Input(input) => {
                     if let SettingsInput::ConfigChanged(config) = &input {
@@ -460,7 +475,16 @@ impl SettingsWindow {
     pub fn show_text(&self, config: &Config, result: TextResult) {
         let _ = self
             .requests
-            .send(Request::OpenText(Box::new(config.clone()), result));
+            .send(Request::OpenText(Box::new(config.clone()), result, true));
+        self.shared.wake();
+    }
+
+    /// Shows a completed-word spelling result without taking focus away from
+    /// the application where the user is typing.
+    pub fn show_text_passive(&self, config: &Config, result: TextResult) {
+        let _ = self
+            .requests
+            .send(Request::OpenText(Box::new(config.clone()), result, false));
         self.shared.wake();
     }
 }
@@ -519,7 +543,7 @@ fn window_thread(
             Request::Open(config, section, input, layouts) => {
                 (config, section, input, layouts, None, true)
             }
-            Request::OpenText(config, result) => (
+            Request::OpenText(config, result, _) => (
                 config,
                 Section::General,
                 None,

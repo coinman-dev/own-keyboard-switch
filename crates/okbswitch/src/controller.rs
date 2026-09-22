@@ -793,10 +793,12 @@ impl Controller {
                 }
                 if result.job.interactive || result.job.settings.show_result_window {
                     if let Some(window) = &self.window {
-                        window.show_text(
-                            &self.settings.config,
-                            TextResult::spelling(result.job.text, result.misspellings),
-                        );
+                        let view = TextResult::spelling(result.job.text, result.misspellings);
+                        if result.job.interactive {
+                            window.show_text_passive(&self.settings.config, view);
+                        } else {
+                            window.show_text(&self.settings.config, view);
+                        }
                     }
                 } else {
                     let corrected = okbs_core::spell::apply_first_suggestions(
