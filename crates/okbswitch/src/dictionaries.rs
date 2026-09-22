@@ -97,10 +97,17 @@ fn fetch_checked(source: &str, expected_hash: &str, target: &Path) -> Result<()>
     if actual != expected_hash {
         bail!("dictionary file {source} did not match its published SHA-256");
     }
-    if !data.starts_with(b"SET ") && source.ends_with(".aff") {
+    let text = std::str::from_utf8(&data)
+        .with_context(|| format!("dictionary file {source} is not UTF-8"))?;
+    if source.ends_with(".aff") && !text.lines().any(|line| line.starts_with("SET ")) {
         bail!("dictionary affix file {source} is not a Hunspell UTF-8 file");
     }
-    if data.is_empty() || source.ends_with(".dic") && !data[0].is_ascii_digit() {
+    if source.ends_with(".dic")
+        && !text
+            .lines()
+            .next()
+            .is_some_and(|line| line.trim().parse::<usize>().is_ok())
+    {
         bail!("dictionary word list {source} is not a Hunspell dictionary");
     }
     let parent = target.parent().context("dictionary target has no parent")?;
