@@ -213,25 +213,6 @@ pub fn is_excluded(
     by_exe || by_title || by_folder
 }
 
-/// Builds a hotkey from a key and the modifiers held with it.
-fn captured_hotkey(key: PhysKey, mods: ModState) -> okbs_core::Hotkey {
-    use okbs_core::{Modifiers, Side};
-    let side = |left: PhysKey, right: PhysKey| match (mods.is_pressed(left), mods.is_pressed(right))
-    {
-        (false, false) => None,
-        _ => Some(Side::Any),
-    };
-    okbs_core::Hotkey::new(
-        Modifiers {
-            ctrl: side(PhysKey::ControlLeft, PhysKey::ControlRight),
-            shift: side(PhysKey::ShiftLeft, PhysKey::ShiftRight),
-            alt: side(PhysKey::AltLeft, PhysKey::AltRight),
-            win: side(PhysKey::MetaLeft, PhysKey::MetaRight),
-        },
-        key,
-    )
-}
-
 /// The input processor. Single-threaded; the engine thread owns it.
 pub struct Processor {
     input_gate: Option<Arc<AutoReplaceGate>>,
@@ -1171,7 +1152,9 @@ impl Processor {
                 if key == PhysKey::Escape && self.mods.is_empty() {
                     out.push(Event::CaptureCancelled);
                 } else {
-                    out.push(Event::HotkeyCaptured(captured_hotkey(key, self.mods)));
+                    out.push(Event::HotkeyCaptured(okbs_core::Hotkey::pressed(
+                        key, self.mods,
+                    )));
                 }
             }
             return;

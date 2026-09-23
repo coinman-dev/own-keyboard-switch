@@ -750,7 +750,7 @@ impl SettingsView {
                     ui.add_space(4.0);
                     match self.section {
                         Section::General => self.general(ui, lang),
-                        Section::Hotkeys => self.hotkeys(ui, lang),
+                        Section::Hotkeys => self.hotkeys(ui, lang, events),
                         Section::Rules => self.rules(ui, lang),
                         Section::Exclusions => self.exclusions(ui, lang),
                         Section::Troubleshooting => self.troubleshooting(ui, lang),
@@ -1054,7 +1054,7 @@ impl SettingsView {
         });
     }
 
-    fn hotkeys(&mut self, ui: &mut Ui, lang: Lang) {
+    fn hotkeys(&mut self, ui: &mut Ui, lang: Lang, events: &mut Vec<SettingsEvent>) {
         ui.label(tr(Text::HotkeysHint, lang));
         ui.add_space(4.0);
         let mut open = None;
@@ -1108,14 +1108,20 @@ impl SettingsView {
             open = self.selected_hotkey;
         }
         if let Some(action) = open {
-            self.selected_hotkey = Some(action);
-            self.dialog = Some(Dialog::Hotkey {
-                action,
-                text: self.draft.hotkeys.get(action).to_string(),
-                capturing: false,
-                error: None,
-            });
+            self.open_hotkey_dialog(action, events);
         }
+    }
+
+    /// The dialog listens right away: the user just presses the combination.
+    fn open_hotkey_dialog(&mut self, action: HotkeyAction, events: &mut Vec<SettingsEvent>) {
+        self.selected_hotkey = Some(action);
+        self.dialog = Some(Dialog::Hotkey {
+            action,
+            text: self.draft.hotkeys.get(action).to_string(),
+            capturing: true,
+            error: None,
+        });
+        events.push(SettingsEvent::CaptureHotkey);
     }
 
     fn rules(&mut self, ui: &mut Ui, lang: Lang) {
@@ -1759,6 +1765,7 @@ impl SettingsView {
             } => {
                 let action = *action;
                 let mut start_capture = false;
+                let mut stop_capture = false;
                 egui::Modal::new(egui::Id::new("hotkey_dialog")).show(&ctx, |ui| {
                     content_style(ui);
                     ui.set_width(380.0);
@@ -1768,12 +1775,16 @@ impl SettingsView {
                     if *capturing {
                         ui.label(tr(Text::HotkeyPressPrompt, lang));
                         ui.label(RichText::new(tr(Text::HotkeyWaiting, lang)).italics());
-                    } else if ui.button(tr(Text::HotkeyPressAgain, lang)).clicked() {
+                    } else if ui.button(tr(Text::HotkeyRecord, lang)).clicked() {
                         start_capture = true;
                     }
                     ui.add_space(6.0);
                     ui.label(tr(Text::HotkeyTypeHint, lang));
-                    ui.add(egui::TextEdit::singleline(text).desired_width(240.0));
+                    let edit = ui.add(egui::TextEdit::singleline(text).desired_width(240.0));
+                    // Typing by hand must not be taken for the combination.
+                    if edit.has_focus() && *capturing {
+                        stop_capture = true;
+                    }
                     let parsed = if text.trim().is_empty() {
                         Ok(HotkeyBinding::NONE)
                     } else {
@@ -1835,7 +1846,8 @@ impl SettingsView {
                     *capturing = true;
                     events.push(SettingsEvent::CaptureHotkey);
                 }
-                if !keep && *capturing {
+                if (stop_capture || !keep) && *capturing {
+                    *capturing = false;
                     events.push(SettingsEvent::CancelCapture);
                 }
             }
@@ -2403,13 +2415,14 @@ mod tests {
     fn dialogs_render_and_capture_flow() {
         let ctx = test_context();
         let mut view = SettingsView::new(Config::default(), Section::Hotkeys, Lang::Ru);
-        view.dialog = Some(Dialog::Hotkey {
-            action: HotkeyAction::CancelOrConvertLastWord,
-            text: "Break".into(),
-            capturing: true,
-            error: None,
-        });
-        assert!(view.is_capturing());
+        let mut events = Vec::new();
+        view.open_hotkey_dialog(HotkeyAction::CancelOrConvertLastWord, &mut events);
+        assert_eq!(events, [SettingsEvent::CaptureHotkey]);
+        assert!(view.is_capturing(), "waits without an extra click");
+        match &view.dialog {
+            Some(Dialog::Hotkey { text, .. }) => assert_eq!(text, "Break"),
+            other => panic!("{other:?}"),
+        }
         frame(&mut view, &ctx);
         view.handle(SettingsInput::HotkeyCaptured("Ctrl+F11".parse().unwrap()));
         assert!(!view.is_capturing());

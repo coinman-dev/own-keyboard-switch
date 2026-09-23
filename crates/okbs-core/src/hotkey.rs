@@ -179,6 +179,21 @@ impl Hotkey {
         Self::new(Modifiers::NONE, key)
     }
 
+    /// The combination the user pressed: `key` with the held modifiers, each
+    /// accepted on either side.
+    pub fn pressed(key: PhysKey, held: ModState) -> Self {
+        let any = |down: bool| down.then_some(Side::Any);
+        Self::new(
+            Modifiers {
+                ctrl: any(held.ctrl()),
+                shift: any(held.shift()),
+                alt: any(held.alt()),
+                win: any(held.win()),
+            },
+            key,
+        )
+    }
+
     /// Whether pressing `key` while `state` modifiers are held triggers this hotkey.
     ///
     /// Modifiers that are not part of the hotkey must not be held, so
@@ -350,6 +365,21 @@ mod tests {
             st.set(k, true);
         }
         st
+    }
+
+    #[test]
+    fn pressed_combination_accepts_either_side() {
+        assert_eq!(
+            Hotkey::pressed(
+                PhysKey::F11,
+                state(&[PhysKey::ControlRight, PhysKey::AltLeft])
+            ),
+            hk("Ctrl+Alt+F11")
+        );
+        assert_eq!(
+            Hotkey::pressed(PhysKey::Pause, ModState::default()),
+            hk("Break")
+        );
     }
 
     #[test]

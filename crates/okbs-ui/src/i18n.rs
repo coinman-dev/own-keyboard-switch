@@ -281,7 +281,7 @@ texts! {
     HotkeyPressPrompt => "Нажмите нужную комбинацию клавиш. Esc — отмена.", "Press the key combination. Esc cancels.";
     HotkeyWaiting => "Ожидание нажатия…", "Waiting for a key press…";
     HotkeyTypeHint => "Или введите вручную, например Ctrl+Alt+K:", "Or type it, e.g. Ctrl+Alt+K:";
-    HotkeyPressAgain => "Нажать заново", "Press again";
+    HotkeyRecord => "Задать нажатием", "Set by pressing";
     HotkeyConflict => "Эта комбинация уже назначена действию:", "This combination is already assigned to:";
     HotkeyInvalid => "Не удалось разобрать комбинацию:", "Cannot parse the combination:";
     BtnClear => "Очистить", "Clear";

@@ -17,6 +17,8 @@ pub mod clipboard_history;
 pub mod flags;
 pub mod i18n;
 pub mod icon;
+#[cfg(windows)]
+mod key_capture;
 pub mod settings;
 pub mod text_result;
 #[cfg(any(windows, target_os = "linux"))]

@@ -471,6 +471,17 @@ impl App {
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.process_requests(ctx);
+        #[cfg(windows)]
+        if let Some(captured) = crate::key_capture::take() {
+            self.view.handle(match captured {
+                crate::key_capture::Captured::Hotkey(hotkey) => {
+                    SettingsInput::HotkeyCaptured(hotkey)
+                }
+                crate::key_capture::Captured::Cancelled => SettingsInput::CaptureCancelled,
+            });
+            // The engine may still be waiting when its hook was not called.
+            let _ = self.events.send(SettingsEvent::CancelCapture);
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -516,6 +527,10 @@ impl eframe::App for App {
         ctx.show_viewport_immediate(self.spellcheck_id(), builder, |ui, _| {
             self.spellcheck_ui(ui)
         });
+        #[cfg(windows)]
+        crate::key_capture::set_active(
+            self.shared.open.load(Ordering::SeqCst) && self.view.is_capturing(),
+        );
     }
 }
 
@@ -667,16 +682,25 @@ fn settings_builder(title: &str) -> egui::ViewportBuilder {
         .with_maximize_button(false)
 }
 
-fn native_options(title: &str) -> eframe::NativeOptions {
+fn native_options(title: &str, shared: &Arc<Shared>) -> eframe::NativeOptions {
+    #[cfg(windows)]
+    let shared = shared.clone();
+    #[cfg(not(windows))]
+    let _ = shared;
     eframe::NativeOptions {
         viewport: settings_builder(title),
         centered: true,
         persist_window: false,
-        event_loop_builder: Some(Box::new(|builder| {
+        // Called once: later windows of this thread reuse the same event loop.
+        event_loop_builder: Some(Box::new(move |builder| {
             #[cfg(windows)]
             {
                 use winit::platform::windows::EventLoopBuilderExtWindows;
                 builder.with_any_thread(true);
+                builder.with_msg_hook(move |msg| {
+                    crate::key_capture::observe(msg, || shared.wake());
+                    false
+                });
             }
             #[cfg(target_os = "linux")]
             {
@@ -781,7 +805,7 @@ fn window_thread(
             Root::History => history.config.labels.title.clone(),
             Root::Settings => settings_title.into(),
         };
-        let mut options = native_options(&title);
+        let mut options = native_options(&title, shared);
         if let Some((result, position)) = &text_result
             && result.is_compact()
         {
