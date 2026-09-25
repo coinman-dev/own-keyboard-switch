@@ -27,11 +27,14 @@ pub enum Command {
     ToggleAutoswitch,
     /// Turns all sounds on or off («Звуковые эффекты»).
     SetSounds(bool),
+    /// Activates a layout chosen in the tray menu for the program typed in last.
+    SelectLayout(LayoutId),
     /// Applies a new configuration.
     ApplyConfig(Box<Config>),
     /// Runs a text operation on the clipboard (tray menu «Буфер обмена»).
     ClipboardOp(TextOp),
-    /// Read the clipboard for spelling checks off the input thread.
+    /// Read the clipboard for spelling checks off the input thread (tray menu
+    /// «Буфер обмена»: the selection belongs to the window left behind).
     SpellcheckClipboard,
     /// Apply background corrections only if the clipboard still has the checked text.
     CorrectClipboard { original: String, corrected: String },
@@ -288,8 +291,9 @@ fn handle_command(processor: &mut Processor, command: Command) -> Vec<Event> {
             events.push(Event::ConfigApplied);
             events
         }
+        Command::SelectLayout(id) => processor.select_layout(id),
         Command::ClipboardOp(op) => processor.clipboard_op(op),
-        Command::SpellcheckClipboard => processor.spellcheck_selection_or_clipboard(),
+        Command::SpellcheckClipboard => processor.spellcheck_clipboard(),
         Command::CorrectClipboard {
             original,
             corrected,

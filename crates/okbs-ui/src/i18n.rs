@@ -88,7 +88,7 @@ texts! {
     SpellcheckSuggestions => "Показывать варианты", "Show suggestions";
     SpellcheckAuto => "Автоисправление только однозначных ошибок", "Automatically fix only unambiguous errors";
     OptSpellcheckSelectionFirst => "По горячей клавише проверять выделение, затем буфер обмена", "On hotkey, check selection before clipboard";
-    SpellcheckHint => "Проверка идёт локально. При наборе показываются варианты для завершённого слова; автоматически текст не меняется. Для проверки готового текста скопируйте его и выберите в трее «Буфер обмена → Проверить орфографию». Слова не отправляются в сеть.", "Checking is local. While typing, suggestions are shown for a finished word; text is not changed automatically. To check existing text, copy it and choose Clipboard → Check spelling in the tray. Words are never sent over the network.";
+    SpellcheckHint => "Проверка идёт локально, слова не отправляются в сеть. Проверяется написание отдельных слов по словарю, а не грамматика и не смысл фразы. При наборе слово проверяется после пробела: с вариантами текст меняется только по вашему выбору, при автоисправлении — только если словарь предлагает один-единственный вариант. Готовый текст выделите и нажмите горячую клавишу проверки или скопируйте и выберите в трее «Буфер обмена → Проверить орфографию».", "Checking is local; words are never sent over the network. Only the spelling of single words is checked against the dictionary, not grammar or meaning. While typing, a word is checked after a space: with suggestions the text changes only when you choose, with automatic fixing only when the dictionary offers exactly one correction. For existing text, select it and press the spell check hotkey, or copy it and choose Clipboard → Check spelling in the tray.";
     SpellcheckLanguages => "Проверять языки:", "Languages to check:";
     SpellcheckExtraDictionaries => "Дополнительные словари", "Additional dictionaries";
     SpellcheckDownloadEnGb => "Скачать английский (Великобритания)", "Download English (United Kingdom)";
@@ -148,7 +148,7 @@ texts! {
     ActShowClipboardHistory => "Показать историю буфера обмена", "Show clipboard history";
     ActConvertClipboardLayout => "Сменить раскладку буфера обмена", "Change clipboard layout";
     ActTransliterateClipboard => "Транслитерировать текст в буфере обмена", "Transliterate clipboard text";
-    ActSpellcheckClipboard => "Проверить орфографию буфера обмена", "Check clipboard spelling";
+    ActSpellcheckClipboard => "Проверить орфографию выделения или буфера обмена", "Check spelling of the selection or clipboard";
 
     // Switching rules
     RulesHint => "Правила определяют, в каких случаях переключать раскладку, а в каких нет.", "Rules define when the layout is switched and when it is not.";
@@ -251,7 +251,7 @@ texts! {
     // Settings window, additions
     InDevelopment => "в разработке", "in development";
     ClipboardResultTitle => "Результат конвертации буфера обмена", "Clipboard conversion result";
-    SpellcheckTitle => "Проверка орфографии буфера обмена", "Clipboard spell check";
+    SpellcheckTitle => "Проверка орфографии", "Spell check";
     SpellcheckWordTitle => "Возможная орфографическая ошибка", "Possible spelling error";
     SpellcheckReplaceWord => "Заменить слово", "Replace word";
     SpellcheckTargetChanged => "Поле ввода изменилось", "The input field changed";

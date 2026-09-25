@@ -204,6 +204,17 @@ impl Config {
         );
 
         let sp = &mut self.spellcheck;
+        // The old master switch is replaced by the two separate ones; keep
+        // the user's choice to have no spelling checks at all.
+        if !sp.enabled {
+            sp.enabled = true;
+            sp.check_on_command = false;
+            sp.check_typed_words = false;
+            i.push(ConfigIssue::Adjusted {
+                key: "spellcheck.enabled".to_string(),
+                message: "replaced by check_on_command and check_typed_words, both off".to_string(),
+            });
+        }
         clamp_u32(
             &mut sp.max_suggestions,
             1,
@@ -235,7 +246,7 @@ impl Config {
         sp.custom_words
             .sort_unstable_by_key(|word| word.to_lowercase());
         sp.custom_words
-            .dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+            .dedup_by(|left, right| left.to_lowercase() == right.to_lowercase());
 
         clamp_u32(&mut self.log.keep_files, 1, 365, "log.keep_files", i);
         self.log.level = match self.log.level {

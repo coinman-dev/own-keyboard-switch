@@ -236,6 +236,10 @@ impl App {
                         self.spellcheck_position = position;
                         self.spellcheck_target = target;
                         self.spellcheck_pending = None;
+                        #[cfg(windows)]
+                        if let Some(result) = &self.spellcheck_result {
+                            crate::window_position::show_inactive(result.title(self.lang));
+                        }
                         ctx.send_viewport_cmd_to(
                             self.spellcheck_id(),
                             egui::ViewportCommand::Visible(true),
@@ -521,7 +525,7 @@ impl eframe::App for App {
             .with_resizable(false)
             .with_maximize_button(false)
             .with_always_on_top()
-            .with_active(true)
+            .with_active(false)
             .with_visible(self.spellcheck_result.is_some())
             .with_position(self.spellcheck_position.unwrap_or([24.0, 24.0]));
         ctx.show_viewport_immediate(self.spellcheck_id(), builder, |ui, _| {

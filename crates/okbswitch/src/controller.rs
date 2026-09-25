@@ -18,7 +18,7 @@ use okbs_ui::settings::{
     DictionaryState, LayoutEntry, Section, SettingsEvent, SettingsInput, SoundId,
 };
 use okbs_ui::text_result::TextResult;
-use okbs_ui::tray::{Tray, TrayCommand, TrayState};
+use okbs_ui::tray::{Tray, TrayCommand, TrayLayout, TrayState};
 use okbs_ui::window::SettingsWindow;
 use okbs_ui::{Text, tr};
 use std::path::{Path, PathBuf};
@@ -110,10 +110,16 @@ fn spelling_worker(
                     job.settings.english_dictionary.as_deref(),
                     job.settings.russian_dictionary.as_deref(),
                 );
+                // Automatic correction must see whether the dictionary offers a
+                // second correction, however few suggestions are shown.
+                let mut limit = job.settings.max_suggestions as usize;
+                if job.interactive && job.settings.typed_mode == TypedSpellcheckMode::Auto {
+                    limit = limit.max(2);
+                }
                 let misspellings = okbs_core::spell::check_text_with_words(
                     &job.text,
                     &job.settings.languages,
-                    job.settings.max_suggestions as usize,
+                    limit,
                     &job.settings.custom_words,
                     |lang| dictionaries.dictionary(lang),
                 );
@@ -128,6 +134,18 @@ fn spelling_worker(
             }
         })?;
     Ok((requests, results))
+}
+
+/// The correction applied without asking: only a single misspelling with a
+/// single dictionary suggestion. Anything else stays as typed.
+fn automatic_correction(misspellings: &[okbs_core::spell::Misspelling]) -> Option<String> {
+    match misspellings {
+        [only] => match only.suggestions.as_slice() {
+            [correction] => Some(correction.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// Callback run after a configuration is applied.
@@ -238,6 +256,12 @@ fn spelling_popup_position(_target: Option<InputTarget>) -> Option<[f32; 2]> {
     }
 }
 
+/// Position of `layout` in the list the tray menu was built from.
+fn layout_index(layouts: &[LayoutInfo], layout: Option<&LayoutInfo>) -> Option<usize> {
+    let layout = layout?;
+    layouts.iter().position(|l| l.id == layout.id)
+}
+
 fn indicator_labels(lang: okbs_core::Lang) -> IndicatorLabels {
     IndicatorLabels {
         title: tr(Text::AppName, lang).into(),
@@ -282,6 +306,7 @@ impl Controller {
                 false,
             ),
             sounds: settings.config.sounds.enabled,
+            layout: layout_index(&layouts, layout.as_ref()),
         };
         let (events_tx, window_events) = unbounded();
         let system_language = crate::locale::system_ui_language();
@@ -377,6 +402,7 @@ impl Controller {
     }
 
     fn refresh_icon_inner(&mut self, layout_changed: bool) {
+        self.state.layout = layout_index(&self.layouts, self.layout.as_ref());
         let general = &self.settings.config.general;
         self.state.icon = IconState::for_layout(
             general,
@@ -486,6 +512,17 @@ impl Controller {
                 .ui_language
                 .resolve(self.system_language),
             &self.settings.config.autoreplace,
+            &self
+                .layouts
+                .iter()
+                .map(|layout| TrayLayout {
+                    name: layout.name.clone(),
+                    flag: okbs_ui::flags::flag_for_layout(
+                        &self.settings.config.general.layout_flags,
+                        &layout.locale,
+                    ),
+                })
+                .collect::<Vec<_>>(),
         ) {
             Ok(tray) => self.tray = Some(tray),
             Err(err) => tracing::error!("{err}"),
@@ -600,6 +637,17 @@ impl Controller {
             }
             Event::Stopped => return false,
             Event::LayoutChanged(layout) => {
+                // A layout added in the system after start appears in the menu.
+                if layout_index(&self.layouts, layout.as_ref()).is_none()
+                    && layout.is_some()
+                    && let Some(list) = &self.list_layouts
+                {
+                    let layouts = list();
+                    if layouts != self.layouts {
+                        self.layouts = layouts;
+                        self.rebuild_tray();
+                    }
+                }
                 self.layout = layout;
                 self.refresh_layout_icon();
             }
@@ -732,6 +780,8 @@ impl Controller {
                 let language_changed =
                     config.general.ui_language != self.settings.config.general.ui_language;
                 let autoreplace_changed = config.autoreplace != self.settings.config.autoreplace;
+                let flags_changed =
+                    config.general.layout_flags != self.settings.config.general.layout_flags;
                 let elevation_changed =
                     config.general.run_elevated != self.settings.config.general.run_elevated;
                 if (config.general.autostart != self.settings.config.general.autostart
@@ -758,7 +808,7 @@ impl Controller {
                 self.engine.send(Command::ApplyConfig(config));
                 tracing::info!(
                     typed_spelling = self.settings.config.spellcheck.check_typed_words,
-                    spelling_enabled = self.settings.config.spellcheck.enabled,
+                    spelling_on_command = self.settings.config.spellcheck.check_on_command,
                     spelling_mode = ?self.settings.config.spellcheck.typed_mode,
                     "settings applied"
                 );
@@ -773,7 +823,7 @@ impl Controller {
                     tracing::warn!("cannot delete the saved clipboard history: {err}");
                 }
                 self.configure_history();
-                if language_changed || autoreplace_changed {
+                if language_changed || autoreplace_changed || flags_changed {
                     self.rebuild_tray();
                 }
                 // Asking for the rights is the last step: the answer may end
@@ -1019,37 +1069,41 @@ impl Controller {
         }
         if let Some((_, results)) = &self.spelling {
             while let Ok(result) = results.try_recv() {
-                if result.job.id != self.spelling_id || !self.settings.config.spellcheck.enabled {
+                let spellcheck = &self.settings.config.spellcheck;
+                let enabled = if result.job.interactive {
+                    spellcheck.check_typed_words
+                } else {
+                    spellcheck.check_on_command
+                };
+                if result.job.id != self.spelling_id || !enabled {
                     tracing::debug!(target: "okbs_spelling", job = result.job.id,
-                        latest_job = self.spelling_id, enabled = self.settings.config.spellcheck.enabled,
+                        latest_job = self.spelling_id, enabled,
                         "check result discarded: superseded or disabled");
                     continue;
                 }
-                if result.job.interactive
-                    && (!self.settings.config.spellcheck.check_typed_words
-                        || result.misspellings.is_empty())
-                {
+                if result.job.interactive && result.misspellings.is_empty() {
                     tracing::debug!(target: "okbs_spelling", job = result.job.id,
-                        typed_enabled = self.settings.config.spellcheck.check_typed_words,
-                        errors = result.misspellings.len(), "typed check has no popup");
+                        "typed check has no popup");
                     continue;
                 }
                 if result.job.interactive
                     && result.job.settings.typed_mode == TypedSpellcheckMode::Auto
                 {
-                    let candidate = (result.misspellings.len() == 1)
-                        .then(|| result.misspellings[0].suggestions.as_slice())
-                        .and_then(|suggestions| {
-                            (suggestions.len() == 1).then(|| suggestions[0].clone())
-                        });
-                    if let (Some(target), Some(corrected)) = (result.job.target, candidate) {
-                        tracing::debug!(target: "okbs_spelling", job = result.job.id, ?target,
-                            "automatic replacement requested");
-                        self.engine.send(Command::CorrectTypedSpelling {
-                            target,
-                            original: result.job.text,
-                            corrected,
-                        });
+                    match (
+                        result.job.target,
+                        automatic_correction(&result.misspellings),
+                    ) {
+                        (Some(target), Some(corrected)) => {
+                            tracing::debug!(target: "okbs_spelling", job = result.job.id, ?target,
+                                "automatic replacement requested");
+                            self.engine.send(Command::CorrectTypedSpelling {
+                                target,
+                                original: result.job.text,
+                                corrected,
+                            });
+                        }
+                        // Ambiguous: the word stays as typed, only the error is announced.
+                        _ => self.play_configured(SoundId::SpellingError),
                     }
                     continue;
                 }
@@ -1110,6 +1164,11 @@ impl Controller {
                 }
                 TrayCommand::ToggleSounds => {
                     self.engine.send(Command::SetSounds(!self.state.sounds));
+                }
+                TrayCommand::SelectLayout(index) => {
+                    if let Some(layout) = self.layouts.get(index) {
+                        self.engine.send(Command::SelectLayout(layout.id));
+                    }
                 }
                 TrayCommand::ClipboardLayout => {
                     self.engine.send(Command::ClipboardOp(TextOp::Layout));
@@ -1203,5 +1262,45 @@ mod tests {
                 .iter()
                 .any(|s| s == "world")
         );
+    }
+
+    #[test]
+    fn automatic_correction_is_not_the_first_of_several_suggestions() {
+        let root = tempfile::tempdir().unwrap();
+        let (requests, results) = spelling_worker(root.path().to_path_buf()).unwrap();
+        requests
+            .send(SpellingJob {
+                id: 1,
+                text: "поши".into(),
+                interactive: true,
+                target: None,
+                settings: okbs_core::config::Spellcheck {
+                    typed_mode: TypedSpellcheckMode::Auto,
+                    max_suggestions: 1,
+                    ..Default::default()
+                },
+            })
+            .unwrap();
+        let result = results.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(
+            result.misspellings[0].suggestions.len() > 1,
+            "{:?}",
+            result.misspellings
+        );
+        assert_eq!(automatic_correction(&result.misspellings), None);
+
+        let misspelling = |suggestions: &[&str]| okbs_core::spell::Misspelling {
+            range: 0..4,
+            word: "wrld".into(),
+            lang: okbs_core::Lang::En,
+            suggestions: suggestions.iter().map(|s| s.to_string()).collect(),
+        };
+        assert_eq!(
+            automatic_correction(&[misspelling(&["world"])]).as_deref(),
+            Some("world")
+        );
+        assert_eq!(automatic_correction(&[misspelling(&[])]), None);
+        let two = [misspelling(&["world"]), misspelling(&["world"])];
+        assert_eq!(automatic_correction(&two), None);
     }
 }

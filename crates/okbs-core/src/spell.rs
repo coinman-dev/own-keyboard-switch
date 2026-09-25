@@ -85,11 +85,12 @@ pub fn check_text_with_words<'d>(
             continue;
         };
         let dict = dictionary(lang);
-        if dict.check(word)
-            || accepted_words
+        if dict.check(word) || {
+            let word = word.to_lowercase();
+            accepted_words
                 .iter()
-                .any(|known| known.eq_ignore_ascii_case(word))
-        {
+                .any(|known| known.to_lowercase() == word)
+        } {
             continue;
         }
         let mut suggestions = Vec::new();
@@ -151,6 +152,20 @@ mod tests {
         }
         let correct = "моя собака вчера ходила к соседям и она не знала что там делать";
         assert!(check_text(correct, &[Lang::Ru], 5, crate::data::dictionary).is_empty());
+    }
+
+    #[test]
+    #[cfg(feature = "builtin-data")]
+    fn personal_words_match_in_any_case() {
+        let words = ["превед".to_string(), "OKBS".to_string()];
+        let found = check_text_with_words(
+            "Превед okbs",
+            &Lang::ALL,
+            5,
+            &words,
+            crate::data::dictionary,
+        );
+        assert_eq!(found, vec![]);
     }
 
     #[test]

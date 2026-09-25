@@ -19,6 +19,8 @@ pub mod i18n;
 pub mod icon;
 #[cfg(windows)]
 mod key_capture;
+#[cfg(windows)]
+mod menu_flags;
 pub mod settings;
 pub mod text_result;
 #[cfg(any(windows, target_os = "linux"))]

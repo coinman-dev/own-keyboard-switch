@@ -3,6 +3,7 @@
 //! Windows uses `Shell_NotifyIcon`, Linux the StatusNotifierItem protocol
 //! (through `tray-icon`'s `ksni` backend, without GTK).
 
+use crate::flags::Flag;
 use crate::i18n::{Text, tr};
 use crate::icon::{self, ICON_SIZE, IconState};
 use okbs_core::Lang;
@@ -31,8 +32,23 @@ pub enum TrayCommand {
     ClipboardSpellcheck,
     /// «Буфер обмена → Посмотреть историю...».
     ClipboardHistory,
+    /// A keyboard layout, by its index in the list given to [`Tray::new`].
+    SelectLayout(usize),
     /// «Выйти».
     Exit,
+}
+
+/// Menu position of the first layout, after «Настройки...» and a separator.
+#[cfg(windows)]
+const FIRST_LAYOUT: u32 = 2;
+
+/// A keyboard layout offered in the menu.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrayLayout {
+    /// Display name, e.g. «Русский (Россия)».
+    pub name: String,
+    /// Flag shown before the name (Windows).
+    pub flag: Option<Flag>,
 }
 
 /// Everything the tray shows.
@@ -42,6 +58,8 @@ pub struct TrayState {
     pub icon: IconState,
     /// Sounds are on.
     pub sounds: bool,
+    /// Index of the active layout in the list given to [`Tray::new`].
+    pub layout: Option<usize>,
 }
 
 /// Error creating or updating the tray icon.
@@ -59,6 +77,7 @@ pub struct Tray {
     autoreplace_items: Vec<MenuItem>,
     left_opens_autoreplace: bool,
     left_click: LeftClick,
+    layouts: Vec<CheckMenuItem>,
     icon: TrayIcon,
     state: TrayState,
     ui: Lang,
@@ -70,6 +89,12 @@ pub struct Tray {
     clipboard_spellcheck: MenuItem,
     clipboard_history: MenuItem,
     exit: MenuItem,
+    /// Native handle of the popup menu, valid while `icon` lives.
+    #[cfg(windows)]
+    hmenu: isize,
+    /// Declared last: the menu using these pictures is dropped first.
+    #[cfg(windows)]
+    _flags: crate::menu_flags::MenuBitmaps,
 }
 
 impl std::fmt::Debug for Tray {
@@ -97,8 +122,27 @@ fn tooltip(state: TrayState, ui: Lang) -> String {
 
 impl Tray {
     /// Creates the tray icon. On Windows call it on a thread that pumps messages.
-    pub fn new(state: TrayState, ui: Lang, autoreplace: &AutoReplace) -> Result<Self, TrayError> {
+    /// `layouts` are the installed keyboard layouts, in the order
+    /// [`TrayState::layout`] and [`TrayCommand::SelectLayout`] refer to.
+    pub fn new(
+        state: TrayState,
+        ui: Lang,
+        autoreplace: &AutoReplace,
+        layouts: &[TrayLayout],
+    ) -> Result<Self, TrayError> {
         let settings = MenuItem::new(tr(Text::MenuSettings, ui), true, None);
+        let items: Vec<CheckMenuItem> = layouts
+            .iter()
+            .enumerate()
+            .map(|(index, layout)| {
+                CheckMenuItem::new(
+                    layout.name.replace('&', "&&"),
+                    true,
+                    state.layout == Some(index),
+                    None,
+                )
+            })
+            .collect();
         let autoswitch = CheckMenuItem::new(
             tr(Text::MenuAutoswitch, ui),
             true,
@@ -148,9 +192,15 @@ impl Tray {
             }
         }
         let menu = Menu::new();
+        menu.append_items(&[&settings, &PredefinedMenuItem::separator()])
+            .map_err(err)?;
+        if !items.is_empty() {
+            for item in &items {
+                menu.append(item).map_err(err)?;
+            }
+            menu.append(&PredefinedMenuItem::separator()).map_err(err)?;
+        }
         menu.append_items(&[
-            &settings,
-            &PredefinedMenuItem::separator(),
             &autoswitch,
             &sounds,
             &PredefinedMenuItem::separator(),
@@ -160,6 +210,18 @@ impl Tray {
             &exit,
         ])
         .map_err(err)?;
+        #[cfg(windows)]
+        let hmenu = tray_icon::menu::ContextMenu::hpopupmenu(&menu);
+        #[cfg(windows)]
+        let flags = {
+            let mut bitmaps = crate::menu_flags::MenuBitmaps::default();
+            for (position, layout) in (FIRST_LAYOUT..).zip(layouts) {
+                if let Some(flag) = layout.flag {
+                    bitmaps.set(hmenu, position, flag);
+                }
+            }
+            bitmaps
+        };
         let icon = TrayIconBuilder::new()
             .with_id("okbswitch")
             .with_menu(Box::new(menu))
@@ -168,11 +230,12 @@ impl Tray {
             .with_icon(image(state.icon)?)
             .build()
             .map_err(err)?;
-        Ok(Self {
+        let tray = Self {
             autoreplace_list,
             autoreplace_items,
             left_opens_autoreplace: autoreplace.show_in_tray_menu && cfg!(windows),
             left_click: LeftClick::default(),
+            layouts: items,
             icon,
             state,
             ui,
@@ -184,7 +247,13 @@ impl Tray {
             clipboard_spellcheck,
             clipboard_history,
             exit,
-        })
+            #[cfg(windows)]
+            hmenu,
+            #[cfg(windows)]
+            _flags: flags,
+        };
+        tray.check_layout();
+        Ok(tray)
     }
 
     /// Current state.
@@ -206,7 +275,24 @@ impl Tray {
         self.autoswitch.set_checked(state.icon.autoswitch);
         self.sounds.set_checked(state.sounds);
         self.state = state;
+        self.check_layout();
         Ok(())
+    }
+
+    /// Only the active layout is checked, also right after a click toggled
+    /// the chosen item on its own.
+    fn check_layout(&self) {
+        for (index, item) in self.layouts.iter().enumerate() {
+            item.set_checked(self.state.layout == Some(index));
+        }
+        #[cfg(windows)]
+        crate::menu_flags::set_bold(
+            self.hmenu,
+            self.state
+                .layout
+                .filter(|&index| index < self.layouts.len())
+                .map(|index| FIRST_LAYOUT + index as u32),
+        );
     }
 
     /// Interface language of the menu.
@@ -264,6 +350,9 @@ impl Tray {
                 .position(|item| id == item.id())
             {
                 TrayCommand::InsertAutoreplace(index)
+            } else if let Some(index) = self.layouts.iter().position(|item| id == item.id()) {
+                self.check_layout();
+                TrayCommand::SelectLayout(index)
             } else if id == self.exit.id() {
                 TrayCommand::Exit
             } else {

@@ -2149,9 +2149,59 @@ fn spelling_requests_snapshot_options_and_preserve_newer_clipboard() {
     h.processor.correct_clipboard("wrold", "world");
     assert_eq!(h.desktop.lock().clipboard.as_deref(), Some("newer"));
     let mut config = h.processor.config().clone();
-    config.spellcheck.enabled = false;
+    config.spellcheck.check_on_command = false;
     h.processor.apply_config(config);
     assert!(h.processor.spellcheck_clipboard().is_empty());
+}
+
+#[test]
+fn tray_layout_choice_applies_to_the_editor_typed_in() {
+    let mut h = Harness::new(Lang::Ru);
+    h.type_as("да ", Lang::Ru);
+    let editor = h.desktop.lock().window_pid;
+    // The tray menu is in front while the item is chosen.
+    h.desktop.lock().window_pid = std::process::id();
+    let events = h.processor.select_layout(id(Lang::En));
+    assert_eq!(h.desktop.lock().window_pid, editor);
+    assert_eq!(h.layout(), Lang::En);
+    assert!(
+        events.iter().any(|event| matches!(event,
+            Event::LayoutChanged(Some(layout)) if layout.lang == Some(Lang::En))),
+        "{events:?}"
+    );
+}
+
+#[test]
+fn spelling_hotkey_checks_the_selection_before_the_clipboard() {
+    for prefer_selection in [true, false] {
+        let mut h = Harness::with_config(
+            Lang::En,
+            config_with(|c| {
+                c.spellcheck.prefer_selection = prefer_selection;
+                c.hotkeys.spellcheck_clipboard =
+                    okbs_core::config::HotkeyBinding::some("Ctrl+F11".parse().unwrap());
+            }),
+        );
+        h.desktop.lock().text = "wrold".chars().collect();
+        h.desktop.lock().clipboard = Some("clipbaord".into());
+        h.select_all();
+        h.combo(PhysKey::ControlLeft, PhysKey::F11);
+        let checked: Vec<_> = h
+            .events
+            .iter()
+            .filter_map(|event| match event {
+                Event::CheckSpelling { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        let expected = if prefer_selection {
+            "wrold"
+        } else {
+            "clipbaord"
+        };
+        assert_eq!(checked, [expected]);
+        assert_eq!(h.desktop.lock().clipboard.as_deref(), Some("clipbaord"));
+    }
 }
 
 #[test]
@@ -2193,6 +2243,23 @@ fn typed_spelling_uses_final_text_and_respects_enabled_modes() {
         assert_eq!(h.text(), "привет ");
         assert!(h.events.iter().any(|event| matches!(event,
             Event::CheckSpelling { text, .. } if text == "привет")));
+
+        // A word ended by Enter or punctuation can never be replaced later.
+        let mut config = Config::default();
+        config.spellcheck.check_typed_words = true;
+        let mut h = Harness::with_config(Lang::Ru, config);
+        if gate {
+            h.enable_gate();
+        }
+        h.type_as("хочеш\nхочеш, ", Lang::Ru);
+        assert_eq!(h.text(), "хочеш\nхочеш, ");
+        assert!(
+            !h.events
+                .iter()
+                .any(|event| matches!(event, Event::CheckSpelling { .. })),
+            "{:?}",
+            h.events
+        );
     }
 }
 

@@ -149,6 +149,8 @@ pub fn input_target() -> Option<InputTarget> {
             "Shell_TrayWnd"
                 | "Shell_SecondaryTrayWnd"
                 | "NotifyIconOverflowWindow"
+                // Windows 11 hidden tray icons, open while our menu is chosen.
+                | "TopLevelWindowForOverflowXamlIsland"
                 | "Progman"
                 | "WorkerW"
         ) {

@@ -1430,10 +1430,12 @@ impl Processor {
         separator_typed: bool,
         out: &mut Vec<Event>,
     ) {
-        let check = !self.word.is_empty()
+        // Only a word followed by a Space can be replaced later; after Enter,
+        // Tab or punctuation a suggestion could never be applied.
+        let check = separator.key == PhysKey::Space
+            && !self.word.is_empty()
             && !self.word_blocked
             && self.current_lang() == self.word_lang
-            && self.config.spellcheck.enabled
             && self.config.spellcheck.check_typed_words;
         self.finish_word_layout(separator, separator_typed, out);
         if check
@@ -1800,8 +1802,13 @@ impl Processor {
             return self.choose_layout(target, out);
         }
         let index = current.and_then(|id| self.layouts.iter().position(|l| l.id == id));
-        let next = &self.layouts[index.map_or(0, |i| (i + 1) % self.layouts.len())];
-        let (id, lang) = (next.id, next.lang);
+        let next = self.layouts[index.map_or(0, |i| (i + 1) % self.layouts.len())].id;
+        self.switch_to(next, out);
+    }
+
+    /// Activates a layout the user picked and remembers it as their choice.
+    fn switch_to(&mut self, id: LayoutId, out: &mut Vec<Event>) {
+        let lang = self.lang_of(id);
         self.reset_all();
         match self.backends.layouts.set(id) {
             Ok(()) => {
@@ -1819,6 +1826,21 @@ impl Processor {
             }
             Err(err) => self.fail("cannot switch the layout", &err, out),
         }
+    }
+
+    /// A layout chosen in the tray menu belongs to the program the user typed
+    /// in, not to the menu that briefly took the focus.
+    pub fn select_layout(&mut self, id: LayoutId) -> Vec<Event> {
+        let mut out = Vec::new();
+        let activated = match (self.backends.focus.as_ref(), self.insertion_target()) {
+            (Some(focus), Some(target)) => focus.activate_target(target),
+            _ => Ok(()),
+        };
+        match activated {
+            Ok(()) => self.switch_to(id, &mut out),
+            Err(err) => self.fail("cannot return to the input window", &err, &mut out),
+        }
+        out
     }
 
     /// Automatic changes are not made in this program's own windows, in
@@ -2016,7 +2038,7 @@ impl Processor {
             }
             HotkeyAction::ShowClipboardHistory => out.extend(self.clipboard_history()),
             HotkeyAction::SpellcheckClipboard => {
-                out.extend(self.spellcheck_clipboard());
+                out.extend(self.spellcheck_selection_or_clipboard());
             }
             HotkeyAction::ToggleMaximizeWindow => {
                 out.push(Event::Ui(UiRequest::ToggleMaximizeWindow))
@@ -2296,7 +2318,7 @@ impl Processor {
 
     /// Snapshot for the spelling worker, which must not block keyboard input.
     pub fn spellcheck_clipboard(&mut self) -> Vec<Event> {
-        if !self.config.spellcheck.enabled || !self.config.spellcheck.check_on_command {
+        if !self.config.spellcheck.check_on_command {
             return Vec::new();
         }
         let Some(clipboard) = self.backends.clipboard.as_mut() else {
@@ -2322,7 +2344,7 @@ impl Processor {
     /// is restored before the background checker starts, so a result can never
     /// overwrite a later copy operation.
     pub fn spellcheck_selection_or_clipboard(&mut self) -> Vec<Event> {
-        if !self.config.spellcheck.enabled || !self.config.spellcheck.check_on_command {
+        if !self.config.spellcheck.check_on_command {
             return Vec::new();
         }
         if self.config.spellcheck.prefer_selection {

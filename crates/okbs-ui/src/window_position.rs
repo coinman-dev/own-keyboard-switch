@@ -16,7 +16,7 @@ fn fit(bounds: [i32; 4], work: [i32; 4]) -> [i32; 4] {
 }
 
 #[cfg(windows)]
-pub(crate) use native::keep_visible;
+pub(crate) use native::{keep_visible, show_inactive};
 
 #[cfg(windows)]
 mod native {
@@ -34,8 +34,8 @@ mod native {
                 SetThreadDpiAwarenessContext,
             },
             WindowsAndMessaging::{
-                EnumThreadWindows, GetWindowRect, GetWindowTextW, SWP_NOACTIVATE, SWP_NOZORDER,
-                SetWindowPos,
+                EnumThreadWindows, GetWindowRect, GetWindowTextW, IsWindowVisible,
+                SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOZORDER, SetWindowPos, ShowWindow,
             },
         },
     };
@@ -141,6 +141,29 @@ mod native {
                     SWP_NOACTIVATE | SWP_NOZORDER,
                 )
                 .is_ok();
+            }
+        }
+        true
+    }
+
+    /// Shows a hidden popup of this thread without activating it, so typing
+    /// stays in the editor. winit's own `SW_SHOW` afterwards does not activate
+    /// an already visible window. Returns false before the window exists.
+    pub(crate) fn show_inactive(title: &str) -> bool {
+        let mut search = Search { title, found: None };
+        // SAFETY: synchronous enumeration of this thread's windows; the handle
+        // is only shown, never destroyed.
+        unsafe {
+            let _ = EnumThreadWindows(
+                GetCurrentThreadId(),
+                Some(find),
+                LPARAM((&mut search as *mut Search<'_>) as isize),
+            );
+            let Some(window) = search.found else {
+                return false;
+            };
+            if !IsWindowVisible(window).as_bool() {
+                let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
             }
         }
         true

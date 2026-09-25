@@ -743,7 +743,8 @@ pub enum TypedSpellcheckMode {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Spellcheck {
-    /// Master switch.
+    /// Obsolete master switch, read from old files only: `false` turns off
+    /// both switches below when the configuration is sanitized.
     pub enabled: bool,
     /// Check selection or clipboard only after an explicit command.
     pub check_on_command: bool,

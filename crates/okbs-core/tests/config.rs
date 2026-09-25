@@ -46,6 +46,39 @@ fn extra_rules_accepts_the_legacy_key_and_saves_the_new_name() {
 }
 
 #[test]
+fn legacy_spelling_master_switch_turns_off_both_checks() {
+    let loaded = config::from_toml_str(
+        "[spellcheck]\nenabled = false\ncheck_on_command = true\ncheck_typed_words = true\n",
+    );
+    let spellcheck = &loaded.config.spellcheck;
+    assert!(
+        spellcheck.enabled,
+        "the obsolete switch no longer hides anything"
+    );
+    assert!(!spellcheck.check_on_command);
+    assert!(!spellcheck.check_typed_words);
+    assert!(matches!(loaded.issues.as_slice(),
+        [ConfigIssue::Adjusted { key, .. }] if key == "spellcheck.enabled"));
+
+    let saved = config::to_toml_string(&loaded.config).expect("serialize");
+    let reloaded = config::from_toml_str(&saved);
+    assert_eq!(reloaded.issues, vec![]);
+    assert_eq!(reloaded.config.spellcheck, loaded.config.spellcheck);
+
+    let kept = config::from_toml_str("[spellcheck]\ncheck_typed_words = true\n");
+    assert!(kept.config.spellcheck.check_on_command);
+    assert!(kept.config.spellcheck.check_typed_words);
+}
+
+#[test]
+fn personal_words_are_unique_regardless_of_case() {
+    let loaded = config::from_toml_str(
+        "[spellcheck]\ncustom_words = [\"Привет\", \"привет\", \"OKBS\", \"okbs\", \"ёжик\"]\n",
+    );
+    assert_eq!(loaded.config.spellcheck.custom_words.len(), 3);
+}
+
+#[test]
 fn ui_language_preferences_resolve_and_roundtrip_without_losing_automatic_mode() {
     assert_eq!(Config::default().general.ui_language, UiLanguage::System);
     for (value, preference) in [

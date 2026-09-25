@@ -38,15 +38,15 @@ impl TextResult {
         }
     }
 
-    /// Suggestions are applied only when chosen by the user.
+    /// Suggestions are applied only when chosen by the user. Even a single
+    /// word keeps the full view: its result can only be copied, not replaced.
     pub fn spelling(text: String, misspellings: Vec<Misspelling>) -> Self {
-        let compact = misspellings.len() == 1 && text.split_whitespace().count() == 1;
         Self {
             original: text,
             choices: vec![None; misspellings.len()],
             spelling: Some(misspellings),
             copied: false,
-            compact,
+            compact: false,
             replacement_failed: false,
         }
     }
@@ -285,6 +285,16 @@ mod tests {
             ],
         );
         assert_eq!(view.text(), "Превет, wrold!");
+        let single = TextResult::spelling(
+            "wrold".into(),
+            vec![Misspelling {
+                range: 0..5,
+                word: "wrold".into(),
+                lang: Lang::En,
+                suggestions: vec!["world".into()],
+            }],
+        );
+        assert!(!single.is_compact(), "a checked word can be copied");
         view.choices[1] = Some(0);
         assert_eq!(view.text(), "Превет, world!");
         view.choices[0] = Some(0);
