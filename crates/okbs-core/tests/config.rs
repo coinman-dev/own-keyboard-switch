@@ -578,3 +578,102 @@ fn a_config_without_the_diagnostics_key_loads_with_it_off() {
     );
     assert_eq!(loaded.config.log.level, config::LogLevel::Info);
 }
+
+fn rule(pattern: &str, match_kind: MatchKind, action: RuleAction) -> config::Rule {
+    config::Rule {
+        pattern: pattern.into(),
+        match_kind,
+        action,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn exported_rules_import_unchanged() {
+    let rules = vec![
+        rule("ghb", MatchKind::StartsWith, RuleAction::Switch),
+        config::Rule {
+            case_sensitive: true,
+            comment: "аббревиатура".into(),
+            ..rule("SQL", MatchKind::Equals, RuleAction::Stay)
+        },
+    ];
+    let text = config::rules_to_toml(&rules).unwrap();
+    assert!(text.starts_with("# Own Keyboard Switch"));
+    let imported = config::rules_from_toml(&text).unwrap();
+    assert_eq!(imported.rules, rules);
+    assert_eq!(imported.skipped, 0);
+    let empty = config::rules_from_toml(&config::rules_to_toml(&[]).unwrap());
+    assert_eq!(empty, Ok(config::ImportedRules::default()));
+}
+
+#[test]
+fn rules_import_from_a_config_file_and_skip_broken_entries() {
+    let mut config = Config::default();
+    config
+        .rules
+        .push(rule("xyz", MatchKind::Contains, RuleAction::Stay));
+    let whole = config::to_toml_string(&config).unwrap();
+    let imported = config::rules_from_toml(&format!("\u{feff}{whole}")).unwrap();
+    assert_eq!(imported.rules, config.rules);
+
+    let text = "rules = [\n  { pattern = \" abc \" },\n  { pattern = \"\" },\n  { pattern = \"x\", match = \"never\" },\n  42,\n]\n";
+    let imported = config::rules_from_toml(text).unwrap();
+    assert_eq!(imported.rules.len(), 1);
+    assert_eq!(imported.rules[0].pattern, "abc", "the pattern is trimmed");
+    assert_eq!(imported.skipped, 3);
+
+    assert!(config::rules_from_toml("rules = [").is_err());
+    assert!(config::rules_from_toml("[general]\nautoswitch = true\n").is_err());
+}
+
+#[test]
+fn imported_rules_update_matching_patterns_instead_of_repeating_them() {
+    let mut rules = vec![
+        rule("Ghb", MatchKind::StartsWith, RuleAction::Stay),
+        rule("abc", MatchKind::Contains, RuleAction::Stay),
+    ];
+    let report = config::merge_rules(
+        &mut rules,
+        vec![
+            rule("ghb", MatchKind::StartsWith, RuleAction::Switch),
+            rule("abc", MatchKind::Contains, RuleAction::Stay),
+            rule("abc", MatchKind::Equals, RuleAction::Switch),
+            config::Rule {
+                case_sensitive: true,
+                ..rule("ABC", MatchKind::Contains, RuleAction::Switch)
+            },
+        ],
+    );
+    assert_eq!(
+        report,
+        config::MergeReport {
+            added: 2,
+            updated: 1,
+            unchanged: 1,
+        }
+    );
+    assert_eq!(rules.len(), 4);
+    assert_eq!(rules[0].pattern, "ghb");
+    assert_eq!(rules[0].action, RuleAction::Switch);
+}
+
+#[test]
+fn suggested_exclusions_are_added_once() {
+    let mut exclusions = config::Exclusions::default();
+    exclusions.executables.push(config::ExecutableExclusion {
+        path: " CMD.EXE".into(),
+    });
+    let added = config::add_executables(&mut exclusions, config::SUGGESTED_TERMINALS);
+    assert_eq!(added, config::SUGGESTED_TERMINALS.len() - 1);
+    assert_eq!(
+        config::add_executables(&mut exclusions, config::SUGGESTED_TERMINALS),
+        0
+    );
+    assert!(
+        config::SUGGESTED_TERMINALS
+            .iter()
+            .chain(config::SUGGESTED_EDITORS)
+            .all(|name| name.ends_with(".exe") && !name.contains(['/', '\\']))
+    );
+}

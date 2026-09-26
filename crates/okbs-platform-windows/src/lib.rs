@@ -18,6 +18,7 @@ pub mod indicator;
 pub mod inject;
 pub mod layouts;
 pub mod locale;
+pub mod shell;
 pub mod sound;
 pub mod window_control;
 
@@ -35,6 +36,7 @@ pub use hook::{HookFilter, HookSource};
 pub use indicator::WinIndicator;
 pub use inject::SendInputInjector;
 pub use layouts::WinLayouts;
+pub use shell::{WinFileDialogs, WinSystemSettings};
 pub use sound::WinSound;
 pub use window_control::WinWindowControl;
 

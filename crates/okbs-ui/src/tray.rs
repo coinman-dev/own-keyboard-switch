@@ -34,6 +34,10 @@ pub enum TrayCommand {
     ClipboardHistory,
     /// A keyboard layout, by its index in the list given to [`Tray::new`].
     SelectLayout(usize),
+    /// «Системные настройки клавиатуры».
+    KeyboardSettings,
+    /// «О программе».
+    About,
     /// «Выйти».
     Exit,
 }
@@ -88,6 +92,8 @@ pub struct Tray {
     clipboard_translit: MenuItem,
     clipboard_spellcheck: MenuItem,
     clipboard_history: MenuItem,
+    keyboard_settings: MenuItem,
+    about: MenuItem,
     exit: MenuItem,
     /// Native handle of the popup menu, valid while `icon` lives.
     #[cfg(windows)]
@@ -168,6 +174,12 @@ impl Tray {
             ],
         )
         .map_err(err)?;
+        let keyboard_settings = MenuItem::new(
+            tr(Text::MenuSystemKeyboardSettings, ui),
+            cfg!(windows),
+            None,
+        );
+        let about = MenuItem::new(tr(Text::MenuAbout, ui), true, None);
         let exit = MenuItem::new(tr(Text::MenuExit, ui), true, None);
         let autoreplace_list =
             MenuItem::new(tr(Text::MenuAutoreplaceList, ui), cfg!(windows), None);
@@ -194,19 +206,19 @@ impl Tray {
         let menu = Menu::new();
         menu.append_items(&[&settings, &PredefinedMenuItem::separator()])
             .map_err(err)?;
-        if !items.is_empty() {
-            for item in &items {
-                menu.append(item).map_err(err)?;
-            }
-            menu.append(&PredefinedMenuItem::separator()).map_err(err)?;
+        for item in &items {
+            menu.append(item).map_err(err)?;
         }
         menu.append_items(&[
+            &keyboard_settings,
+            &PredefinedMenuItem::separator(),
             &autoswitch,
             &sounds,
             &PredefinedMenuItem::separator(),
             &clipboard,
             &autoreplace_menu,
             &PredefinedMenuItem::separator(),
+            &about,
             &exit,
         ])
         .map_err(err)?;
@@ -246,6 +258,8 @@ impl Tray {
             clipboard_translit,
             clipboard_spellcheck,
             clipboard_history,
+            keyboard_settings,
+            about,
             exit,
             #[cfg(windows)]
             hmenu,
@@ -353,6 +367,10 @@ impl Tray {
             } else if let Some(index) = self.layouts.iter().position(|item| id == item.id()) {
                 self.check_layout();
                 TrayCommand::SelectLayout(index)
+            } else if id == self.keyboard_settings.id() {
+                TrayCommand::KeyboardSettings
+            } else if id == self.about.id() {
+                TrayCommand::About
             } else if id == self.exit.id() {
                 TrayCommand::Exit
             } else {

@@ -6,12 +6,16 @@
 
 mod hotkeys;
 mod load;
+mod rules_file;
 mod sanitize;
+mod suggested;
 
 pub use hotkeys::{HotkeyAction, HotkeyBinding, Hotkeys};
 pub use load::{
     ConfigError, ConfigIssue, LoadOutcome, from_toml_str, load_or_create, save, to_toml_string,
 };
+pub use rules_file::{ImportedRules, MergeReport, merge_rules, rules_from_toml, rules_to_toml};
+pub use suggested::{SUGGESTED_EDITORS, SUGGESTED_TERMINALS, add_executables};
 
 use crate::keys::PhysKey;
 use crate::lang::Lang;

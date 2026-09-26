@@ -248,6 +248,37 @@ pub trait WindowControl: Send {
     fn toggle_maximize_active(&self) -> Result<()>;
 }
 
+/// What a file dialog asks for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileRequest {
+    /// Dialog title.
+    pub title: String,
+    /// Name of the file type in the type list, e.g. «Правила переключения».
+    pub kind: String,
+    /// Extension without the dot.
+    pub extension: String,
+    /// Suggested name when saving.
+    pub file_name: String,
+    /// Title of the program's own window the dialog belongs to.
+    pub owner: String,
+}
+
+/// Native «Открыть» and «Сохранить как» dialogs. Each call blocks until the
+/// user answers, so callers run it on a thread of their own.
+pub trait FileDialogs: Send + Sync {
+    /// An existing file to read; `None` when the user cancelled.
+    fn open(&self, request: &FileRequest) -> Result<Option<std::path::PathBuf>>;
+
+    /// Where to write a file; `None` when the user cancelled.
+    fn save(&self, request: &FileRequest) -> Result<Option<std::path::PathBuf>>;
+}
+
+/// System settings opened from the tray menu.
+pub trait SystemSettings: Send {
+    /// «Системные настройки клавиатуры»: where layouts are added and removed.
+    fn open_keyboard_settings(&self) -> Result<()>;
+}
+
 /// What the floating layout indicator shows and how it behaves.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndicatorState {

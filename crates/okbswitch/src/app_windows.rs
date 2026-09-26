@@ -12,7 +12,8 @@ use okbs_platform::{
 };
 use okbs_platform_windows::{
     HookFilter, HookSource, SendInputInjector, WinAutoreplaceUi, WinAutostart, WinClipboard,
-    WinElevation, WinFocus, WinIndicator, WinLayouts, WinSound, WinWindowControl,
+    WinElevation, WinFileDialogs, WinFocus, WinIndicator, WinLayouts, WinSound, WinSystemSettings,
+    WinWindowControl,
 };
 use okbs_ui::autoreplace_list::{
     AutoreplaceListConfig, AutoreplaceListLabels, AutoreplaceListWindow,
@@ -154,12 +155,14 @@ impl AutoreplaceUi for ThemedAutoreplaceUi {
     }
 }
 
-/// Runs until the user chooses «Выйти» or `stop` fires.
+/// Runs until the user chooses «Выйти» or `stop` fires. `first_run` means the
+/// configuration file was just created.
 pub fn run(
     settings: Settings,
     paths: &crate::paths::AppPaths,
     no_tray: bool,
     open_settings: bool,
+    first_run: bool,
     stop: &Receiver<()>,
 ) -> Result<()> {
     if elevate_if_requested(&settings.config, paths) {
@@ -262,12 +265,17 @@ pub fn run(
             indicator,
             history_file: Some(paths.state_dir.join(crate::paths::HISTORY_FILE)),
             on_apply: Some(Box::new(move |config| filter.configure(config))),
+            file_dialogs: Some(std::sync::Arc::new(WinFileDialogs)),
+            system_settings: Some(Box::new(WinSystemSettings)),
         },
         layout,
         !no_tray,
     );
     if open_settings {
         controller.open_settings(Section::General);
+    }
+    if first_run {
+        controller.suggest_exclusions();
     }
     tracing::info!("running");
     while okbs_platform_windows::pump_messages(Duration::from_millis(40))

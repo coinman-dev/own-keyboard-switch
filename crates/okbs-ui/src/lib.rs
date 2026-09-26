@@ -1,5 +1,6 @@
 //! User interface of Own Keyboard Switch.
 //!
+//! * [`about`]: «О программе» and the license texts;
 //! * [`i18n`]: interface texts in Russian and English;
 //! * [`flags`]: country flags for the tray icon;
 //! * [`icon`]: tray icon images;
@@ -8,6 +9,7 @@
 //! * [`tray`]: tray icon with menu (Windows, Linux);
 //! * [`window`]: the settings window thread (Windows, Linux).
 
+pub mod about;
 mod appearance;
 #[cfg(any(windows, target_os = "linux"))]
 pub mod autoreplace_list;

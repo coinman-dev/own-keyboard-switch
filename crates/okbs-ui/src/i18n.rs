@@ -48,6 +48,15 @@ texts! {
     MenuAbout => "О программе", "About";
     MenuExit => "Выйти", "Exit";
 
+    // About
+    AboutVersion => "версия", "version";
+    AboutDescription => "Автоматически переключает раскладку между русским и английским, исправляет текст, набранный не в той раскладке, заменяет сокращения и проверяет орфографию.", "Switches the keyboard layout between Russian and English automatically, fixes text typed in the wrong layout, expands abbreviations and checks spelling.";
+    AboutPrivacy => "Набранный текст не покидает компьютер, обновления не проверяются. Сеть нужна только для скачивания дополнительных словарей по вашей команде.", "Typed text never leaves the computer and there are no update checks. The network is used only to download additional dictionaries when you ask for them.";
+    AboutLicense => "Лицензия PolyForm Noncommercial 1.0.0: разрешено некоммерческое использование.", "License: PolyForm Noncommercial 1.0.0, for noncommercial use.";
+    AboutThirdParty => "В программу встроены сторонние библиотеки, шрифты и словари Hunspell; их авторские права и лицензии сохраняются.", "Third-party libraries, fonts and Hunspell dictionaries built into the program keep their own copyrights and licenses.";
+    AboutLicenses => "Лицензии...", "Licenses...";
+    AboutLicensesTitle => "Лицензии", "Licenses";
+
     // Settings sections
     SectionGeneral => "Общие", "General";
     SectionHotkeys => "Горячие клавиши", "Hotkeys";
@@ -160,6 +169,16 @@ texts! {
     RuleActionSwitch => "Переводить в другую раскладку", "Convert to the other layout";
     RuleActionStay => "Не переводить в другую раскладку", "Do not convert";
     OptSuggestRuleAfterCancels => "Предлагать добавить правило после отмен подряд:", "Suggest a rule after consecutive undos:";
+    BtnImport => "Импорт...", "Import...";
+    BtnExport => "Экспорт...", "Export...";
+    RulesFileKind => "Правила переключения", "Switching rules";
+    RulesImportTitle => "Импорт правил переключения", "Import switching rules";
+    RulesExportTitle => "Экспорт правил переключения", "Export switching rules";
+    RulesImported => "Из файла добавлено правил: {added}, обновлено: {updated}, уже были в списке: {same}. Нажмите «Применить», чтобы сохранить их.", "From the file: {added} rules added, {updated} updated, {same} already listed. Click Apply to save them.";
+    RulesImportSkipped => "Пропущено записей с ошибками: {skipped}.", "Entries skipped because of errors: {skipped}.";
+    RulesExported => "Правил сохранено: {count}. Файл: {path}", "Rules saved: {count}. File: {path}";
+    RulesImportFailed => "Не удалось загрузить правила:", "Cannot load the rules:";
+    RulesExportFailed => "Не удалось сохранить правила:", "Cannot save the rules:";
 
     // Excluded programs
     ExclusionsHint => "Программы, в которых отключается автопереключение раскладки.", "Programs where auto switch is disabled.";
@@ -168,7 +187,15 @@ texts! {
     ExclusionsByFolder => "По папке с программами", "By program folder";
     ColumnApplication => "Приложение", "Application";
     ColumnPath => "Путь", "Path";
-    ExclusionsUnavailable => "На этом рабочем столе программа не может определить активное окно. Установите расширение GNOME Shell из настроек.", "The active window cannot be determined on this desktop. Install the GNOME Shell extension from the settings.";
+    SuggestExclusionsButton => "Добавить терминалы и среды разработки...", "Add terminals and IDEs...";
+    SuggestExclusionsTitle => "Терминалы и среды разработки", "Terminals and IDEs";
+    SuggestExclusionsText => "В терминалах и редакторах кода набирают команды и имена, которые легко принять за слова в другой раскладке. Добавить эти программы в исключения, чтобы раскладка в них не переключалась автоматически?", "Commands and names typed in terminals and code editors are easily taken for words in the other layout. Add these programs to the exclusions so that the layout is not switched in them automatically?";
+    SuggestTerminals => "Терминалы и командная строка", "Terminals and command line";
+    SuggestEditors => "Среды разработки и редакторы кода", "IDEs and code editors";
+    SuggestExclusionsLater => "Список можно изменить в разделе «Программы-исключения».", "The list can be changed later under Excluded programs.";
+    BtnAddChosen => "Добавить", "Add";
+    BtnDoNotAdd => "Не добавлять", "Do not add";
+    ExclusionsUnavailable =>"На этом рабочем столе программа не может определить активное окно. Установите расширение GNOME Shell из настроек.", "The active window cannot be determined on this desktop. Install the GNOME Shell extension from the settings.";
 
     // Troubleshooting
     NoSwitchAfterHint => "Не переключать раскладку, если перед вводом были нажаты", "Do not switch the layout if these were pressed before typing";

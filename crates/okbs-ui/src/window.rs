@@ -634,6 +634,16 @@ impl SettingsWindow {
         );
     }
 
+    /// First start: offers terminals and IDEs as excluded programs.
+    pub fn suggest_exclusions(&self, config: &Config, layouts: Vec<LayoutEntry>) {
+        self.open_with_input(
+            config,
+            Section::Exclusions,
+            Some(SettingsInput::SuggestExclusions),
+            layouts,
+        );
+    }
+
     /// Opens an editor with selected text, including when the window is closed.
     pub fn add_autoreplace(&self, config: &Config, text: String, layouts: Vec<LayoutEntry>) {
         self.open_with_input(

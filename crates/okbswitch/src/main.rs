@@ -53,17 +53,7 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> Result<ExitCode> {
     if cli.licenses {
-        print!(
-            "{}\n{}\n",
-            include_str!("../../../NOTICE"),
-            include_str!("../../../LICENSE")
-        );
-        print!("{}", include_str!("../../../data/LICENSES.md"));
-        print!(
-            "\n{}",
-            include_str!("../../../data/hunspell/README_en_US.txt")
-        );
-        print!("\n{}", include_str!("../../../THIRD-PARTY-NOTICES.txt"));
+        print!("{}", okbs_ui::about::licenses_text());
         return Ok(ExitCode::SUCCESS);
     }
     if cli.print_default_config {
@@ -155,6 +145,11 @@ fn run(cli: Cli) -> Result<ExitCode> {
         .issues
         .iter()
         .any(|i| matches!(i, ConfigIssue::NewerVersion { .. }));
+    #[cfg(windows)]
+    let first_run = loaded
+        .issues
+        .iter()
+        .any(|i| matches!(i, ConfigIssue::CreatedDefault { .. }));
     let settings = settings::Settings {
         config: loaded.config,
         path: paths.config_file.clone(),
@@ -167,7 +162,14 @@ fn run(cli: Cli) -> Result<ExitCode> {
     .context("cannot install the termination handler")?;
 
     #[cfg(windows)]
-    app_windows::run(settings, &paths, cli.no_tray, cli.settings, &stop_rx)?;
+    app_windows::run(
+        settings,
+        &paths,
+        cli.no_tray,
+        cli.settings,
+        first_run,
+        &stop_rx,
+    )?;
     #[cfg(target_os = "linux")]
     app_linux::run(settings, cli.no_tray, cli.settings, &stop_rx)?;
     #[cfg(not(any(windows, target_os = "linux")))]

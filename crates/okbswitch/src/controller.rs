@@ -3,29 +3,34 @@
 use crate::clipboard_history::History;
 use crate::settings::Settings;
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use okbs_core::config::{Config, TypedSpellcheckMode};
+use okbs_core::config::{Config, Rule, TypedSpellcheckMode};
 use okbs_engine::sounds::{self, Sound};
 use okbs_engine::{Command, EngineHandle, Event, TextOp, UiRequest};
 use okbs_platform::{
-    AutoreplaceLabels, AutoreplaceUi, Autostart, Elevation, FloatingIndicator, IndicatorEvent,
-    IndicatorLabels, IndicatorState, InputTarget, LayoutInfo, SoundPlayer, WindowControl,
+    AutoreplaceLabels, AutoreplaceUi, Autostart, Elevation, FileDialogs, FileRequest,
+    FloatingIndicator, IndicatorEvent, IndicatorLabels, IndicatorState, InputTarget, LayoutInfo,
+    SoundPlayer, SystemSettings, WindowControl,
 };
 use okbs_ui::clipboard_history::{
     ClipboardHistoryConfig, ClipboardHistoryLabels, ClipboardHistoryWindow, HistoryChoice,
 };
 use okbs_ui::icon::{ICON_SIZE, IconState};
 use okbs_ui::settings::{
-    DictionaryState, LayoutEntry, Section, SettingsEvent, SettingsInput, SoundId,
+    DictionaryState, LayoutEntry, RulesTransfer, Section, SettingsEvent, SettingsInput, SoundId,
 };
 use okbs_ui::text_result::TextResult;
 use okbs_ui::tray::{Tray, TrayCommand, TrayLayout, TrayState};
 use okbs_ui::window::SettingsWindow;
 use okbs_ui::{Text, tr};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// How long the icon stays amber after a possible typo.
 const ALERT: Duration = Duration::from_millis(1200);
+
+/// Name offered by «Экспорт...» of switching rules.
+const RULES_FILE_NAME: &str = "okbswitch-rules.toml";
 
 struct SpellingJob {
     id: u64,
@@ -154,6 +159,58 @@ fn automatic_correction(misspellings: &[okbs_core::spell::Misspelling]) -> Optio
     )
 }
 
+/// «Импорт...»: asks for a file and reads the switching rules in it.
+fn import_rules(dialogs: &dyn FileDialogs, request: &FileRequest) -> RulesTransfer {
+    let path = match dialogs.open(request) {
+        Ok(Some(path)) => path,
+        Ok(None) => return RulesTransfer::Cancelled,
+        Err(err) => {
+            tracing::warn!("cannot show the open file dialog: {err}");
+            return RulesTransfer::Failed(err.to_string());
+        }
+    };
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) => return RulesTransfer::Failed(format!("{}: {err}", path.display())),
+    };
+    match okbs_core::config::rules_from_toml(&text) {
+        Ok(imported) => {
+            tracing::info!(
+                rules = imported.rules.len(),
+                skipped = imported.skipped,
+                "switching rules imported"
+            );
+            RulesTransfer::Imported(imported)
+        }
+        Err(message) => RulesTransfer::Failed(format!("{}: {message}", path.display())),
+    }
+}
+
+/// «Экспорт...»: asks where to save `rules` and writes them.
+fn export_rules(dialogs: &dyn FileDialogs, request: &FileRequest, rules: &[Rule]) -> RulesTransfer {
+    let path = match dialogs.save(request) {
+        Ok(Some(path)) => path,
+        Ok(None) => return RulesTransfer::Cancelled,
+        Err(err) => {
+            tracing::warn!("cannot show the save file dialog: {err}");
+            return RulesTransfer::Failed(err.to_string());
+        }
+    };
+    let written = okbs_core::config::rules_to_toml(rules)
+        .map_err(|err| err.to_string())
+        .and_then(|text| std::fs::write(&path, text).map_err(|err| err.to_string()));
+    match written {
+        Ok(()) => {
+            tracing::info!(rules = rules.len(), "switching rules exported");
+            RulesTransfer::Exported {
+                count: rules.len(),
+                path: path.display().to_string(),
+            }
+        }
+        Err(message) => RulesTransfer::Failed(format!("{}: {message}", path.display())),
+    }
+}
+
 /// Callback run after a configuration is applied.
 pub type ApplyHook = Box<dyn Fn(&Config)>;
 
@@ -191,6 +248,10 @@ pub struct PlatformHooks {
     pub history_file: Option<PathBuf>,
     /// Called after a new configuration is applied (e.g. to update the hook filter).
     pub on_apply: Option<ApplyHook>,
+    /// «Импорт...» and «Экспорт...» of switching rules.
+    pub file_dialogs: Option<Arc<dyn FileDialogs>>,
+    /// «Системные настройки клавиатуры» in the tray menu.
+    pub system_settings: Option<Box<dyn SystemSettings>>,
 }
 
 /// The application state owned by the main thread.
@@ -225,6 +286,8 @@ pub struct Controller {
     history_target: Option<InputTarget>,
     /// Set when the user confirmed a restart with administrator rights.
     restart_elevated: bool,
+    file_dialogs: Option<Arc<dyn FileDialogs>>,
+    system_settings: Option<Box<dyn SystemSettings>>,
 }
 
 /// Indicator settings taken from «Общие → Основные».
@@ -378,6 +441,8 @@ impl Controller {
             history_entries,
             history_target: None,
             restart_elevated: false,
+            file_dialogs: platform.file_dialogs,
+            system_settings: platform.system_settings,
         };
         if let Some(window) = &controller.window {
             for package in crate::dictionaries::PACKAGES {
@@ -564,6 +629,66 @@ impl Controller {
         let layouts = self.layout_entries();
         if let Some(window) = &self.window {
             window.open(&self.settings.config, section, None, layouts);
+        }
+    }
+
+    /// First start: offers terminals and IDEs as excluded programs (their
+    /// names are Windows program files).
+    #[cfg(windows)]
+    pub fn suggest_exclusions(&mut self) {
+        let layouts = self.layout_entries();
+        if let Some(window) = &self.window {
+            window.suggest_exclusions(&self.settings.config, layouts);
+        }
+    }
+
+    /// «Импорт...» (`export` is `None`) and «Экспорт...» of switching rules.
+    /// The file dialog waits for the user, so it runs on a thread of its own
+    /// and the answer comes back to the window.
+    fn transfer_rules(&self, export: Option<Vec<Rule>>) {
+        let Some(window) = &self.window else {
+            return;
+        };
+        let notifier = window.notifier();
+        let Some(dialogs) = self.file_dialogs.clone() else {
+            notifier.send(SettingsInput::RulesTransfer(RulesTransfer::Failed(
+                "file dialogs are not available on this system".into(),
+            )));
+            return;
+        };
+        let lang = self
+            .settings
+            .config
+            .general
+            .ui_language
+            .resolve(self.system_language);
+        let title = if export.is_some() {
+            Text::RulesExportTitle
+        } else {
+            Text::RulesImportTitle
+        };
+        let request = FileRequest {
+            title: tr(title, lang).into(),
+            kind: tr(Text::RulesFileKind, lang).into(),
+            extension: "toml".into(),
+            file_name: RULES_FILE_NAME.into(),
+            owner: tr(Text::SettingsWindowTitle, lang).into(),
+        };
+        let answer = notifier.clone();
+        let spawned = std::thread::Builder::new()
+            .name("okbs-rules-file".into())
+            .spawn(move || {
+                let outcome = match export {
+                    Some(rules) => export_rules(dialogs.as_ref(), &request, &rules),
+                    None => import_rules(dialogs.as_ref(), &request),
+                };
+                answer.send(SettingsInput::RulesTransfer(outcome));
+            });
+        if let Err(err) = spawned {
+            tracing::error!("cannot start the file dialog thread: {err}");
+            notifier.send(SettingsInput::RulesTransfer(RulesTransfer::Failed(
+                err.to_string(),
+            )));
         }
     }
 
@@ -851,6 +976,8 @@ impl Controller {
                 }
             }
             SettingsEvent::RestartElevated => self.restart_elevated(),
+            SettingsEvent::ImportRules => self.transfer_rules(None),
+            SettingsEvent::ExportRules(rules) => self.transfer_rules(Some(rules)),
             SettingsEvent::SkipSpelling(word) => {
                 self.engine.send(Command::DeclineSpelling(word));
             }
@@ -1244,6 +1371,14 @@ impl Controller {
                     self.engine.send(Command::SpellcheckClipboard);
                 }
                 TrayCommand::ClipboardHistory => self.show_history(None),
+                TrayCommand::KeyboardSettings => {
+                    if let Some(system) = &self.system_settings
+                        && let Err(err) = system.open_keyboard_settings()
+                    {
+                        tracing::warn!("cannot open the keyboard settings: {err}");
+                    }
+                }
+                TrayCommand::About => self.open_settings(Section::About),
                 TrayCommand::AutoreplaceMenu => {
                     self.engine.send(Command::AutoreplaceList { toggle: false });
                 }
@@ -1365,5 +1500,64 @@ mod tests {
         assert_eq!(automatic_correction(&[misspelling(&[])]), None);
         let two = [misspelling(&["world"]), misspelling(&["world"])];
         assert_eq!(automatic_correction(&two), None);
+    }
+
+    /// Answers every dialog with the same path, or cancels.
+    struct FixedDialog(Option<PathBuf>);
+
+    impl FileDialogs for FixedDialog {
+        fn open(&self, _: &FileRequest) -> okbs_platform::Result<Option<PathBuf>> {
+            Ok(self.0.clone())
+        }
+        fn save(&self, _: &FileRequest) -> okbs_platform::Result<Option<PathBuf>> {
+            Ok(self.0.clone())
+        }
+    }
+
+    fn request() -> FileRequest {
+        FileRequest {
+            title: "Export".into(),
+            kind: "Rules".into(),
+            extension: "toml".into(),
+            file_name: RULES_FILE_NAME.into(),
+            owner: "Settings".into(),
+        }
+    }
+
+    #[test]
+    fn exported_rules_come_back_from_the_chosen_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(RULES_FILE_NAME);
+        let dialog = FixedDialog(Some(path.clone()));
+        let rules = vec![Rule {
+            pattern: "ghb".into(),
+            ..Rule::default()
+        }];
+        assert_eq!(
+            export_rules(&dialog, &request(), &rules),
+            RulesTransfer::Exported {
+                count: 1,
+                path: path.display().to_string(),
+            }
+        );
+        let RulesTransfer::Imported(imported) = import_rules(&dialog, &request()) else {
+            panic!("rules must be read back");
+        };
+        assert_eq!(imported.rules, rules);
+
+        std::fs::write(&path, "not = [valid").unwrap();
+        assert!(matches!(
+            import_rules(&dialog, &request()),
+            RulesTransfer::Failed(message) if message.contains(RULES_FILE_NAME)
+        ));
+        let cancelled = FixedDialog(None);
+        assert_eq!(
+            import_rules(&cancelled, &request()),
+            RulesTransfer::Cancelled
+        );
+        assert_eq!(
+            export_rules(&cancelled, &request(), &rules),
+            RulesTransfer::Cancelled
+        );
     }
 }

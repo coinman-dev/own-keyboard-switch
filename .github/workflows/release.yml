@@ -129,6 +129,8 @@ jobs:
             '' \
             'Linux: in development, no Linux artifacts yet. / Linux: в разработке, готовых сборок пока нет.' \
             '' \
+            "Changes / Изменения: https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/CHANGELOG.md" \
+            '' \
             'License: PolyForm Noncommercial License 1.0.0. Third-party components retain their own licenses.' \
             '' \
             'Verify downloads with SHA256SUMS.txt. / Проверить файлы можно по SHA256SUMS.txt.' > notes.md

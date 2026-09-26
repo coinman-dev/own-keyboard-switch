@@ -27,8 +27,11 @@ and text expansions, and includes clipboard tools and a floating layout indicato
 | Portable | [okbswitch-portable.exe](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.1.0-beta/okbswitch-portable.exe) | Put the file in a writable folder and run it. No installation required. |
 | Installer | [okbswitch-install.exe](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.1.0-beta/okbswitch-install.exe) | Choose a current-user or all-users installation, shortcuts and startup options. |
 
-Windows 10/11, x64. Dictionaries and language models are built in. The application
-does not make network requests and contains no advertising. [All releases](https://github.com/coinman-dev/own-keyboard-switch/releases).
+Windows 10/11, x64. Dictionaries and language models are built in. Typed text never
+leaves the computer; the network is used only when you download an optional
+dictionary in Settings. No advertising, no update checks.
+[All releases](https://github.com/coinman-dev/own-keyboard-switch/releases) ·
+[Changelog](CHANGELOG.md).
 
 ## Quick start
 
@@ -51,8 +54,13 @@ You can change shortcuts and excluded applications in Settings.
 - Autoreplace with Space, Enter, Tab, a tooltip or a shortcut; multiline entries,
   a remembered caret position and a floating insertion list.
 - Clipboard layout conversion, transliteration, spellchecking and history.
-- Floating layout indicator, configurable tray flags and sounds.
-- Application exclusions, password-field checks, startup and optional elevation.
+- Spell checking while typing: suggestions at the text caret or automatic fixes
+  of unambiguous typing slips, personal words and optional dictionaries.
+- Floating layout indicator, configurable tray flags and sounds; the tray menu
+  switches between the installed layouts.
+- Application exclusions (terminals and IDEs are offered on the first start),
+  password-field checks, startup and optional elevation.
+- Switching rules can be exported to a file and imported back.
 - Floating lists stay inside the monitor working area, including at different DPI.
 
 Clipboard operations preserve **plain text**; preservation of images and rich text

@@ -12,8 +12,8 @@ use crate::i18n::{Text, hotkey_action_text, tr};
 use egui::{Color32, RichText, Ui};
 use okbs_core::config::{
     AutoReplaceItem, AutoReplaceTrigger, Config, ExecutableExclusion, FolderExclusion,
-    HotkeyAction, HotkeyBinding, LogLevel, MatchKind, Rule, RuleAction, SoundEvent, SoundMode,
-    SwitchKey, Theme, TitleExclusion, TypedSpellcheckMode, UiLanguage,
+    HotkeyAction, HotkeyBinding, ImportedRules, LogLevel, MatchKind, MergeReport, Rule, RuleAction,
+    SoundEvent, SoundMode, SwitchKey, Theme, TitleExclusion, TypedSpellcheckMode, UiLanguage,
 };
 use okbs_core::{Hotkey, Lang};
 
@@ -39,11 +39,13 @@ pub enum Section {
     Spellcheck,
     /// «Звуки».
     Sounds,
+    /// «О программе».
+    About,
 }
 
 impl Section {
     /// All sections.
-    pub const ALL: [Section; 8] = [
+    pub const ALL: [Section; 9] = [
         Section::General,
         Section::Hotkeys,
         Section::Rules,
@@ -52,6 +54,7 @@ impl Section {
         Section::Autoreplace,
         Section::Spellcheck,
         Section::Sounds,
+        Section::About,
     ];
 
     fn text(self) -> Text {
@@ -64,6 +67,7 @@ impl Section {
             Section::Autoreplace => Text::SectionAutoreplace,
             Section::Spellcheck => Text::SectionSpellcheck,
             Section::Sounds => Text::SectionSounds,
+            Section::About => Text::MenuAbout,
         }
     }
 }
@@ -181,6 +185,11 @@ pub enum SettingsEvent {
     AddSpellingWord(String),
     /// Restart the program asking the system for administrator rights.
     RestartElevated,
+    /// «Импорт...» of switching rules: ask for a file and read it
+    /// (answered with [`SettingsInput::RulesTransfer`]).
+    ImportRules,
+    /// «Экспорт...»: ask where to save these rules and write them.
+    ExportRules(Vec<Rule>),
     /// The window was closed.
     Closed,
 }
@@ -227,6 +236,44 @@ pub enum SettingsInput {
         id: String,
         state: DictionaryState,
     },
+    /// How «Импорт...» or «Экспорт...» of switching rules ended.
+    RulesTransfer(RulesTransfer),
+    /// First start: offer terminals and IDEs as excluded programs. The
+    /// answer is applied at once.
+    SuggestExclusions,
+}
+
+/// Outcome of «Импорт...» or «Экспорт...» of switching rules.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RulesTransfer {
+    /// The user closed the file dialog.
+    Cancelled,
+    /// Rules read from a file.
+    Imported(ImportedRules),
+    /// Rules written to a file.
+    Exported {
+        /// Number of rules.
+        count: usize,
+        /// The file.
+        path: String,
+    },
+    /// Reading or writing failed.
+    Failed(String),
+}
+
+/// A file dialog of the rules list waiting for its answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RulesOp {
+    Import,
+    Export,
+}
+
+/// The line under the rules list after an import or export.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RulesStatus {
+    Imported { report: MergeReport, skipped: usize },
+    Exported { count: usize, path: String },
+    Failed(RulesOp, String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -269,6 +316,13 @@ enum Dialog {
     Elevation {
         /// A previous attempt was declined or failed.
         failed: bool,
+    },
+    /// Terminals and IDEs offered as excluded programs.
+    SuggestedExclusions {
+        terminals: bool,
+        editors: bool,
+        /// Offered on the first start: the answer is saved without «Применить».
+        apply_now: bool,
     },
 }
 
@@ -358,6 +412,11 @@ pub struct SettingsView {
     dictionary_states: std::collections::BTreeMap<String, DictionaryState>,
     /// Why the last download or removal of a dictionary failed.
     dictionary_errors: std::collections::BTreeMap<String, String>,
+    /// File dialog of the rules list that is open.
+    rules_transfer: Option<RulesOp>,
+    rules_status: Option<RulesStatus>,
+    /// «Лицензии...» of «О программе» is shown.
+    licenses_open: bool,
 }
 
 fn weak(ui: &mut Ui, text: &str) {
@@ -567,6 +626,9 @@ impl SettingsView {
                 .map(|id| (id.to_string(), DictionaryState::Unavailable))
                 .collect(),
             dictionary_errors: std::collections::BTreeMap::new(),
+            rules_transfer: None,
+            rules_status: None,
+            licenses_open: false,
         }
     }
 
@@ -686,6 +748,38 @@ impl SettingsView {
                 self.pending_autoreplace.push_back(text);
                 self.open_pending_autoreplace();
             }
+            SettingsInput::RulesTransfer(transfer) => {
+                let Some(op) = self.rules_transfer.take() else {
+                    return;
+                };
+                self.rules_status = match transfer {
+                    RulesTransfer::Cancelled => return,
+                    RulesTransfer::Imported(imported) => {
+                        self.section = Section::Rules;
+                        self.selected_rule = None;
+                        let report =
+                            okbs_core::config::merge_rules(&mut self.draft.rules, imported.rules);
+                        Some(RulesStatus::Imported {
+                            report,
+                            skipped: imported.skipped,
+                        })
+                    }
+                    RulesTransfer::Exported { count, path } => {
+                        Some(RulesStatus::Exported { count, path })
+                    }
+                    RulesTransfer::Failed(message) => Some(RulesStatus::Failed(op, message)),
+                };
+            }
+            SettingsInput::SuggestExclusions => {
+                if self.dialog.is_none() {
+                    self.section = Section::Exclusions;
+                    self.dialog = Some(Dialog::SuggestedExclusions {
+                        terminals: true,
+                        editors: true,
+                        apply_now: true,
+                    });
+                }
+            }
         }
     }
 
@@ -791,16 +885,24 @@ impl SettingsView {
                     match self.section {
                         Section::General => self.general(ui, lang),
                         Section::Hotkeys => self.hotkeys(ui, lang, events),
-                        Section::Rules => self.rules(ui, lang),
+                        Section::Rules => self.rules(ui, lang, events),
                         Section::Exclusions => self.exclusions(ui, lang),
                         Section::Troubleshooting => self.troubleshooting(ui, lang),
                         Section::Autoreplace => self.autoreplace(ui, lang),
                         Section::Sounds => self.sounds(ui, lang, events),
                         Section::Spellcheck => self.spellcheck(ui, lang, events),
+                        Section::About => {
+                            if crate::about::section(ui, lang) {
+                                self.licenses_open = true;
+                            }
+                        }
                     }
                 });
         });
         self.dialogs(ui, lang, events);
+        if self.licenses_open {
+            crate::about::licenses_dialog(ui.ctx(), lang, &mut self.licenses_open);
+        }
         if action == WindowAction::Close && self.is_capturing() {
             events.push(SettingsEvent::CancelCapture);
         }
@@ -1164,7 +1266,68 @@ impl SettingsView {
         events.push(SettingsEvent::CaptureHotkey);
     }
 
-    fn rules(&mut self, ui: &mut Ui, lang: Lang) {
+    /// «Импорт...» and «Экспорт...» under the rules list, with the outcome of
+    /// the last one. The file dialogs belong to the platform (Windows).
+    fn rules_transfer_ui(&mut self, ui: &mut Ui, lang: Lang, events: &mut Vec<SettingsEvent>) {
+        let idle = self.rules_transfer.is_none() && cfg!(windows);
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .add_enabled(idle, action_button(tr(Text::BtnImport, lang)))
+                .clicked()
+            {
+                self.rules_transfer = Some(RulesOp::Import);
+                self.rules_status = None;
+                events.push(SettingsEvent::ImportRules);
+            }
+            if ui
+                .add_enabled(
+                    idle && !self.draft.rules.is_empty(),
+                    action_button(tr(Text::BtnExport, lang)),
+                )
+                .clicked()
+            {
+                self.rules_transfer = Some(RulesOp::Export);
+                self.rules_status = None;
+                events.push(SettingsEvent::ExportRules(self.draft.rules.clone()));
+            }
+            if !cfg!(windows) {
+                soon(ui, lang);
+            }
+        });
+        let status = match &self.rules_status {
+            None => return,
+            Some(RulesStatus::Imported { report, skipped }) => {
+                let mut text = tr(Text::RulesImported, lang)
+                    .replace("{added}", &report.added.to_string())
+                    .replace("{updated}", &report.updated.to_string())
+                    .replace("{same}", &report.unchanged.to_string());
+                if *skipped > 0 {
+                    text.push(' ');
+                    text.push_str(
+                        &tr(Text::RulesImportSkipped, lang)
+                            .replace("{skipped}", &skipped.to_string()),
+                    );
+                }
+                RichText::new(text)
+            }
+            Some(RulesStatus::Exported { count, path }) => RichText::new(
+                tr(Text::RulesExported, lang)
+                    .replace("{count}", &count.to_string())
+                    .replace("{path}", path),
+            ),
+            Some(RulesStatus::Failed(op, message)) => {
+                let failed = match op {
+                    RulesOp::Import => Text::RulesImportFailed,
+                    RulesOp::Export => Text::RulesExportFailed,
+                };
+                RichText::new(format!("{} {message}", tr(failed, lang)))
+                    .color(Color32::from_rgb(0xC0, 0x30, 0x30))
+            }
+        };
+        ui.add(egui::Label::new(status).wrap());
+    }
+
+    fn rules(&mut self, ui: &mut Ui, lang: Lang, events: &mut Vec<SettingsEvent>) {
         checkbox(
             ui,
             &mut self.draft.rules_options.improve_switching,
@@ -1239,6 +1402,7 @@ impl SettingsView {
                 suggestion: false,
             });
         }
+        self.rules_transfer_ui(ui, lang, events);
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             ui.label(tr(Text::OptSuggestRuleAfterCancels, lang));
@@ -1316,6 +1480,18 @@ impl SettingsView {
                 tab: self.exclusion_tab,
                 index: Some(i),
                 value: values[i].clone(),
+            });
+        }
+        // The suggested names are Windows program files.
+        if cfg!(windows)
+            && ui
+                .add(action_button(tr(Text::SuggestExclusionsButton, lang)))
+                .clicked()
+        {
+            self.dialog = Some(Dialog::SuggestedExclusions {
+                terminals: true,
+                editors: true,
+                apply_now: false,
             });
         }
     }
@@ -2112,6 +2288,72 @@ impl SettingsView {
                     });
                 });
             }
+            Dialog::SuggestedExclusions {
+                terminals,
+                editors,
+                apply_now,
+            } => {
+                egui::Modal::new(egui::Id::new("suggested_exclusions_dialog")).show(&ctx, |ui| {
+                    content_style(ui);
+                    ui.set_width(480.0);
+                    ui.heading(tr(Text::SuggestExclusionsTitle, lang));
+                    ui.add_space(4.0);
+                    ui.add(egui::Label::new(tr(Text::SuggestExclusionsText, lang)).wrap());
+                    ui.add_space(6.0);
+                    for (chosen, text, names) in [
+                        (
+                            &mut *terminals,
+                            Text::SuggestTerminals,
+                            okbs_core::config::SUGGESTED_TERMINALS,
+                        ),
+                        (
+                            &mut *editors,
+                            Text::SuggestEditors,
+                            okbs_core::config::SUGGESTED_EDITORS,
+                        ),
+                    ] {
+                        ui.checkbox(chosen, tr(text, lang));
+                        ui.indent(text, |ui| weak(ui, &names.join(", ")));
+                    }
+                    ui.add_space(4.0);
+                    weak(ui, tr(Text::SuggestExclusionsLater, lang));
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add_enabled(
+                                *terminals || *editors,
+                                action_button(tr(Text::BtnAddChosen, lang)),
+                            )
+                            .clicked()
+                        {
+                            let chosen: Vec<&str> = [
+                                (*terminals, okbs_core::config::SUGGESTED_TERMINALS),
+                                (*editors, okbs_core::config::SUGGESTED_EDITORS),
+                            ]
+                            .into_iter()
+                            .filter(|(chosen, _)| *chosen)
+                            .flat_map(|(_, names)| names.iter().copied())
+                            .collect();
+                            okbs_core::config::add_executables(&mut self.draft.exclusions, &chosen);
+                            if *apply_now {
+                                // Only this answer is saved; other unsaved
+                                // edits of the draft stay unsaved.
+                                let mut config = self.applied.clone();
+                                okbs_core::config::add_executables(&mut config.exclusions, &chosen);
+                                self.applied = config.clone();
+                                events.push(SettingsEvent::Apply(Box::new(config)));
+                            }
+                            self.section = Section::Exclusions;
+                            self.exclusion_tab = ExclusionTab::Executable;
+                            self.selected_exclusion = None;
+                            keep = false;
+                        }
+                        if ui.add(action_button(tr(Text::BtnDoNotAdd, lang))).clicked() {
+                            keep = false;
+                        }
+                    });
+                });
+            }
         }
         if keep {
             self.dialog = Some(dialog);
@@ -2374,6 +2616,8 @@ mod tests {
                         (Section::General, GeneralTab::Advanced) => 3,
                         // «Показывать список в меню».
                         (Section::Autoreplace, _) => 1,
+                        // «Импорт...» and «Экспорт...» of the rules.
+                        (Section::Rules, _) => 1,
                         _ => 0,
                     };
                     assert_eq!(
@@ -2459,6 +2703,167 @@ mod tests {
                 "only «{label}» asks for the restart"
             );
         }
+    }
+
+    #[test]
+    fn about_shows_the_version_and_the_licenses() {
+        for lang in Lang::ALL {
+            let ctx = test_context();
+            let mut config = Config::default();
+            config.general.ui_language = lang.into();
+            let mut view = SettingsView::new(config, Section::About, Lang::Ru);
+            let texts: Vec<String> = drawn_texts(&mut view, &ctx)
+                .into_iter()
+                .map(|(text, _)| text)
+                .collect();
+            assert!(
+                texts.iter().any(|t| t.contains(okbs_core::VERSION)),
+                "{texts:?}"
+            );
+            assert!(texts.iter().any(|t| t.starts_with("Copyright (c) ")));
+            click(&mut view, &ctx, tr(Text::AboutLicenses, lang));
+            assert!(view.licenses_open);
+            let texts: Vec<String> = drawn_texts(&mut view, &ctx)
+                .into_iter()
+                .map(|(text, _)| text)
+                .collect();
+            assert!(
+                texts
+                    .iter()
+                    .any(|t| t == "# PolyForm Noncommercial License 1.0.0"),
+                "the notices are listed line by line"
+            );
+            click(&mut view, &ctx, tr(Text::BtnClose, lang));
+            assert!(!view.licenses_open);
+        }
+    }
+
+    #[test]
+    fn imported_rules_join_the_draft_and_report_the_counts() {
+        let ctx = test_context();
+        let mut config = Config::default();
+        config.rules.push(Rule {
+            pattern: "ghb".into(),
+            ..Rule::default()
+        });
+        let mut view = SettingsView::new(config, Section::Rules, Lang::Ru);
+        let imported = ImportedRules {
+            rules: vec![
+                Rule {
+                    pattern: "ghb".into(),
+                    ..Rule::default()
+                },
+                Rule {
+                    pattern: "xyz".into(),
+                    ..Rule::default()
+                },
+            ],
+            skipped: 2,
+        };
+        // An answer nobody waits for changes nothing.
+        view.handle(SettingsInput::RulesTransfer(RulesTransfer::Imported(
+            imported.clone(),
+        )));
+        assert_eq!(view.draft.rules.len(), 1);
+        if cfg!(windows) {
+            let events = click(&mut view, &ctx, tr(Text::BtnImport, Lang::Ru));
+            assert_eq!(events, vec![SettingsEvent::ImportRules]);
+        } else {
+            view.rules_transfer = Some(RulesOp::Import);
+        }
+        view.handle(SettingsInput::RulesTransfer(RulesTransfer::Imported(
+            imported,
+        )));
+        assert_eq!(view.draft.rules.len(), 2);
+        assert!(view.is_modified(), "saved only by «Применить»");
+        let texts: Vec<String> = drawn_texts(&mut view, &ctx)
+            .into_iter()
+            .map(|(text, _)| text)
+            .collect();
+        assert!(
+            texts.iter().any(|t| t.contains(": 1, ")
+                && t.contains(tr(Text::BtnApply, Lang::Ru))
+                && t.contains("2.")),
+            "{texts:?}"
+        );
+
+        view.rules_transfer = Some(RulesOp::Export);
+        view.handle(SettingsInput::RulesTransfer(RulesTransfer::Failed(
+            "disk full".into(),
+        )));
+        assert_eq!(
+            view.rules_status,
+            Some(RulesStatus::Failed(RulesOp::Export, "disk full".into()))
+        );
+        view.rules_transfer = Some(RulesOp::Export);
+        view.handle(SettingsInput::RulesTransfer(RulesTransfer::Cancelled));
+        assert!(view.rules_transfer.is_none());
+        if cfg!(windows) {
+            let events = click(&mut view, &ctx, tr(Text::BtnExport, Lang::Ru));
+            assert_eq!(
+                events,
+                vec![SettingsEvent::ExportRules(view.draft.rules.clone())]
+            );
+            assert!(view.rules_status.is_none());
+        }
+    }
+
+    #[test]
+    fn first_start_saves_the_chosen_exclusions_at_once() {
+        for add in [true, false] {
+            let ctx = test_context();
+            let mut view = SettingsView::new(Config::default(), Section::General, Lang::Ru);
+            view.handle(SettingsInput::SuggestExclusions);
+            assert_eq!(view.section, Section::Exclusions);
+            frame(&mut view, &ctx);
+            if add {
+                // Only the terminals.
+                click(&mut view, &ctx, tr(Text::SuggestEditors, Lang::Ru));
+            }
+            let label = if add {
+                tr(Text::BtnAddChosen, Lang::Ru)
+            } else {
+                tr(Text::BtnDoNotAdd, Lang::Ru)
+            };
+            let events = click(&mut view, &ctx, label);
+            assert!(view.dialog.is_none());
+            let saved: Vec<String> = view
+                .applied
+                .exclusions
+                .executables
+                .iter()
+                .map(|e| e.path.clone())
+                .collect();
+            if add {
+                assert_eq!(saved, okbs_core::config::SUGGESTED_TERMINALS);
+                assert!(matches!(&events[..], [SettingsEvent::Apply(config)]
+                    if config.exclusions == view.applied.exclusions));
+                assert!(!view.is_modified());
+            } else {
+                assert!(saved.is_empty());
+                assert!(events.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn suggested_exclusions_from_the_section_wait_for_apply() {
+        if !cfg!(windows) {
+            return;
+        }
+        let ctx = test_context();
+        let mut config = Config::default();
+        config.exclusions.executables.push(ExecutableExclusion {
+            path: "code.exe".into(),
+        });
+        let mut view = SettingsView::new(config, Section::Exclusions, Lang::Ru);
+        click(&mut view, &ctx, tr(Text::SuggestExclusionsButton, Lang::Ru));
+        let events = click(&mut view, &ctx, tr(Text::BtnAddChosen, Lang::Ru));
+        assert!(events.is_empty(), "nothing is saved before «Применить»");
+        let count = okbs_core::config::SUGGESTED_TERMINALS.len()
+            + okbs_core::config::SUGGESTED_EDITORS.len();
+        assert_eq!(view.draft.exclusions.executables.len(), count);
+        assert!(view.is_modified());
     }
 
     #[test]
