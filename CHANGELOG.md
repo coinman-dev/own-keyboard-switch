@@ -6,6 +6,12 @@
 
 ### Added
 
+- **Spell checking** section in Settings: checking on command and while typing
+  are switched separately; languages to check, personal words and optional
+  dictionaries (English — United Kingdom, modern expanded Russian). A
+  dictionary is downloaded only when you ask for it and is checked against a
+  pinned SHA-256; this is the only network access of the program.
+- The spell check hotkey can check the selected text before the clipboard.
 - Spell checking while typing: after a Space, a misspelled word gets a small
   popup at the text caret with suggestions, **Skip** and **Add to my words**.
   The popup does not take the focus and closes as you keep typing. **Break**
@@ -26,20 +32,12 @@
   same list can be added later under **Excluded programs**.
 - The diagnostic log can be switched off or set to Error, Info or Debug; the
   change applies without a restart.
-- Download and removal errors of optional dictionaries are shown in Settings.
 
 ### Fixed
 
 - Assigning a hotkey by pressing it: the dialog no longer waits forever,
   because Windows does not pass keys to the program's hook while its own
   window is active.
-- The spell check hotkey honours «check selection first»; the tray command
-  checks the clipboard only.
-- Spelling fixes are typed into the original input field only; a failed
-  replacement is reported instead of being lost.
-- Personal words match in any letter case, Cyrillic included.
-- Optional Hunspell dictionaries with comments in their affix files load.
-- The Windows 11 hidden-icons flyout is no longer taken for the input window.
 
 ## 0.1.0-beta — 2026-09-21
 

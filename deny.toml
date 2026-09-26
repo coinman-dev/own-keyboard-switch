@@ -38,6 +38,12 @@ unused-allowed-license = "allow"
 crate = "epaint_default_fonts"
 allow = ["OFL-1.1", "Ubuntu-font-1.0"]
 
+# Mozilla's root certificates checked by the optional dictionary download;
+# CDLA-Permissive-2.0 is a permissive data license.
+[[licenses.exceptions]]
+crate = "webpki-roots"
+allow = ["CDLA-Permissive-2.0"]
+
 [licenses.private]
 ignore = true
 
@@ -45,17 +51,18 @@ ignore = true
 multiple-versions = "allow"
 wildcards = "deny"
 allow-wildcard-paths = true
-# The program never uses the network.
+# The only network access is the optional dictionary download of the program
+# itself (okbswitch -> ureq -> rustls); nothing else may bring a network stack.
 deny = [
     { crate = "reqwest", reason = "no network access" },
-    { crate = "ureq", reason = "no network access" },
+    { crate = "ureq", wrappers = ["okbswitch"], reason = "only the dictionary download" },
     { crate = "hyper", reason = "no network access" },
     { crate = "curl", reason = "no network access" },
     { crate = "isahc", reason = "no network access" },
     { crate = "attohttpc", reason = "no network access" },
     { crate = "openssl", reason = "no network access" },
     { crate = "native-tls", reason = "no network access" },
-    { crate = "rustls", reason = "no network access" },
+    { crate = "rustls", wrappers = ["ureq"], reason = "only the dictionary download" },
 ]
 
 [sources]
