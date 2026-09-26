@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*", "tools/*"]
 
 [workspace.package]
-version = "0.1.0-beta"
+version = "0.2.0-beta"
 edition = "2024"
 rust-version = "1.95"
 license = "PolyForm-Noncommercial-1.0.0"

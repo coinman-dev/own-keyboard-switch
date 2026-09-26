@@ -373,7 +373,7 @@ dependencies = [
 
 [[package]]
 name = "build-lang-data"
-version = "0.1.0-beta"
+version = "0.2.0-beta"
 dependencies = [
  "anyhow",
  "miniz_oxide 0.9.1",
@@ -596,7 +596,7 @@ dependencies = [
 
 [[package]]
 name = "context-eval"
-version = "0.1.0-beta"
+version = "0.2.0-beta"
 dependencies = [
  "anyhow",
  "okbs-core",
@@ -2258,7 +2258,7 @@ dependencies = [
 
 [[package]]
 name = "okbs-core"
-version = "0.1.0-beta"
+version = "0.2.0-beta"
 dependencies = [
  "miniz_oxide 0.9.1",
  "pretty_assertions",
@@ -2272,7 +2272,7 @@ dependencies = [
 
 [[package]]
 name = "okbs-engine"
-version = "0.1.0-beta"
+version = "0.2.0-beta"
 dependencies = [
  "crossbeam-channel",
  "okbs-core",
@@ -2282,7 +2282,7 @@ dependencies = [
 
 [[package]]
 name = "okbs-platform"
-version = "0.1.0-beta"
+version = "0.2.0-beta"
 dependencies = [
  "crossbeam-channel",
  "okbs-core",
@@ -2291,7 +2291,7 @@ dependencies = [
 
 [[package]]
 name = "okbs-platform-linux"
-version = "0.1.0-beta"
+version = "0.2.0-beta"
 dependencies = [
  "evdev",
  "okbs-core",
@@ -2301,7 +2301,7 @@ dependencies = [
 
 [[package]]
 name = "okbs-platform-windows"
-version = "0.1.0-beta"
+version = "0.2.0-beta"
 dependencies = [
  "arboard",
  "crossbeam-channel",
@@ -2313,7 +2313,7 @@ dependencies = [
 
 [[package]]
 name = "okbs-ui"
-version = "0.1.0-beta"
+version = "0.2.0-beta"
 dependencies = [
  "crossbeam-channel",
  "eframe",
@@ -2330,7 +2330,7 @@ dependencies = [
 
 [[package]]
 name = "okbswitch"
-version = "0.1.0-beta"
+version = "0.2.0-beta"
 dependencies = [
  "anyhow",
  "clap",

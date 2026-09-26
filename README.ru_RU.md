@@ -7,7 +7,7 @@
 <h1 align="center">Own Keyboard Switch</h1>
 <p align="center">Автоматическое переключение русской и английской раскладки в Windows.</p>
 
-[![Релиз](https://img.shields.io/badge/release-0.1.0--beta-orange)](https://github.com/coinman-dev/own-keyboard-switch/releases/tag/v0.1.0-beta)
+[![Релиз](https://img.shields.io/badge/release-0.2.0--beta-orange)](https://github.com/coinman-dev/own-keyboard-switch/releases/tag/v0.2.0-beta)
 [![Сборка](https://github.com/coinman-dev/own-keyboard-switch/actions/workflows/release.yml/badge.svg)](https://github.com/coinman-dev/own-keyboard-switch/actions/workflows/release.yml)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-blue)](#скачать)
 [![Rust](https://img.shields.io/badge/Rust-1.95%2B-orange)](#сборка)
@@ -17,15 +17,15 @@
 `ghbdtn` → `привет`, `руддщ` → `hello`. Программа работает в трее, поддерживает
 собственные правила, автозамену, инструменты буфера обмена и плавающий индикатор.
 
-> **0.1.0-beta — предварительный релиз для Windows.** Версия для Linux ещё
+> **0.2.0-beta — предварительный релиз для Windows.** Версия для Linux ещё
 > в разработке; готовые Linux-сборки пока не публикуются.
 
 ## Скачать
 
 | Вариант | Скачать | Как использовать |
 |---|---|---|
-| Portable | [okbswitch-portable.exe](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.1.0-beta/okbswitch-portable.exe) | Положить в доступную для записи папку и запустить. Установка не нужна. |
-| Установщик | [okbswitch-install.exe](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.1.0-beta/okbswitch-install.exe) | Выбрать установку для себя или всех пользователей, ярлыки и автозапуск. |
+| Portable | [okbswitch-portable.exe](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.2.0-beta/okbswitch-portable.exe) | Положить в доступную для записи папку и запустить. Установка не нужна. |
+| Установщик | [okbswitch-install.exe](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.2.0-beta/okbswitch-install.exe) | Выбрать установку для себя или всех пользователей, ярлыки и автозапуск. |
 
 Windows 10/11, x64. Словари и языковые модели встроены. Набранный текст не покидает
 компьютер; сеть нужна только для скачивания дополнительного словаря в настройках.

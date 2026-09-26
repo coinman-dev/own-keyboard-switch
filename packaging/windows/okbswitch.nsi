@@ -66,6 +66,7 @@ ManifestDPIAware true
 !include "MultiUser.nsh"
 !include "LogicLib.nsh"
 !include "FileFunc.nsh"
+!include "Sections.nsh"
 !include "x64.nsh"
 
 !insertmacro GetSize
@@ -107,6 +108,8 @@ VIAddVersionKey "LegalCopyright" "Copyright (c) 2026 coinman-dev"
 !define MULTIUSER_PAGE_CUSTOMFUNCTION_PRE ResumeBeforeComponents
 !define MULTIUSER_PAGE_CUSTOMFUNCTION_LEAVE ElevateForAllUsers
 !insertmacro MULTIUSER_PAGE_INSTALLMODE
+; The install mode is chosen by now, so an earlier installation can be found.
+!define MUI_PAGE_CUSTOMFUNCTION_PRE DetectUpgrade
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
@@ -225,6 +228,10 @@ FunctionEnd
 Var Writable
 Var CommandLineInstallDir
 Var ResumeComponents
+; "yes" when installing over an earlier installation of the chosen mode.
+Var Upgrade
+; Mode and directory DetectUpgrade last looked at.
+Var DetectedFor
 
 ; Whether this process may create and write in $INSTDIR. A standard account,
 ; and an administrator who has not been elevated, cannot write under Program
@@ -376,6 +383,8 @@ Function .onInit
     ${If} $CommandLineInstallDir != ""
         StrCpy $INSTDIR $CommandLineInstallDir
     ${EndIf}
+    ; A silent run shows no pages: the components are set here.
+    Call DetectUpgrade
     ; A silent run shows no pages, so the all-users check has to happen here.
     ${If} ${Silent}
         Call MaybeElevate
@@ -432,6 +441,8 @@ Section "!${NAME}" SecMain
     ${EndIf}
     SetOutPath "$INSTDIR"
     Call StopProgram
+    ; Before 0.2 the program wrote its log to `log`; it uses `Logs` now.
+    RMDir /r "$INSTDIR\log"
 
     File "/oname=${EXE}" "${SOURCE_EXE}"
     File "/oname=LICENSE.txt" "${ROOT}\LICENSE"
@@ -485,6 +496,33 @@ Section "$(NameAutostart)" SecAutostart
     ; старте» checkbox shows the real state after the first run.
     WriteRegStr HKCU "${RUN_KEY}" "${RUN_VALUE}" '"$INSTDIR\${EXE}"'
 SectionEnd
+
+; An update over an earlier installation keeps what the user has chosen since:
+; autostart is set in the program itself («Запускаться при старте», possibly as
+; a logon task with administrator rights), so the component is hidden and the
+; registration left alone; an existing desktop shortcut is kept up to date.
+Function DetectUpgrade
+    ${If} $DetectedFor == "$MultiUser.InstallMode|$INSTDIR"
+        Return
+    ${EndIf}
+    StrCpy $DetectedFor "$MultiUser.InstallMode|$INSTDIR"
+    StrCpy $Upgrade "no"
+    ReadRegStr $0 SHCTX "${UNINSTALL_KEY}" "InstallLocation"
+    ${If} $0 != ""
+    ${AndIf} ${FileExists} "$0\${EXE}"
+        StrCpy $Upgrade "yes"
+    ${EndIf}
+    ${If} $Upgrade == "yes"
+        SectionSetFlags ${SecAutostart} 0
+        SectionSetText ${SecAutostart} ""
+        ${If} ${FileExists} "$DESKTOP\${NAME}.lnk"
+            SectionSetFlags ${SecDesktop} ${SF_SELECTED}
+        ${EndIf}
+    ${Else}
+        SectionSetFlags ${SecAutostart} ${SF_SELECTED}
+        SectionSetText ${SecAutostart} "$(NameAutostart)"
+    ${EndIf}
+FunctionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
     !insertmacro MUI_DESCRIPTION_TEXT ${SecMain} "$(DescMain)"

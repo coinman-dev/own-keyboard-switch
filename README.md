@@ -7,7 +7,7 @@
 <h1 align="center">Own Keyboard Switch</h1>
 <p align="center">Automatic Russian ↔ English keyboard layout switching for Windows.</p>
 
-[![Release](https://img.shields.io/badge/release-0.1.0--beta-orange)](https://github.com/coinman-dev/own-keyboard-switch/releases/tag/v0.1.0-beta)
+[![Release](https://img.shields.io/badge/release-0.2.0--beta-orange)](https://github.com/coinman-dev/own-keyboard-switch/releases/tag/v0.2.0-beta)
 [![Build](https://github.com/coinman-dev/own-keyboard-switch/actions/workflows/release.yml/badge.svg)](https://github.com/coinman-dev/own-keyboard-switch/actions/workflows/release.yml)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-blue)](#download)
 [![Rust](https://img.shields.io/badge/Rust-1.95%2B-orange)](#building)
@@ -17,15 +17,15 @@
 `ghbdtn` → `привет`, `руддщ` → `hello`. It runs in the tray, supports custom rules
 and text expansions, and includes clipboard tools and a floating layout indicator.
 
-> **0.1.0-beta is a Windows prerelease.** Linux support is still in development;
+> **0.2.0-beta is a Windows prerelease.** Linux support is still in development;
 > no Linux binaries are published yet.
 
 ## Download
 
 | Edition | Download | Usage |
 |---|---|---|
-| Portable | [okbswitch-portable.exe](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.1.0-beta/okbswitch-portable.exe) | Put the file in a writable folder and run it. No installation required. |
-| Installer | [okbswitch-install.exe](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.1.0-beta/okbswitch-install.exe) | Choose a current-user or all-users installation, shortcuts and startup options. |
+| Portable | [okbswitch-portable.exe](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.2.0-beta/okbswitch-portable.exe) | Put the file in a writable folder and run it. No installation required. |
+| Installer | [okbswitch-install.exe](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.2.0-beta/okbswitch-install.exe) | Choose a current-user or all-users installation, shortcuts and startup options. |
 
 Windows 10/11, x64. Dictionaries and language models are built in. Typed text never
 leaves the computer; the network is used only when you download an optional

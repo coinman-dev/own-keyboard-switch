@@ -30,10 +30,9 @@ try {
     & $nsisExe /V2 "/DVERSION=$version" "/DVERSION_NUMERIC=$numeric" "/DSOURCE_EXE=$SourceExe" "/DROOT=$root" "/DOUTPUT=$OutputDirectory\okbswitch-install.exe" "$root\packaging\windows\okbswitch.nsi"
     if ($LASTEXITCODE -ne 0) { throw 'Installer packaging failed.' }
     Copy-Item -LiteralPath $SourceExe -Destination "$OutputDirectory\okbswitch-portable.exe" -Force
-    Copy-Item -LiteralPath LICENSE -Destination "$OutputDirectory\LICENSE.txt" -Force
-    Copy-Item -LiteralPath NOTICE -Destination "$OutputDirectory\NOTICE.txt" -Force
-    Copy-Item -LiteralPath THIRD-PARTY-NOTICES.txt -Destination $OutputDirectory -Force
-    $names = @('okbswitch-portable.exe', 'okbswitch-install.exe', 'LICENSE.txt', 'NOTICE.txt', 'THIRD-PARTY-NOTICES.txt')
+    # The license texts are in the repository, in the installed folder and in
+    # the program itself («О программе → Лицензии...», --licenses).
+    $names = @('okbswitch-portable.exe', 'okbswitch-install.exe')
     $checksums = foreach ($name in $names) {
         $hash = (Get-FileHash -LiteralPath (Join-Path $OutputDirectory $name) -Algorithm SHA256).Hash.ToLowerInvariant()
         "$hash  $name"

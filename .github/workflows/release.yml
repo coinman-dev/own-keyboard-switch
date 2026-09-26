@@ -48,6 +48,12 @@ jobs:
             $tagCommit = git rev-parse "refs/tags/$env:RELEASE_TAG^{commit}"
             if ($LASTEXITCODE -ne 0 -or $tagCommit -ne (git rev-parse HEAD)) { throw 'Checkout is not the requested tag.' }
           }
+      - name: Release notes
+        shell: bash
+        run: |
+          mkdir -p target/notes
+          bash tools/release-notes.sh "${RELEASE_TAG#v}" > target/notes/release-notes.md
+          cat target/notes/release-notes.md
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -95,6 +101,12 @@ jobs:
           path: target/dist/*
           if-no-files-found: error
           retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: target/notes/release-notes.md
+          if-no-files-found: error
+          retention-days: 14
 
   publish:
     if: github.event_name != 'workflow_dispatch' || !inputs.dry_run
@@ -111,6 +123,10 @@ jobs:
         with:
           name: windows-release
           path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: notes
       - name: Publish complete release
         shell: bash
         run: |
@@ -118,24 +134,8 @@ jobs:
           (cd dist && sha256sum --check SHA256SUMS.txt)
           prerelease=false
           [[ "$RELEASE_TAG" == *-* ]] && prerelease=true
-          printf '%s\n' \
-            "## Own Keyboard Switch ${RELEASE_TAG#v}" \
-            '' \
-            'English: Windows 10/11 x64. Choose **okbswitch-portable.exe** (no installation) or **okbswitch-install.exe** (setup wizard).' \
-            '' \
-            'Русский: Windows 10/11 x64. **okbswitch-portable.exe** — без установки; **okbswitch-install.exe** — мастер установки.' \
-            '' \
-            'Settings and logs stay in the program folder (data/ and Logs/). / Настройки и журналы находятся в папке программы (data/ и Logs/).' \
-            '' \
-            'Linux: in development, no Linux artifacts yet. / Linux: в разработке, готовых сборок пока нет.' \
-            '' \
-            "Changes / Изменения: https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}/CHANGELOG.md" \
-            '' \
-            'License: PolyForm Noncommercial License 1.0.0. Third-party components retain their own licenses.' \
-            '' \
-            'Verify downloads with SHA256SUMS.txt. / Проверить файлы можно по SHA256SUMS.txt.' > notes.md
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --verify-tag --draft --title "${RELEASE_TAG#v}" --notes-file notes.md
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "${RELEASE_TAG#v}" --notes-file notes/release-notes.md
           fi
           gh release upload "$RELEASE_TAG" dist/* --clobber
-          gh release edit "$RELEASE_TAG" --draft=false --prerelease="$prerelease" --notes-file notes.md
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease="$prerelease" --notes-file notes/release-notes.md

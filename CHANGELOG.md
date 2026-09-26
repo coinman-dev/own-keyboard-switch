@@ -2,7 +2,7 @@
 
 # Changelog
 
-## Unreleased
+## 0.2.0-beta — 2026-09-26
 
 ### Added
 
@@ -31,13 +31,23 @@
 - On the first start the program offers to exclude terminals and IDEs. The
   same list can be added later under **Excluded programs**.
 - The diagnostic log can be switched off or set to Error, Info or Debug; the
-  change applies without a restart.
+  change applies without a restart. Logs are written to the `Logs` folder next
+  to the program.
 
 ### Fixed
 
 - Assigning a hotkey by pressing it: the dialog no longer waits forever,
   because Windows does not pass keys to the program's hook while its own
   window is active.
+- Installing over an earlier version no longer turns autostart on again when
+  it was switched off in the program, keeps the desktop shortcut and removes
+  the old `log` folder.
+
+### Changed
+
+- The release contains only the two program files and their checksums; the
+  license texts are in the repository, in the installed folder and in
+  **About → Licenses...**.
 
 ## 0.1.0-beta — 2026-09-21
 
