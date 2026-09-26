@@ -88,8 +88,9 @@ texts! {
     SpellcheckSuggestions => "Показывать варианты", "Show suggestions";
     SpellcheckAuto => "Автоисправление только однозначных ошибок", "Automatically fix only unambiguous errors";
     OptSpellcheckSelectionFirst => "По горячей клавише проверять выделение, затем буфер обмена", "On hotkey, check selection before clipboard";
-    SpellcheckHint => "Проверка идёт локально, слова не отправляются в сеть. Проверяется написание отдельных слов по словарю, а не грамматика и не смысл фразы. При наборе слово проверяется после пробела: с вариантами текст меняется только по вашему выбору, при автоисправлении — только если словарь предлагает один-единственный вариант. Готовый текст выделите и нажмите горячую клавишу проверки или скопируйте и выберите в трее «Буфер обмена → Проверить орфографию».", "Checking is local; words are never sent over the network. Only the spelling of single words is checked against the dictionary, not grammar or meaning. While typing, a word is checked after a space: with suggestions the text changes only when you choose, with automatic fixing only when the dictionary offers exactly one correction. For existing text, select it and press the spell check hotkey, or copy it and choose Clipboard → Check spelling in the tray.";
+    SpellcheckHint => "Проверка идёт локально, слова не отправляются в сеть. Проверяется написание отдельных слов по словарю, а не грамматика и не смысл фразы. При наборе слово проверяется после пробела: с вариантами текст меняется только по вашему выбору, при автоисправлении — только если словарь предлагает один-единственный вариант. Сразу после исправления его отменяет клавиша «Отменить конвертацию раскладки» (Break); отменённое или пропущенное слово больше не проверяется до перезапуска. Готовый текст выделите и нажмите горячую клавишу проверки или скопируйте и выберите в трее «Буфер обмена → Проверить орфографию».", "Checking is local; words are never sent over the network. Only the spelling of single words is checked against the dictionary, not grammar or meaning. While typing, a word is checked after a space: with suggestions the text changes only when you choose, with automatic fixing only when the dictionary offers exactly one correction. Right after a correction, the “Undo layout conversion” key (Break) undoes it; an undone or skipped word is not checked again until restart. For existing text, select it and press the spell check hotkey, or copy it and choose Clipboard → Check spelling in the tray.";
     SpellcheckLanguages => "Проверять языки:", "Languages to check:";
+    SpellcheckNoLanguages => "Не выбран ни один язык: орфография не проверяется.", "No language is selected: spelling is not checked.";
     SpellcheckExtraDictionaries => "Дополнительные словари", "Additional dictionaries";
     SpellcheckDownloadEnGb => "Скачать английский (Великобритания)", "Download English (United Kingdom)";
     SpellcheckBuiltinEn => "Встроенный английский (США)", "Built-in English (United States)";
@@ -253,13 +254,15 @@ texts! {
     ClipboardResultTitle => "Результат конвертации буфера обмена", "Clipboard conversion result";
     SpellcheckTitle => "Проверка орфографии", "Spell check";
     SpellcheckWordTitle => "Возможная орфографическая ошибка", "Possible spelling error";
-    SpellcheckReplaceWord => "Заменить слово", "Replace word";
     SpellcheckTargetChanged => "Поле ввода изменилось", "The input field changed";
     SpellcheckReplacementFailed => "Слово не заменено. Повторите проверку в редакторе.", "The word was not replaced. Check it again in the editor.";
     CopyResult => "Скопировать результат", "Copy result";
     ResultCopied => "Результат скопирован", "Result copied";
     SpellingNoErrors => "Ошибок не найдено.", "No spelling errors found.";
     SpellingKeep => "Оставить как есть", "Keep unchanged";
+    SpellingSkip => "Пропустить", "Skip";
+    SpellingAddWord => "Добавить в мой словарь", "Add to my words";
+    SpellingNoSuggestions => "Словарь не знает вариантов.", "The dictionary has no suggestions.";
     SpellingApplyAll => "Выбрать первые подсказки", "Choose first suggestions";
     SpellingPreview => "Результат:", "Result:";
     OptUiLanguage => "Язык интерфейса:", "Interface language:";

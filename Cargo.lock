@@ -595,6 +595,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "context-eval"
+version = "0.1.0-beta"
+dependencies = [
+ "anyhow",
+ "okbs-core",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

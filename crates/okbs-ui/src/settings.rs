@@ -175,6 +175,10 @@ pub enum SettingsEvent {
         original: String,
         corrected: String,
     },
+    /// «Пропустить» in the spelling popup: keep the word as typed.
+    SkipSpelling(String),
+    /// «Добавить в мой словарь» in the spelling popup.
+    AddSpellingWord(String),
     /// Restart the program asking the system for administrator rights.
     RestartElevated,
     /// The window was closed.
@@ -196,6 +200,13 @@ pub enum SettingsInput {
     SpellingReplacementFinished {
         request_id: u64,
         success: bool,
+    },
+    /// The word of the spelling popup can no longer be replaced.
+    SpellingExpired,
+    /// Why downloading or removing a dictionary failed.
+    DictionaryError {
+        id: String,
+        message: String,
     },
     /// A key combination was captured.
     HotkeyCaptured(Hotkey),
@@ -345,6 +356,8 @@ pub struct SettingsView {
     pending_autoreplace: std::collections::VecDeque<String>,
     new_spell_word: String,
     dictionary_states: std::collections::BTreeMap<String, DictionaryState>,
+    /// Why the last download or removal of a dictionary failed.
+    dictionary_errors: std::collections::BTreeMap<String, String>,
 }
 
 fn weak(ui: &mut Ui, text: &str) {
@@ -553,6 +566,7 @@ impl SettingsView {
                 .into_iter()
                 .map(|id| (id.to_string(), DictionaryState::Unavailable))
                 .collect(),
+            dictionary_errors: std::collections::BTreeMap::new(),
         }
     }
 
@@ -616,24 +630,50 @@ impl SettingsView {
                     target.general.floating_indicator_pos = config.general.floating_indicator_pos;
                     target.sounds.enabled = config.sounds.enabled;
                 }
+                // «Добавить в мой словарь» in the spelling popup; unsaved
+                // edits of the list in the window are kept.
+                self.applied
+                    .spellcheck
+                    .custom_words
+                    .clone_from(&config.spellcheck.custom_words);
+                for word in &config.spellcheck.custom_words {
+                    let words = &mut self.draft.spellcheck.custom_words;
+                    if !words
+                        .iter()
+                        .any(|w| w.to_lowercase() == word.to_lowercase())
+                    {
+                        words.push(word.clone());
+                    }
+                }
             }
             SettingsInput::ElevationRequired { failed } => {
                 self.section = Section::General;
                 self.general_tab = GeneralTab::Basic;
                 self.dialog = Some(Dialog::Elevation { failed });
             }
+            SettingsInput::DictionaryError { id, message } => {
+                self.dictionary_errors.insert(id, message);
+            }
             SettingsInput::DictionaryState { id, state } => {
+                if state != DictionaryState::Failed {
+                    self.dictionary_errors.remove(&id);
+                }
                 self.dictionary_states.insert(id.clone(), state);
                 if state != DictionaryState::Available {
-                    if self.draft.spellcheck.english_dictionary.as_deref() == Some(&id) {
-                        self.draft.spellcheck.english_dictionary = None;
-                    }
-                    if self.draft.spellcheck.russian_dictionary.as_deref() == Some(&id) {
-                        self.draft.spellcheck.russian_dictionary = None;
+                    // The application falls back to the built-in dictionary too.
+                    for config in [&mut self.draft, &mut self.applied] {
+                        for selected in [
+                            &mut config.spellcheck.english_dictionary,
+                            &mut config.spellcheck.russian_dictionary,
+                        ] {
+                            if selected.as_deref() == Some(&id) {
+                                *selected = None;
+                            }
+                        }
                     }
                 }
             }
-            SettingsInput::SpellingReplacementFinished { .. } => {}
+            SettingsInput::SpellingReplacementFinished { .. } | SettingsInput::SpellingExpired => {}
             SettingsInput::SuggestRule(rule) => {
                 self.section = Section::Rules;
                 self.dialog = Some(Dialog::Rule {
@@ -1556,6 +1596,9 @@ impl SettingsView {
                 }
             }
         });
+        if spellcheck.languages.is_empty() {
+            weak(ui, tr(Text::SpellcheckNoLanguages, lang));
+        }
         ui.add_space(8.0);
         ui.label(RichText::new(tr(Text::SpellcheckHint, lang)).weak().small());
         ui.add_space(12.0);
@@ -1651,6 +1694,13 @@ impl SettingsView {
                         .desired_width(ui.available_width()),
                 );
                 ui.ctx().request_repaint();
+            }
+            if let Some(message) = self.dictionary_errors.get(id) {
+                ui.label(
+                    RichText::new(message)
+                        .small()
+                        .color(Color32::from_rgb(0xC0, 0x30, 0x30)),
+                );
             }
         }
         ui.add_space(12.0);

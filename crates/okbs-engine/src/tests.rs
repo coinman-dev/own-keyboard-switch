@@ -2297,6 +2297,140 @@ fn auto_spelling_replaces_only_the_current_space_terminated_word() {
     assert_eq!(h.text(), "хочешь ещё");
 }
 
+fn typed_spelling_target(h: &Harness, word: &str) -> InputTarget {
+    h.events
+        .iter()
+        .find_map(|event| match event {
+            Event::CheckSpelling {
+                text,
+                target: Some(target),
+                ..
+            } if text == word => Some(*target),
+            _ => None,
+        })
+        .expect("finished word has an input target")
+}
+
+#[test]
+fn break_undoes_a_spelling_correction_and_leaves_the_word_alone() {
+    for gate in [false, true] {
+        let mut h = Harness::with_config(
+            Lang::Ru,
+            config_with(|config| config.spellcheck.check_typed_words = true),
+        );
+        if gate {
+            h.enable_gate();
+        }
+        h.type_as("хочеш ", Lang::Ru);
+        let target = typed_spelling_target(&h, "хочеш");
+        h.processor
+            .correct_typed_spelling(target, "хочеш", "хочешь");
+        assert_eq!(h.text(), "хочешь ");
+        h.tap(PhysKey::Pause);
+        assert_eq!(h.text(), "хочеш ", "gate: {gate}");
+        h.events.clear();
+        h.type_as("хочеш ", Lang::Ru);
+        assert!(
+            !h.events
+                .iter()
+                .any(|event| matches!(event, Event::CheckSpelling { .. })),
+            "an undone word is not checked again"
+        );
+    }
+}
+
+#[test]
+fn break_without_a_correction_converts_only_the_last_word() {
+    for gate in [false, true] {
+        let mut h = Harness::with_config(
+            Lang::En,
+            config_with(|config| config.spellcheck.check_typed_words = true),
+        );
+        if gate {
+            h.enable_gate();
+        }
+        h.type_as("wrold centre teh ", Lang::En);
+        h.tap(PhysKey::Pause);
+        assert_eq!(h.text(), "wrold centre еур ", "gate: {gate}");
+    }
+}
+
+#[test]
+fn typing_on_keeps_a_spelling_correction() {
+    let mut h = Harness::with_config(
+        Lang::Ru,
+        config_with(|config| config.spellcheck.check_typed_words = true),
+    );
+    h.type_as("хочеш ", Lang::Ru);
+    let target = typed_spelling_target(&h, "хочеш");
+    h.processor
+        .correct_typed_spelling(target, "хочеш", "хочешь");
+    h.type_as("да ", Lang::Ru);
+    h.tap(PhysKey::Pause);
+    assert!(h.text().starts_with("хочешь "), "{}", h.text());
+}
+
+#[test]
+fn typing_on_expires_the_spelling_popup() {
+    let mut h = Harness::with_config(
+        Lang::Ru,
+        config_with(|config| config.spellcheck.check_typed_words = true),
+    );
+    h.type_as("хочеш ", Lang::Ru);
+    let target = typed_spelling_target(&h, "хочеш");
+    assert!(!h.events.contains(&Event::SpellingExpired));
+    h.type_as("д", Lang::Ru);
+    assert!(h.events.contains(&Event::SpellingExpired));
+    assert!(
+        h.processor
+            .correct_typed_spelling(target, "хочеш", "хочешь")
+            .is_empty()
+    );
+}
+
+#[test]
+fn addresses_paths_and_terminals_are_not_spell_checked() {
+    let checked = |text: &str, terminal: bool| {
+        let mut h = Harness::with_config(
+            Lang::En,
+            config_with(|config| config.spellcheck.check_typed_words = true),
+        );
+        h.desktop.lock().terminal = terminal;
+        h.type_as(text, Lang::En);
+        h.events
+            .iter()
+            .filter_map(|event| match event {
+                Event::CheckSpelling { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(checked("hello wrold ", false), ["hello", "wrold"]);
+    assert!(checked("example.com ", false).is_empty());
+    assert!(checked("user@mail ", false).is_empty());
+    assert_eq!(
+        checked("see: wrold ", false),
+        ["wrold"],
+        "a space ends the glue"
+    );
+    assert!(checked("git comit ", true).is_empty(), "terminal");
+}
+
+#[test]
+fn skipped_spelling_is_not_checked_again() {
+    let mut h = Harness::with_config(
+        Lang::Ru,
+        config_with(|config| config.spellcheck.check_typed_words = true),
+    );
+    h.processor.decline_spelling("Хочеш");
+    h.type_as("хочеш ", Lang::Ru);
+    assert!(
+        !h.events
+            .iter()
+            .any(|event| matches!(event, Event::CheckSpelling { .. }))
+    );
+}
+
 #[test]
 fn spelling_choice_restores_its_editor_after_the_popup_was_used() {
     for gated in [false, true] {

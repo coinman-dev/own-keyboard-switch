@@ -228,13 +228,7 @@ impl Config {
             seen.push(*l);
             new
         });
-        if sp.languages.is_empty() {
-            sp.languages = vec![Lang::Ru, Lang::En];
-            i.push(ConfigIssue::Adjusted {
-                key: "spellcheck.languages".to_string(),
-                message: "empty list, using [\"ru\", \"en\"]".to_string(),
-            });
-        }
+        // An empty list is the user's choice: no language is checked.
         sp.english_dictionary = sp.english_dictionary.take().filter(|id| id == "en-gb");
         sp.russian_dictionary = sp.russian_dictionary.take().filter(|id| id == "ru-modern");
         sp.custom_words.retain(|word| {

@@ -5,6 +5,17 @@ use egui::{RichText, Ui};
 use okbs_core::Lang;
 use okbs_core::spell::{Misspelling, apply_first_suggestions};
 
+/// What the user chose in the compact spelling popup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SpellingAction {
+    /// Replace the word; the text with the correction applied.
+    Replace(String),
+    /// Keep the word as typed and stop offering corrections for it.
+    Skip,
+    /// Keep the word and accept it from now on («Мои слова»).
+    AddWord,
+}
+
 /// A clipboard result ready to display.
 #[derive(Clone)]
 pub struct TextResult {
@@ -14,6 +25,8 @@ pub struct TextResult {
     copied: bool,
     compact: bool,
     replacement_failed: bool,
+    /// Height the compact contents took in the last frame.
+    compact_height: Option<f32>,
 }
 
 impl std::fmt::Debug for TextResult {
@@ -35,6 +48,7 @@ impl TextResult {
             copied: false,
             compact: false,
             replacement_failed: false,
+            compact_height: None,
         }
     }
 
@@ -48,6 +62,7 @@ impl TextResult {
             copied: false,
             compact: false,
             replacement_failed: false,
+            compact_height: None,
         }
     }
 
@@ -59,7 +74,13 @@ impl TextResult {
             copied: false,
             compact: true,
             replacement_failed: false,
+            compact_height: None,
         }
+    }
+
+    /// Height of the compact contents, known after they were drawn once.
+    pub(crate) fn compact_height(&self) -> Option<f32> {
+        self.compact_height
     }
 
     pub fn is_compact(&self) -> bool {
@@ -109,11 +130,11 @@ impl TextResult {
 
     /// Shows suggestions and a selectable result preview. Copying is explicit
     /// and goes through eframe's clipboard output on the window thread.
-    pub fn ui(&mut self, ui: &mut Ui, lang: Lang, can_replace: bool) -> Option<String> {
+    pub fn ui(&mut self, ui: &mut Ui, lang: Lang, can_replace: bool) -> Option<SpellingAction> {
         crate::appearance::panel(ui, |ui| self.content_ui(ui, lang, can_replace)).inner
     }
 
-    fn content_ui(&mut self, ui: &mut Ui, lang: Lang, can_replace: bool) -> Option<String> {
+    fn content_ui(&mut self, ui: &mut Ui, lang: Lang, can_replace: bool) -> Option<SpellingAction> {
         if self.compact {
             return self.compact_ui(ui, lang, can_replace);
         }
@@ -191,62 +212,52 @@ impl TextResult {
         None
     }
 
-    fn compact_ui(&mut self, ui: &mut Ui, lang: Lang, can_replace: bool) -> Option<String> {
-        ui.heading(tr(Text::SpellcheckWordTitle, lang));
-        let Some(misspellings) = &self.spelling else {
-            return None;
-        };
-        if let Some((misspelling, choice)) = misspellings.iter().zip(&mut self.choices).next() {
-            let label_width = ui.fonts_mut(|fonts| {
-                fonts
-                    .layout_no_wrap(
-                        misspelling.word.clone(),
-                        egui::TextStyle::Body.resolve(ui.style()),
-                        ui.visuals().text_color(),
-                    )
-                    .size()
-                    .x
-            });
-            let combo_width = ui.spacing().combo_width;
-            let row_width =
-                (label_width + ui.spacing().item_spacing.x + combo_width).min(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.add_space(((ui.available_width() - row_width) / 2.0).max(0.0));
-                ui.allocate_ui_with_layout(
-                    egui::vec2(row_width, crate::appearance::CONTROL_HEIGHT),
-                    egui::Layout::left_to_right(egui::Align::Center),
-                    |ui| {
-                        ui.label(&misspelling.word);
-                        let label = choice
-                            .and_then(|index| misspelling.suggestions.get(index))
-                            .map_or(tr(Text::SpellingKeep, lang), String::as_str);
-                        egui::ComboBox::from_id_salt("spelling_popup_choice")
-                            .width(combo_width)
-                            .selected_text(label)
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(choice, None, tr(Text::SpellingKeep, lang));
-                                for (index, suggestion) in
-                                    misspelling.suggestions.iter().enumerate()
-                                {
-                                    ui.selectable_value(choice, Some(index), suggestion);
-                                }
-                            });
-                    },
-                );
-            });
+    fn compact_ui(&mut self, ui: &mut Ui, lang: Lang, can_replace: bool) -> Option<SpellingAction> {
+        let top = ui.cursor().top();
+        let misspelling = self.spelling.as_ref()?.first()?;
+        let mut action = None;
+        ui.label(RichText::new(&misspelling.word).strong());
+        ui.add_space(4.0);
+        if misspelling.suggestions.is_empty() {
+            ui.label(RichText::new(tr(Text::SpellingNoSuggestions, lang)).weak());
         }
-        let mut replace = false;
-        ui.vertical_centered(|ui| {
-            replace = ui
-                .add_enabled(
-                    can_replace,
-                    crate::appearance::action_button(tr(Text::SpellcheckReplaceWord, lang)),
-                )
-                .clicked();
+        // One click replaces the word: the variants are the buttons.
+        ui.horizontal_wrapped(|ui| {
+            for suggestion in &misspelling.suggestions {
+                if ui
+                    .add_enabled(can_replace, crate::appearance::action_button(suggestion))
+                    .clicked()
+                {
+                    let mut chosen = misspelling.clone();
+                    chosen.suggestions = vec![suggestion.clone()];
+                    action = Some(SpellingAction::Replace(apply_first_suggestions(
+                        &self.original,
+                        &[chosen],
+                    )));
+                }
+            }
         });
-        if replace {
-            return Some(self.text());
-        }
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            if ui
+                .add(crate::appearance::action_button(tr(
+                    Text::SpellingSkip,
+                    lang,
+                )))
+                .clicked()
+            {
+                action = Some(SpellingAction::Skip);
+            }
+            if ui
+                .add(crate::appearance::action_button(tr(
+                    Text::SpellingAddWord,
+                    lang,
+                )))
+                .clicked()
+            {
+                action = Some(SpellingAction::AddWord);
+            }
+        });
         if !can_replace {
             ui.label(
                 RichText::new(tr(Text::SpellcheckTargetChanged, lang))
@@ -257,7 +268,8 @@ impl TextResult {
         if self.replacement_failed {
             ui.label(tr(Text::SpellcheckReplacementFailed, lang));
         }
-        None
+        self.compact_height = Some(ui.cursor().top() - top);
+        action
     }
 }
 
@@ -364,69 +376,76 @@ mod tests {
         }
     }
 
-    #[test]
-    fn compact_replace_button_is_centered() {
-        let mut view = TextResult::spelling_popup(
-            "wrold".into(),
-            vec![Misspelling {
-                range: 0..5,
-                word: "wrold".into(),
-                lang: Lang::En,
-                suggestions: vec!["world".into()],
-            }],
-        );
+    /// Draws the compact popup, optionally clicking the text `click` first.
+    fn popup_frame(view: &mut TextResult, click: Option<&str>) -> Option<SpellingAction> {
         let ctx = egui::Context::default();
-        let width = 390.0;
-        let mut output = ctx.run_ui(
-            egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(width, 160.0),
-                )),
-                ..Default::default()
-            },
-            |ui| {
-                let _ = view.ui(ui, Lang::En, true);
-            },
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(360.0, 200.0));
+        let frame = |events: Vec<egui::Event>, view: &mut TextResult| {
+            let mut action = None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    events,
+                    ..Default::default()
+                },
+                |ui| action = view.ui(ui, Lang::Ru, true),
+            );
+            output.textures_delta.clear();
+            (action, output.shapes)
+        };
+        let (action, shapes) = frame(Vec::new(), view);
+        let Some(label) = click else {
+            return action;
+        };
+        let target = shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == label => {
+                    Some(text.galley.rect.translate(text.pos.to_vec2()).center())
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no «{label}» in the popup"));
+        assert!(screen.contains(target), "«{label}» is outside the popup");
+        let button = |pressed| egui::Event::PointerButton {
+            pos: target,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(vec![egui::Event::PointerMoved(target)], view);
+        frame(vec![button(true)], view);
+        frame(vec![button(false)], view).0
+    }
+
+    #[test]
+    fn compact_popup_offers_variants_skip_and_personal_words() {
+        let popup = || {
+            TextResult::spelling_popup(
+                "wrold".into(),
+                vec![Misspelling {
+                    range: 0..5,
+                    word: "wrold".into(),
+                    lang: Lang::En,
+                    suggestions: vec!["world".into(), "would".into()],
+                }],
+            )
+        };
+        let mut view = popup();
+        assert_eq!(popup_frame(&mut view, None), None);
+        let height = view.compact_height().expect("measured");
+        assert!(height > 0.0 && height < 200.0, "{height}");
+        assert_eq!(
+            popup_frame(&mut popup(), Some("would")),
+            Some(SpellingAction::Replace("would".into()))
         );
-        output.textures_delta.clear();
-        let heading_left = output.shapes.iter().find_map(|shape| {
-            if let egui::Shape::Text(text) = &shape.shape
-                && text.galley.text() == tr(Text::SpellcheckWordTitle, Lang::En)
-            {
-                return Some(text.galley.rect.translate(text.pos.to_vec2()).left());
-            }
-            None
-        });
-        let text_center = output.shapes.iter().find_map(|shape| {
-            if let egui::Shape::Text(text) = &shape.shape
-                && text.galley.text() == tr(Text::SpellcheckReplaceWord, Lang::En)
-            {
-                return Some(text.galley.rect.translate(text.pos.to_vec2()).center().x);
-            }
-            None
-        });
-        let word_rect = output.shapes.iter().find_map(|shape| {
-            if let egui::Shape::Text(text) = &shape.shape
-                && text.galley.text() == "wrold"
-            {
-                return Some(text.galley.rect.translate(text.pos.to_vec2()));
-            }
-            None
-        });
-        let text_center = text_center.expect("replace button");
-        assert!(
-            (text_center - width / 2.0).abs() < 1.0,
-            "replace button center {text_center} != window center {}",
-            width / 2.0
+        assert_eq!(
+            popup_frame(&mut popup(), Some(tr(Text::SpellingSkip, Lang::Ru))),
+            Some(SpellingAction::Skip)
         );
-        assert!(heading_left.expect("heading") > 0.0);
-        let word_rect = word_rect.expect("misspelled word");
-        let expected_left = (width - (word_rect.width() + 10.0 + 200.0)) / 2.0;
-        assert!(
-            (word_rect.left() - expected_left).abs() < 1.0,
-            "replacement row left {} != expected {expected_left}",
-            word_rect.left()
+        assert_eq!(
+            popup_frame(&mut popup(), Some(tr(Text::SpellingAddWord, Lang::Ru))),
+            Some(SpellingAction::AddWord)
         );
     }
 }

@@ -110,12 +110,14 @@ fn spelling_worker(
                     job.settings.english_dictionary.as_deref(),
                     job.settings.russian_dictionary.as_deref(),
                 );
-                // Automatic correction must see whether the dictionary offers a
-                // second correction, however few suggestions are shown.
-                let mut limit = job.settings.max_suggestions as usize;
-                if job.interactive && job.settings.typed_mode == TypedSpellcheckMode::Auto {
-                    limit = limit.max(2);
-                }
+                // Automatic correction compares every correction the
+                // dictionary offers, however few suggestions are shown.
+                let limit =
+                    if job.interactive && job.settings.typed_mode == TypedSpellcheckMode::Auto {
+                        usize::MAX
+                    } else {
+                        job.settings.max_suggestions as usize
+                    };
                 let misspellings = okbs_core::spell::check_text_with_words(
                     &job.text,
                     &job.settings.languages,
@@ -136,16 +138,20 @@ fn spelling_worker(
     Ok((requests, results))
 }
 
-/// The correction applied without asking: only a single misspelling with a
-/// single dictionary suggestion. Anything else stays as typed.
+/// The correction applied without asking, see [`okbs_core::typo`]. A word
+/// with several misspellings is left alone.
 fn automatic_correction(misspellings: &[okbs_core::spell::Misspelling]) -> Option<String> {
-    match misspellings {
-        [only] => match only.suggestions.as_slice() {
-            [correction] => Some(correction.clone()),
-            _ => None,
-        },
-        _ => None,
-    }
+    let [only] = misspellings else {
+        return None;
+    };
+    let model = okbs_core::data::language_model(only.lang);
+    okbs_core::typo::automatic_correction(
+        &only.word,
+        &only.suggestions,
+        only.lang,
+        &okbs_core::typo::POLICY,
+        |word| model.rank(word),
+    )
 }
 
 /// Callback run after a configuration is applied.
@@ -206,6 +212,8 @@ pub struct Controller {
     alert_until: Option<Instant>,
     spelling: Option<(Sender<SpellingJob>, Receiver<SpellingResult>)>,
     spelling_id: u64,
+    /// Typed-word checks up to this job lost their word before the result came.
+    spelling_expired: u64,
     dictionary_root: PathBuf,
     system_language: okbs_core::Lang,
     elevation: Option<Box<dyn Elevation>>,
@@ -246,9 +254,12 @@ fn cursor_position() -> [f32; 2] {
 fn spelling_popup_position(_target: Option<InputTarget>) -> Option<[f32; 2]> {
     #[cfg(windows)]
     {
+        use okbs_platform_windows::focus;
         _target
-            .and_then(okbs_platform_windows::focus::input_target_position)
-            .or_else(okbs_platform_windows::focus::foreground_window_position)
+            .and_then(|target| {
+                focus::caret_position(target).or_else(|| focus::input_target_position(target))
+            })
+            .or_else(focus::foreground_window_position)
     }
     #[cfg(not(windows))]
     {
@@ -357,6 +368,7 @@ impl Controller {
                 .map_err(|err| tracing::error!("cannot start spelling worker: {err}"))
                 .ok(),
             spelling_id: 0,
+            spelling_expired: 0,
             dictionary_root,
             system_language,
             elevation: platform.elevation,
@@ -685,6 +697,12 @@ impl Controller {
                     });
                 }
             }
+            Event::SpellingExpired => {
+                self.spelling_expired = self.spelling_id;
+                if let Some(window) = &self.window {
+                    window.send(SettingsInput::SpellingExpired);
+                }
+            }
             Event::SuggestRule(rule) => {
                 let layouts = self.layout_entries();
                 if let Some(window) = &self.window {
@@ -833,6 +851,18 @@ impl Controller {
                 }
             }
             SettingsEvent::RestartElevated => self.restart_elevated(),
+            SettingsEvent::SkipSpelling(word) => {
+                self.engine.send(Command::DeclineSpelling(word));
+            }
+            SettingsEvent::AddSpellingWord(word) => {
+                self.settings.update(|config| {
+                    config.spellcheck.custom_words.push(word);
+                    let _ = config.sanitize();
+                });
+                self.engine
+                    .send(Command::ApplyConfig(Box::new(self.settings.config.clone())));
+                self.notify_window();
+            }
             SettingsEvent::CaptureHotkey => {
                 self.engine.send(Command::CaptureHotkey);
             }
@@ -870,6 +900,10 @@ impl Controller {
                                 id: package.id.into(),
                                 state: DictionaryState::Failed,
                             });
+                            notifier.send(SettingsInput::DictionaryError {
+                                id: package.id.into(),
+                                message: format!("{err:#}"),
+                            });
                         }
                     }
                 });
@@ -882,6 +916,28 @@ impl Controller {
                 match crate::dictionaries::uninstall(&self.dictionary_root, package) {
                     Ok(()) => {
                         tracing::info!(package = package.id, "dictionary removed");
+                        // Checks go back to the built-in dictionary at once.
+                        let spellcheck = &self.settings.config.spellcheck;
+                        if [
+                            &spellcheck.english_dictionary,
+                            &spellcheck.russian_dictionary,
+                        ]
+                        .into_iter()
+                        .any(|selected| selected.as_deref() == Some(package.id))
+                        {
+                            self.settings.update(|config| {
+                                for selected in [
+                                    &mut config.spellcheck.english_dictionary,
+                                    &mut config.spellcheck.russian_dictionary,
+                                ] {
+                                    if selected.as_deref() == Some(package.id) {
+                                        *selected = None;
+                                    }
+                                }
+                            });
+                            self.engine
+                                .send(Command::ApplyConfig(Box::new(self.settings.config.clone())));
+                        }
                         if let Some(window) = &self.window {
                             window.send(SettingsInput::DictionaryState {
                                 id,
@@ -890,7 +946,13 @@ impl Controller {
                         }
                     }
                     Err(err) => {
-                        tracing::error!(package = package.id, "dictionary removal failed: {err:#}")
+                        tracing::error!(package = package.id, "dictionary removal failed: {err:#}");
+                        if let Some(window) = &self.window {
+                            window.send(SettingsInput::DictionaryError {
+                                id,
+                                message: format!("{err:#}"),
+                            });
+                        }
                     }
                 }
             }
@@ -1075,10 +1137,11 @@ impl Controller {
                 } else {
                     spellcheck.check_on_command
                 };
-                if result.job.id != self.spelling_id || !enabled {
+                let expired = result.job.interactive && result.job.id <= self.spelling_expired;
+                if result.job.id != self.spelling_id || !enabled || expired {
                     tracing::debug!(target: "okbs_spelling", job = result.job.id,
-                        latest_job = self.spelling_id, enabled,
-                        "check result discarded: superseded or disabled");
+                        latest_job = self.spelling_id, enabled, expired,
+                        "check result discarded: superseded, disabled or expired");
                     continue;
                 }
                 if result.job.interactive && result.misspellings.is_empty() {
@@ -1290,13 +1353,13 @@ mod tests {
         assert_eq!(automatic_correction(&result.misspellings), None);
 
         let misspelling = |suggestions: &[&str]| okbs_core::spell::Misspelling {
-            range: 0..4,
-            word: "wrld".into(),
+            range: 0..5,
+            word: "wrold".into(),
             lang: okbs_core::Lang::En,
             suggestions: suggestions.iter().map(|s| s.to_string()).collect(),
         };
         assert_eq!(
-            automatic_correction(&[misspelling(&["world"])]).as_deref(),
+            automatic_correction(&[misspelling(&["world", "wold"])]).as_deref(),
             Some("world")
         );
         assert_eq!(automatic_correction(&[misspelling(&[])]), None);

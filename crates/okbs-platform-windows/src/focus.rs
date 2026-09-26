@@ -7,15 +7,22 @@ use okbs_platform::{
 };
 use std::cell::RefCell;
 use std::path::PathBuf;
-use windows::Win32::Foundation::{CloseHandle, HWND, RECT};
+use windows::Win32::Foundation::{CloseHandle, HWND, POINT, RECT};
+use windows::Win32::Graphics::Gdi::ClientToScreen;
 use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
 };
+use windows::Win32::System::Ole::SafeArrayDestroy;
 use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, HWINEVENTHOOK, IUIAutomation, IUIAutomation2, SetWinEventHook, UnhookWinEvent,
+    CUIAutomation, HWINEVENTHOOK, IUIAutomation, IUIAutomation2, IUIAutomationTextPattern2,
+    SetWinEventHook, TextPatternRangeEndpoint_Start, TextUnit_Character, UIA_TextPattern2Id,
+    UnhookWinEvent,
+};
+use windows::Win32::UI::HiDpi::{
+    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetThreadDpiAwarenessContext,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MENUEND, GUITHREADINFO, GWL_STYLE, GetClassNameW,
@@ -23,6 +30,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetPhysicalCursorPos, GetWindowLongPtrW, GetWindowRect, GetWindowTextW,
     GetWindowThreadProcessId, IsWindow, MF_BYPOSITION, SetForegroundWindow, WINEVENT_OUTOFCONTEXT,
 };
+use windows::core::BOOL;
 use windows::core::Interface;
 use windows::core::PWSTR;
 
@@ -31,7 +39,7 @@ const ES_PASSWORD: isize = 0x0020;
 /// The physical pointer position. The UI placement
 /// guard uses physical pixels too; never multiply these coordinates by DPI.
 pub fn cursor_position() -> [f32; 2] {
-    let mut point = windows::Win32::Foundation::POINT::default();
+    let mut point = POINT::default();
     // SAFETY: `point` is a valid writable structure.
     if unsafe { GetPhysicalCursorPos(&mut point) }.is_ok() {
         [point.x as f32, point.y as f32]
@@ -56,6 +64,25 @@ pub fn foreground_window_position() -> Option<[f32; 2]> {
             rect.top.saturating_add(72) as f32,
         ])
     }
+}
+
+/// Bottom-left corner of the text caret in `target`, in physical screen
+/// pixels, while that control still has the focus. Called off the keyboard
+/// thread: UI Automation may take up to its timeout.
+pub fn caret_position(target: InputTarget) -> Option<[f32; 2]> {
+    if input_target() != Some(target) {
+        return None;
+    }
+    // SAFETY: switches only this thread's coordinate mode, restored below,
+    // so both queries report physical pixels like the popup placement.
+    let previous =
+        unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+    let position = system_caret().or_else(uia_caret);
+    if !previous.is_invalid() {
+        // SAFETY: restores the mode saved above.
+        unsafe { SetThreadDpiAwarenessContext(previous) };
+    }
+    position
 }
 
 /// Placement point for an input target captured before a background task.
@@ -362,6 +389,63 @@ fn automation() -> Option<IUIAutomation> {
         })
         .clone()
     })
+}
+
+/// The caret of classic controls, which create a system caret.
+fn system_caret() -> Option<[f32; 2]> {
+    // SAFETY: query-only calls with properly sized output structures.
+    unsafe {
+        let window = GetForegroundWindow();
+        if window.is_invalid() {
+            return None;
+        }
+        let thread = crate::layouts::input_thread(window)?;
+        let mut info = GUITHREADINFO {
+            cbSize: size_of::<GUITHREADINFO>() as u32,
+            ..Default::default()
+        };
+        GetGUIThreadInfo(thread, &mut info).ok()?;
+        if info.hwndCaret.is_invalid() || info.rcCaret == RECT::default() {
+            return None;
+        }
+        let mut point = POINT {
+            x: info.rcCaret.left,
+            y: info.rcCaret.bottom,
+        };
+        ClientToScreen(info.hwndCaret, &mut point).ok().ok()?;
+        Some([point.x as f32, point.y as f32])
+    }
+}
+
+/// The caret of browsers, Electron, WPF and UWP editors, from the character
+/// before it: a caret range itself has no width and often no rectangle.
+fn uia_caret() -> Option<[f32; 2]> {
+    let client = automation()?;
+    // SAFETY: plain COM calls on a valid client; the returned array is read
+    // within its bounds and destroyed once.
+    unsafe {
+        let element = client.GetFocusedElement().ok()?;
+        let pattern: IUIAutomationTextPattern2 =
+            element.GetCurrentPatternAs(UIA_TextPattern2Id).ok()?;
+        let mut active = BOOL::default();
+        let range = pattern.GetCaretRange(&mut active).ok()?;
+        let _ = range.MoveEndpointByUnit(TextPatternRangeEndpoint_Start, TextUnit_Character, -1);
+        let rects = range.GetBoundingRectangles().ok()?;
+        if rects.is_null() {
+            return None;
+        }
+        let count = (*rects).rgsabound[0].cElements as usize;
+        let values = std::slice::from_raw_parts((*rects).pvData as *const f64, count);
+        // Rectangles are [left, top, width, height] groups; use the last one.
+        let position = values
+            .as_chunks::<4>()
+            .0
+            .last()
+            .filter(|rect| rect[2] > 0.0 || rect[3] > 0.0)
+            .map(|rect| [(rect[0] + rect[2]) as f32, (rect[1] + rect[3]) as f32]);
+        let _ = SafeArrayDestroy(rects);
+        position
+    }
 }
 
 /// Whether the focused element is a password field (browsers, WPF, UWP).

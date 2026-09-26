@@ -154,6 +154,15 @@ struct PendingSpelling {
     captured_at: Instant,
 }
 
+/// The last spelling correction, undone by «Отменить конвертацию» (Break)
+/// until the user types, clicks or moves elsewhere.
+#[derive(Debug, Clone, PartialEq)]
+struct SpellingUndo {
+    target: InputTarget,
+    original: String,
+    corrected: String,
+}
+
 impl LastWord {
     fn all_keys(&self) -> impl Iterator<Item = KeyPress> + '_ {
         self.keys.iter().chain(&self.separator).copied()
@@ -236,9 +245,18 @@ pub struct Processor {
     word: Vec<KeyPress>,
     word_lang: Option<Lang>,
     word_blocked: bool,
+    /// The word follows the previous one without a space (`site.com`,
+    /// `C:\dir`, `user@mail`): part of an address, path or code.
+    word_glued: bool,
     block_next_word: bool,
     last: Option<LastWord>,
     pending_spelling: Option<PendingSpelling>,
+    spelling_undo: Option<SpellingUndo>,
+    /// A word snapshot was dropped; the popup offering it has to close.
+    spelling_expired: bool,
+    /// Words whose correction was undone or skipped: not checked again while
+    /// the program runs.
+    declined_spelling: HashSet<String>,
     deferred: Vec<Deferred>,
     cancels: HashMap<String, u32>,
     last_key_time: Option<Instant>,
@@ -300,9 +318,13 @@ impl Processor {
             word: Vec::new(),
             word_lang: None,
             word_blocked: false,
+            word_glued: false,
             block_next_word: false,
             last: None,
             pending_spelling: None,
+            spelling_undo: None,
+            spelling_expired: false,
+            declined_spelling: HashSet::new(),
             deferred: Vec::new(),
             cancels: HashMap::new(),
             last_key_time: None,
@@ -366,11 +388,18 @@ impl Processor {
         self.detector = Detector::from_config(&config);
         self.autoreplacer = AutoReplacer::new(&config.autoreplace);
         self.config = config;
-        if self.pending_spelling.is_some() {
-            tracing::debug!(target: "okbs_spelling", reason = "config_changed", "snapshot invalidated");
-        }
-        self.pending_spelling = None;
+        self.expire_spelling("config_changed");
+        self.spelling_undo = None;
         self.reset_all();
+    }
+
+    /// Drops the word snapshot of a pending spelling check. A popup offering
+    /// a replacement for it could never apply it, so the UI is told to close.
+    fn expire_spelling(&mut self, reason: &str) {
+        if self.pending_spelling.take().is_some() {
+            tracing::debug!(target: "okbs_spelling", reason, "snapshot invalidated");
+            self.spelling_expired = true;
+        }
     }
 
     /// Turns automatic switching on or off; returns `true` if it changed.
@@ -522,7 +551,15 @@ impl Processor {
                 "focus event while spelling pending");
         }
         if !own_window && !original_target {
-            self.pending_spelling = None;
+            self.expire_spelling("focus_changed");
+        }
+        // Returning to the corrected control after a popup choice keeps the undo.
+        let undo_target = self
+            .spelling_undo
+            .as_ref()
+            .is_some_and(|undo| self.target_matches(Some(undo.target)));
+        if !own_window && !undo_target {
+            self.spelling_undo = None;
         }
         self.remember_target();
         self.reset_all();
@@ -626,7 +663,14 @@ impl Processor {
                 "input event while spelling pending");
         }
         if user_action && !own_window {
-            self.pending_spelling = None;
+            self.expire_spelling("input");
+            // Break right after a correction undoes it; anything else keeps it.
+            let undo_key = matches!(event, InputEvent::Key { key, .. }
+                if key.is_modifier()
+                    || self.matching_hotkey(key) == Some(HotkeyAction::CancelOrConvertLastWord));
+            if !undo_key {
+                self.spelling_undo = None;
+            }
         }
         let mut out = Vec::new();
         match event {
@@ -883,6 +927,8 @@ impl Processor {
                                 last,
                                 captured_at: Instant::now(),
                             });
+                            // The replay only moved this word's own snapshot on.
+                            out.retain(|event| *event != Event::SpellingExpired);
                             tracing::debug!(target: "okbs_spelling", ?target, epoch,
                                 "snapshot refreshed after captured boundary replay");
                         }
@@ -924,6 +970,7 @@ impl Processor {
     }
 
     /// Show/hide feedback only when the candidate changes; never expose password input.
+    /// Also reports a spelling snapshot dropped since the last call.
     pub fn autoreplace_feedback(&mut self) -> Vec<Event> {
         if self
             .last_key_time
@@ -932,6 +979,15 @@ impl Processor {
             self.reset_all();
             self.last_key_time = None;
         }
+        let mut out = Vec::new();
+        if std::mem::take(&mut self.spelling_expired) {
+            out.push(Event::SpellingExpired);
+        }
+        out.extend(self.autoreplace_hint());
+        out
+    }
+
+    fn autoreplace_hint(&mut self) -> Vec<Event> {
         let mut candidate = if self.config.autoreplace.trigger == AutoReplaceTrigger::Tooltip
             && self.config.advanced.show_tooltips
             && !self.capturing
@@ -1302,6 +1358,15 @@ impl Processor {
 
     fn push_word_key(&mut self, press: KeyPress) {
         if self.word.is_empty() {
+            self.word_glued = self.last.as_ref().is_some_and(|last| {
+                !last.separator.is_empty()
+                    && !last.separator.iter().any(|separator| {
+                        matches!(
+                            separator.key,
+                            PhysKey::Space | PhysKey::Enter | PhysKey::NumpadEnter | PhysKey::Tab
+                        )
+                    })
+            });
             self.last = None;
             self.word_lang = self.current_lang();
             self.word_blocked = std::mem::take(&mut self.block_next_word);
@@ -1435,16 +1500,33 @@ impl Processor {
         let check = separator.key == PhysKey::Space
             && !self.word.is_empty()
             && !self.word_blocked
+            && !self.word_glued
             && self.current_lang() == self.word_lang
             && self.config.spellcheck.check_typed_words;
         self.finish_word_layout(separator, separator_typed, out);
+        // Command names and arguments are not dictionary words.
+        let terminal = || {
+            self.backends
+                .focus
+                .as_ref()
+                .is_some_and(|focus| focus.is_terminal().unwrap_or(false))
+        };
         if check
             && self.deferred.is_empty()
             && !out.iter().any(|event| matches!(event, Event::Error(_)))
+            && !terminal()
             && !self.focus_blocks()
             && let Some(last) = self.last.clone()
         {
             let text = layouts::render(&last.keys, self.detector.keymap(last.shown_in()));
+            // `example.com`, `a/b`: the keys of `.` and `/` type letters in
+            // the Russian layout, so an address can arrive as one word.
+            let plain = text
+                .chars()
+                .all(|c| c.is_alphabetic() || okbs_core::lm::is_joiner(c));
+            if !plain || self.declined_spelling.contains(&text.to_lowercase()) {
+                return;
+            }
             self.pending_spelling = Some(PendingSpelling {
                 original: text.clone(),
                 last: last.clone(),
@@ -2050,6 +2132,11 @@ impl Processor {
     /// «Отменить конвертацию раскладки»: undoes an automatic conversion of the
     /// last word, otherwise converts the current or last word manually.
     fn cancel_or_convert(&mut self, out: &mut Vec<Event>) {
+        if self.word.is_empty()
+            && let Some(undo) = self.spelling_undo.take()
+        {
+            return self.undo_spelling(undo, out);
+        }
         if !self.word.is_empty() {
             let from = match self.word_lang.or_else(|| self.current_lang()) {
                 Some(lang) => lang,
@@ -2463,8 +2550,43 @@ impl Processor {
         self.reset_all();
         tracing::debug!(target: "okbs_spelling", ?target,
             "replacement input sent successfully; editor text not read back");
+        self.spelling_undo = Some(SpellingUndo {
+            target,
+            original: original.to_string(),
+            corrected: corrected.to_string(),
+        });
         out.push(Event::SpellingCorrected);
         out
+    }
+
+    /// Puts back the word a spelling correction replaced; the word is not
+    /// checked again while the program runs.
+    fn undo_spelling(&mut self, undo: SpellingUndo, out: &mut Vec<Event>) {
+        let result = if self.target_matches(Some(undo.target)) {
+            self.operation_target = Some(undo.target);
+            self.paste_replacement(
+                &format!("{} ", undo.original),
+                undo.corrected.chars().count() + 1,
+                0,
+            )
+        } else {
+            Err(PlatformError::Other("spelling undo target changed".into()))
+        };
+        self.operation_target = None;
+        match result {
+            Ok(()) => {
+                tracing::info!("spelling correction undone");
+                self.decline_spelling(&undo.original);
+                self.play(Sound::Cancel);
+            }
+            Err(err) => self.fail("cannot undo the spelling correction", &err, out),
+        }
+    }
+
+    /// The user kept `word` as typed: do not offer or apply corrections for it
+    /// until the program restarts.
+    pub fn decline_spelling(&mut self, word: &str) {
+        self.declined_spelling.insert(word.to_lowercase());
     }
 
     fn paste_plain(&mut self, out: &mut Vec<Event>) {

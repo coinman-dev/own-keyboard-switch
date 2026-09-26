@@ -23,6 +23,7 @@ mod short_words;
 pub mod spell;
 pub mod text;
 pub mod translit;
+pub mod typo;
 
 pub use hotkey::{Hotkey, ModState, Modifiers, Side};
 pub use keymap::KeyMap;

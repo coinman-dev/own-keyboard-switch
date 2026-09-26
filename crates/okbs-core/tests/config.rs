@@ -71,6 +71,13 @@ fn legacy_spelling_master_switch_turns_off_both_checks() {
 }
 
 #[test]
+fn no_spelling_language_is_kept_as_chosen() {
+    let loaded = config::from_toml_str("[spellcheck]\nlanguages = []\n");
+    assert_eq!(loaded.issues, vec![]);
+    assert!(loaded.config.spellcheck.languages.is_empty());
+}
+
+#[test]
 fn personal_words_are_unique_regardless_of_case() {
     let loaded = config::from_toml_str(
         "[spellcheck]\ncustom_words = [\"Привет\", \"привет\", \"OKBS\", \"okbs\", \"ёжик\"]\n",

@@ -29,6 +29,8 @@ pub enum Command {
     SetSounds(bool),
     /// Activates a layout chosen in the tray menu for the program typed in last.
     SelectLayout(LayoutId),
+    /// The user skipped a suggested correction: leave the word alone from now on.
+    DeclineSpelling(String),
     /// Applies a new configuration.
     ApplyConfig(Box<Config>),
     /// Runs a text operation on the clipboard (tray menu «Буфер обмена»).
@@ -166,6 +168,9 @@ pub enum Event {
     Suspicious,
     /// A completed word was safely replaced by the spelling auto mode.
     SpellingCorrected,
+    /// The word a spelling popup was opened for can no longer be replaced:
+    /// the user typed on, clicked elsewhere or switched windows.
+    SpellingExpired,
     /// Result for one explicit popup action; automatic corrections do not emit it.
     SpellingReplacementFinished { request_id: u64, success: bool },
     /// The user undid conversions of a word several times: offer a rule.
@@ -292,6 +297,10 @@ fn handle_command(processor: &mut Processor, command: Command) -> Vec<Event> {
             events
         }
         Command::SelectLayout(id) => processor.select_layout(id),
+        Command::DeclineSpelling(word) => {
+            processor.decline_spelling(&word);
+            Vec::new()
+        }
         Command::ClipboardOp(op) => processor.clipboard_op(op),
         Command::SpellcheckClipboard => processor.spellcheck_clipboard(),
         Command::CorrectClipboard {

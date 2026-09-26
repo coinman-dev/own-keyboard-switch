@@ -8,7 +8,7 @@ use crate::i18n::{Text, tr};
 use crate::settings::{
     LayoutEntry, Section, SettingsEvent, SettingsInput, SettingsView, WINDOW_SIZE, WindowAction,
 };
-use crate::text_result::TextResult;
+use crate::text_result::{SpellingAction, TextResult};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use okbs_core::Lang;
 use okbs_core::config::{Config, Rule, Theme, UiLanguage};
@@ -124,6 +124,8 @@ struct App {
     spellcheck_position: Option<[f32; 2]>,
     spellcheck_target: Option<(u64, u64)>,
     spellcheck_pending: Option<u64>,
+    /// Logical height of the spelling popup, following its contents.
+    spellcheck_height: f32,
     root: Root,
     list: ListView,
     history: HistoryView,
@@ -236,9 +238,15 @@ impl App {
                         self.spellcheck_position = position;
                         self.spellcheck_target = target;
                         self.spellcheck_pending = None;
+                        // Placed while still hidden, then shown without
+                        // taking the focus from the editor.
                         #[cfg(windows)]
                         if let Some(result) = &self.spellcheck_result {
-                            crate::window_position::show_inactive(result.title(self.lang));
+                            let title = result.title(self.lang);
+                            if crate::window_position::keep_visible(title, position) {
+                                self.spellcheck_position = None;
+                            }
+                            crate::window_position::show_inactive(title);
                         }
                         ctx.send_viewport_cmd_to(
                             self.spellcheck_id(),
@@ -257,6 +265,11 @@ impl App {
                     }
                     if let SettingsInput::ConfigChanged(config) = &input {
                         self.set_appearance(ctx, config.general.ui_language, config.general.theme);
+                    }
+                    // A replacement already on its way reports its own result.
+                    if input == SettingsInput::SpellingExpired && self.spellcheck_pending.is_none()
+                    {
+                        self.hide_spelling_popup(ctx);
                     }
                     self.view.handle(input);
                 }
@@ -356,27 +369,52 @@ impl App {
         let Some(result) = &mut self.spellcheck_result else {
             return;
         };
-        let corrected = ui
+        let action = ui
             .add_enabled_ui(self.spellcheck_pending.is_none(), |ui| {
                 result.ui(ui, self.lang, self.spellcheck_target.is_some())
             })
             .inner;
-        if let Some(corrected) = corrected {
-            self.submit_spelling_replacement(corrected);
-            return;
+        if let Some(height) = result.compact_height() {
+            // Frame margins above and below the contents.
+            self.spellcheck_height = (height + 20.0).clamp(100.0, 320.0);
         }
+        // Placed once when shown; afterwards it may be moved, only kept on screen.
         #[cfg(windows)]
-        let _ =
-            crate::window_position::keep_visible(result.title(self.lang), self.spellcheck_position);
+        if crate::window_position::keep_visible(result.title(self.lang), self.spellcheck_position) {
+            self.spellcheck_position = None;
+        }
+        let word = result.original().to_string();
+        match action {
+            Some(SpellingAction::Replace(corrected)) => {
+                self.submit_spelling_replacement(corrected);
+                return;
+            }
+            Some(SpellingAction::Skip) => {
+                tracing::debug!(target: "okbs_spelling", "suggestion skipped");
+                let _ = self.events.send(SettingsEvent::SkipSpelling(word));
+                self.hide_spelling_popup(ui.ctx());
+                return;
+            }
+            Some(SpellingAction::AddWord) => {
+                tracing::debug!(target: "okbs_spelling", "word added to personal words");
+                let _ = self.events.send(SettingsEvent::AddSpellingWord(word));
+                self.hide_spelling_popup(ui.ctx());
+                return;
+            }
+            None => {}
+        }
         if ui.ctx().input(|input| input.viewport().close_requested()) {
             tracing::debug!(target: "okbs_spelling", "suggestion popup dismissed");
-            self.spellcheck_result = None;
-            self.spellcheck_pending = None;
-            ui.ctx()
-                .send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            self.hide_spelling_popup(ui.ctx());
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }
+    }
+
+    fn hide_spelling_popup(&mut self, ctx: &egui::Context) {
+        self.spellcheck_result = None;
+        self.spellcheck_pending = None;
+        ctx.send_viewport_cmd_to(self.spellcheck_id(), egui::ViewportCommand::Visible(false));
     }
 
     fn submit_spelling_replacement(&mut self, corrected: String) {
@@ -516,18 +554,19 @@ impl eframe::App for App {
                 self.history.ui(ui)
             });
         }
+        // No position here: it is set natively in physical pixels, and egui
+        // would move the window back whenever this builder changed.
         let builder = egui::ViewportBuilder::default()
             .with_title(tr(Text::SpellcheckWordTitle, self.lang))
             .with_icon(crate::branding::icon())
-            .with_inner_size([390.0, 130.0])
-            .with_min_inner_size([300.0, 115.0])
-            .with_max_inner_size([520.0, 170.0])
+            .with_inner_size([360.0, self.spellcheck_height])
+            .with_min_inner_size([300.0, 100.0])
+            .with_max_inner_size([520.0, 320.0])
             .with_resizable(false)
             .with_maximize_button(false)
             .with_always_on_top()
             .with_active(false)
-            .with_visible(self.spellcheck_result.is_some())
-            .with_position(self.spellcheck_position.unwrap_or([24.0, 24.0]));
+            .with_visible(self.spellcheck_result.is_some());
         ctx.show_viewport_immediate(self.spellcheck_id(), builder, |ui, _| {
             self.spellcheck_ui(ui)
         });
@@ -868,6 +907,7 @@ fn window_thread(
                     spellcheck_position: initial_spellcheck_position,
                     spellcheck_target: initial_spellcheck_target,
                     spellcheck_pending: None,
+                    spellcheck_height: 150.0,
                     root,
                     list,
                     history,
@@ -912,6 +952,7 @@ mod tests {
             spellcheck_position: None,
             spellcheck_target: Some((10, 11)),
             spellcheck_pending: None,
+            spellcheck_height: 150.0,
             root: Root::Settings,
             list: ListView::default(),
             history: HistoryView::default(),
@@ -999,6 +1040,7 @@ mod tests {
                 spellcheck_position: None,
                 spellcheck_target: None,
                 spellcheck_pending: None,
+                spellcheck_height: 150.0,
                 root,
                 list: ListView::default(),
                 history: HistoryView::default(),
@@ -1045,6 +1087,7 @@ mod tests {
             spellcheck_position: None,
             spellcheck_target: None,
             spellcheck_pending: None,
+            spellcheck_height: 150.0,
             root: Root::Settings,
             list: ListView::default(),
             history: HistoryView::default(),
