@@ -2,7 +2,7 @@
 
 # Changelog
 
-## Unreleased
+## 0.3.0-beta — 2026-10-01
 
 ### Added
 
