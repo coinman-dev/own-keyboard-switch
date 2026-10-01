@@ -136,6 +136,10 @@ pub struct General {
     pub autostart: bool,
     /// «Автопереключение».
     pub autoswitch: bool,
+    /// «Распознавать пароли и набирать их по-английски»: a chunk that looks
+    /// like a password is retyped in English, and a password field gets the
+    /// English layout from its first character. Part of automatic switching.
+    pub passwords_to_english: bool,
     /// «Запускать с правами Администратора» (Windows only).
     pub run_elevated: bool,
     /// «Показывать плавающий индикатор».
@@ -172,6 +176,7 @@ impl Default for General {
         Self {
             autostart: true,
             autoswitch: true,
+            passwords_to_english: true,
             run_elevated: false,
             floating_indicator: false,
             floating_indicator_autohide: false,

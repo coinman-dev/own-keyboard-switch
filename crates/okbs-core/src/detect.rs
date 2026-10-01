@@ -435,6 +435,33 @@ impl Detector {
             || self.in_dictionary(lang, core)
     }
 
+    /// «Распознавать пароли»: the English reading of `keys`, a chunk typed
+    /// without spaces, when it looks like a password ([`crate::password`]).
+    ///
+    /// Russian text with digits or symbols is not a password: every run of
+    /// Cyrillic letters is a known word or, from three letters on, at least
+    /// has no letter sequence impossible in Russian, as names do (`Москва-2026`, `Кот_Мурзик_7`,
+    /// `Шпаковский,`). A password typed in the Russian layout always has one:
+    /// `ИшпМщмф` for `BigVova`, `Ыефке` for `Start`.
+    pub fn password_reading(&self, keys: &[KeyPress]) -> Option<String> {
+        let english = layouts::render(keys, self.keymap(Lang::En));
+        if !crate::password::looks_like_password(&english) {
+            return None;
+        }
+        let russian = layouts::render(keys, self.keymap(Lang::Ru));
+        let runs = crate::password::russian_runs(&russian);
+        let model = self.lexicon.model(Lang::Ru);
+        let russian_text = !runs.is_empty()
+            && runs.iter().all(|run| {
+                // Two letters prove nothing: `ск` of `S3cr3t!` has no
+                // impossible sequence either.
+                let lower = run.to_lowercase();
+                self.is_known(Lang::Ru, run)
+                    || (run.chars().count() >= 3 && model.score(&lower).impossible == 0)
+            });
+        (!russian_text).then_some(english)
+    }
+
     /// Decides what to do with a word typed as `keys` in layout `current`.
     pub fn decide(&self, keys: &[KeyPress], current: Lang) -> Decision {
         self.analyze(keys, current, None).decision

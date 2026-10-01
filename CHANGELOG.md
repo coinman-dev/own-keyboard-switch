@@ -2,6 +2,25 @@
 
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Recognise passwords and type them in English** (General → Basic, on by
+  default): text without spaces that mixes capitals, lowercase letters,
+  digits and symbols and was typed in the Russian layout is retyped in English
+  when it ends — before Enter or Tab reaches the application. Russian words
+  with digits (`Москва-2026`, `Ваня123!`) stay Russian. In a password field the
+  English layout is turned on from the first character.
+
+### Changed
+
+- **Break** converts the whole text since the last space, symbols included
+  (`StartToGo@11Go`, not only `11Go`); symbols typed after a space are
+  converted on their own (`знаеш .` → only the dot). When the program no longer knows the
+  typed word — after a click, the arrows, another window or a long pause — it
+  selects the word left of the caret and converts it.
+
 ## 0.2.0-beta — 2026-09-26
 
 ### Added

@@ -134,9 +134,53 @@ struct Conversion {
     automatic: bool,
 }
 
+/// What Ctrl+Shift+Left selected is a word, maybe with the spaces or the line
+/// break after it. Cells of a table or several lines are never replaced.
+pub(crate) fn one_word(text: &str) -> bool {
+    let word = text.trim_end();
+    !word.is_empty() && word.chars().count() <= 64 && !word.contains(char::is_whitespace)
+}
+
+/// What a selection conversion left behind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelectionLeft {
+    /// Nothing was copied.
+    Nothing,
+    /// The copied text is still selected.
+    Selected,
+    /// The selection was replaced by the result.
+    Replaced,
+}
+
+/// A key typed before a word without whitespace in between (`StartToGo@`
+/// before `11Go`), with the layout it is shown in.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ShownKey {
+    press: KeyPress,
+    lang: Lang,
+}
+
+/// A captured Space or Enter on which the finished word is checked before
+/// the application receives it.
+fn word_boundary(config: &Config, key: PhysKey) -> bool {
+    key == PhysKey::Space
+        || (!config.troubleshooting.no_switch_on_tab_enter
+            && matches!(key, PhysKey::Enter | PhysKey::NumpadEnter))
+}
+
+/// Space, Enter and Tab end a chunk: the text Break converts as a whole.
+fn ends_chunk(key: PhysKey) -> bool {
+    matches!(
+        key,
+        PhysKey::Space | PhysKey::Enter | PhysKey::NumpadEnter | PhysKey::Tab
+    )
+}
+
 /// The last finished word with the separators typed after it.
 #[derive(Debug, Clone, PartialEq)]
 struct LastWord {
+    /// Text glued before the word by symbols, converted with it by Break.
+    prefix: Vec<ShownKey>,
     keys: Vec<KeyPress>,
     separator: Vec<KeyPress>,
     /// Layout the keys were typed in.
@@ -166,6 +210,47 @@ struct SpellingUndo {
 impl LastWord {
     fn all_keys(&self) -> impl Iterator<Item = KeyPress> + '_ {
         self.keys.iter().chain(&self.separator).copied()
+    }
+
+    /// The whole chunk: the glued prefix, the word and its separators.
+    fn chunk_keys(&self) -> impl Iterator<Item = KeyPress> + '_ {
+        self.prefix.iter().map(|k| k.press).chain(self.all_keys())
+    }
+
+    /// The chunk still open after this word: all of it while no Space, Enter
+    /// or Tab followed, otherwise the symbols typed after the last of them
+    /// (`"` before `Vova2026`).
+    fn open_chunk(&self) -> Vec<ShownKey> {
+        let lang = self.shown_in();
+        match self.separator.iter().rposition(|k| ends_chunk(k.key)) {
+            None => self
+                .prefix
+                .iter()
+                .copied()
+                .chain(self.all_keys().map(|press| ShownKey { press, lang }))
+                .collect(),
+            Some(last) => self.separator[last + 1..]
+                .iter()
+                .map(|&press| ShownKey { press, lang })
+                .collect(),
+        }
+    }
+
+    /// What Break converts when no word is being typed and symbols were typed
+    /// after a space: those symbols and the spaces after them (`знаеш .` and
+    /// `знаеш . ` → the dot). `None` when Break takes the word itself.
+    fn tail_after_space(&self) -> Option<(Vec<KeyPress>, Vec<KeyPress>)> {
+        let separator = &self.separator;
+        let mut end = separator.len();
+        while end > 0 && ends_chunk(separator[end - 1].key) {
+            end -= 1;
+        }
+        let mut start = end;
+        while start > 0 && !ends_chunk(separator[start - 1].key) {
+            start -= 1;
+        }
+        (start > 0 && start < end)
+            .then(|| (separator[start..end].to_vec(), separator[end..].to_vec()))
     }
 
     /// Layout the word is displayed in now.
@@ -248,6 +333,8 @@ pub struct Processor {
     /// The word follows the previous one without a space (`site.com`,
     /// `C:\dir`, `user@mail`): part of an address, path or code.
     word_glued: bool,
+    /// Text glued before the current word by symbols (see [`LastWord::prefix`]).
+    word_prefix: Vec<ShownKey>,
     block_next_word: bool,
     last: Option<LastWord>,
     pending_spelling: Option<PendingSpelling>,
@@ -280,6 +367,9 @@ pub struct Processor {
     swallows_capslock: bool,
     /// Cached «foreground program is excluded».
     excluded_cache: Option<(Instant, bool)>,
+    /// «Распознавать пароли»: whether the caret is in a password field, known
+    /// until it may have moved to another control.
+    password_field: Option<bool>,
 }
 
 impl std::fmt::Debug for Processor {
@@ -319,6 +409,7 @@ impl Processor {
             word_lang: None,
             word_blocked: false,
             word_glued: false,
+            word_prefix: Vec::new(),
             block_next_word: false,
             last: None,
             pending_spelling: None,
@@ -339,6 +430,7 @@ impl Processor {
             last_space: None,
             swallows_capslock: false,
             excluded_cache: None,
+            password_field: None,
         };
         processor.refresh_layouts();
         processor
@@ -467,6 +559,7 @@ impl Processor {
 
     fn reset_word(&mut self) {
         self.word.clear();
+        self.word_prefix.clear();
         self.word_lang = None;
         self.word_blocked = false;
     }
@@ -474,6 +567,7 @@ impl Processor {
     fn reset_all(&mut self) {
         self.reset_word();
         self.last = None;
+        self.password_field = None;
         self.deferred.clear();
         self.context = None;
         self.previous_word = None;
@@ -728,6 +822,7 @@ impl Processor {
         {
             if self.last_input_target != Some(target) {
                 self.excluded_cache = None;
+                self.password_field = None;
             }
             self.last_input_target = Some(target);
         }
@@ -866,9 +961,8 @@ impl Processor {
                 && !self.capturing
                 && self.mods.is_empty()
                 && self.config.general.autoswitch
-                && (key == PhysKey::Space
-                    || (!self.config.troubleshooting.no_switch_on_tab_enter
-                        && matches!(key, PhysKey::Enter | PhysKey::NumpadEnter)))
+                && (word_boundary(&self.config, key)
+                    || (self.config.general.passwords_to_english && ends_chunk(key)))
             {
                 if self
                     .last_key_time
@@ -877,8 +971,13 @@ impl Processor {
                     self.reset_all();
                 }
                 // The application has not received the separator yet. In a
-                // terminal this is the last opportunity to correct the command.
-                self.finish_word_at_boundary(KeyPress::plain(key), false, &mut out);
+                // terminal this is the last opportunity to correct the command,
+                // in a login form the last one to correct the password.
+                if word_boundary(&self.config, key) {
+                    self.finish_word_at_boundary(KeyPress::plain(key), false, &mut out);
+                } else {
+                    self.convert_password_chunk(KeyPress::plain(key), false, &mut out);
+                }
                 if out.iter().any(|e| matches!(e, Event::Error(_)))
                     || !self.target_matches(target)
                     || !self.epoch_matches(Some(epoch))
@@ -1320,6 +1419,8 @@ impl Processor {
                     self.finish_word(KeyPress::plain(key), out);
                     self.context = None;
                 }
+                // The next field of a form may be a password field, or not.
+                self.password_field = None;
             }
             PhysKey::ArrowLeft
             | PhysKey::ArrowRight
@@ -1347,11 +1448,14 @@ impl Processor {
                     .any(|&l| layouts::char_for(layouts::builtin_keymap(l), press).is_some());
                 if !produces_char {
                     self.reset_all();
-                } else if layouts::is_word_key(press) {
+                    return;
+                }
+                if layouts::is_word_key(press) {
                     self.push_word_key(press);
                 } else {
                     self.finish_word(press, out);
                 }
+                self.english_in_password_field(out);
             }
         }
     }
@@ -1367,6 +1471,13 @@ impl Processor {
                         )
                     })
             });
+            // Symbols glue the previous word to this one: Break and the
+            // password check take them as one chunk (`StartToGo@11Go`).
+            self.word_prefix = self
+                .last
+                .as_ref()
+                .map(LastWord::open_chunk)
+                .unwrap_or_default();
             self.last = None;
             self.word_lang = self.current_lang();
             self.word_blocked = std::mem::take(&mut self.block_next_word);
@@ -1495,6 +1606,10 @@ impl Processor {
         separator_typed: bool,
         out: &mut Vec<Event>,
     ) {
+        if ends_chunk(separator.key) && self.convert_password_chunk(separator, separator_typed, out)
+        {
+            return;
+        }
         // Only a word followed by a Space can be replaced later; after Enter,
         // Tab or punctuation a suggestion could never be applied.
         let check = separator.key == PhysKey::Space
@@ -1558,10 +1673,13 @@ impl Processor {
             }
             if separator_typed && let Some(last) = &mut self.last {
                 last.separator.push(separator);
+                tracing::debug!(separator = ?separator.key, count = last.separator.len(),
+                    "separator after the last word");
             }
             return;
         }
         let keys = std::mem::take(&mut self.word);
+        let prefix = std::mem::take(&mut self.word_prefix);
         let typed_in = self.word_lang.take();
         let blocked = std::mem::take(&mut self.word_blocked);
         let Some(typed_in) = typed_in else {
@@ -1581,6 +1699,7 @@ impl Processor {
                 .manual_layout_change;
 
         self.last = Some(LastWord {
+            prefix,
             keys,
             separator: if separator_typed {
                 vec![separator]
@@ -1932,21 +2051,206 @@ impl Processor {
     }
 
     fn focus_blocks_for(&mut self, manual: bool) -> bool {
+        self.own_or_excluded(manual)
+            || self
+                .backends
+                .focus
+                .as_ref()
+                .is_some_and(|focus| matches!(focus.is_password_field(), Ok(Some(true))))
+    }
+
+    /// This program's own windows; excluded programs unless the change is
+    /// manual («Не взаимодействовать с программами-исключениями» excludes those too).
+    fn own_or_excluded(&mut self, manual: bool) -> bool {
         let Some(focus) = &self.backends.focus else {
             return false;
         };
-        if let Ok(Some(window)) = focus.active_window() {
-            if window.pid == Some(std::process::id()) {
-                return true;
+        let Ok(Some(window)) = focus.active_window() else {
+            return false;
+        };
+        if window.pid == Some(std::process::id()) {
+            return true;
+        }
+        if (!manual || self.config.troubleshooting.ignore_excluded_apps_completely)
+            && is_excluded(&self.config.exclusions, &window)
+        {
+            tracing::debug!("excluded program, no automatic changes");
+            return true;
+        }
+        false
+    }
+
+    /// Whether the caret is in a password field, asked once per control.
+    fn password_field(&mut self) -> bool {
+        if let Some(known) = self.password_field {
+            return known;
+        }
+        let known = self
+            .backends
+            .focus
+            .as_ref()
+            .is_some_and(|focus| matches!(focus.is_password_field(), Ok(Some(true))));
+        self.password_field = Some(known);
+        known
+    }
+
+    /// The text typed since the last Space, Enter or Tab: the current word
+    /// with its glued prefix, or the last word when only symbols followed it
+    /// (`BigVova#$`), or the symbols typed after a space.
+    fn current_chunk(&self) -> Vec<ShownKey> {
+        if !self.word.is_empty() {
+            let Some(lang) = self.word_lang else {
+                return Vec::new();
+            };
+            return self
+                .word_prefix
+                .iter()
+                .copied()
+                .chain(self.word.iter().map(|&press| ShownKey { press, lang }))
+                .collect();
+        }
+        self.last
+            .as_ref()
+            .map(LastWord::open_chunk)
+            .unwrap_or_default()
+    }
+
+    /// «Распознавать пароли»: at the end of a chunk a password typed in the
+    /// Russian layout is retyped in English, the separator included when it
+    /// already reached the application. In a password field every chunk is
+    /// a password. Returns whether the chunk was handled here.
+    fn convert_password_chunk(
+        &mut self,
+        separator: KeyPress,
+        separator_typed: bool,
+        out: &mut Vec<Event>,
+    ) -> bool {
+        if !self.config.general.autoswitch || !self.config.general.passwords_to_english {
+            return false;
+        }
+        // Enter and Tab that already reached the application may have sent
+        // the form or moved the focus: nothing can be retyped any more.
+        if separator_typed && separator.key != PhysKey::Space {
+            return false;
+        }
+        let chunk = self.current_chunk();
+        let Some(shown) = chunk.last().map(|k| k.lang) else {
+            return false;
+        };
+        if chunk.iter().all(|k| k.lang == Lang::En) {
+            return false;
+        }
+        let keys: Vec<KeyPress> = chunk.iter().map(|k| k.press).collect();
+        let field = self.password_field();
+        if (!field && self.detector.password_reading(&keys).is_none())
+            || self.own_or_excluded(false)
+        {
+            return false;
+        }
+        let mut typed = keys.clone();
+        if separator_typed {
+            typed.push(separator);
+        }
+        match self.retype(typed.len(), Lang::En, &typed) {
+            Ok(()) => {
+                tracing::info!(password_field = field, "password retyped in English");
+                self.reset_word();
+                // Break puts the chunk back as a whole.
+                self.last = Some(LastWord {
+                    prefix: Vec::new(),
+                    keys,
+                    separator: if separator_typed {
+                        vec![separator]
+                    } else {
+                        Vec::new()
+                    },
+                    typed_in: shown,
+                    conversion: Some(Conversion {
+                        from: shown,
+                        to: Lang::En,
+                        automatic: false,
+                    }),
+                    target: self.last_input_target,
+                });
+                self.context = None;
+                self.previous_word = None;
+                out.push(Event::Converted {
+                    from: shown,
+                    to: Lang::En,
+                    kind: ConversionKind::Automatic,
+                });
+                self.play(Sound::Autoswitch);
             }
-            if (!manual || self.config.troubleshooting.ignore_excluded_apps_completely)
-                && is_excluded(&self.config.exclusions, &window)
-            {
-                tracing::debug!("excluded program, no automatic changes");
-                return true;
+            Err(err) => self.fail("password conversion failed", &err, out),
+        }
+        true
+    }
+
+    /// «Распознавать пароли»: a password field gets the English layout from
+    /// its first character. The keys typed meanwhile are held back by the
+    /// input gate and arrive in English.
+    fn english_in_password_field(&mut self, out: &mut Vec<Event>) {
+        if !self.config.general.autoswitch || !self.config.general.passwords_to_english {
+            return;
+        }
+        let chunk = self.current_chunk();
+        let [first] = chunk.as_slice() else {
+            return;
+        };
+        if first.lang == Lang::En || self.password_field == Some(false) {
+            return;
+        }
+        let gate = self.input_gate.clone();
+        if let Some(gate) = &gate {
+            gate.begin_operation();
+        }
+        if self.password_field() && !self.own_or_excluded(false) {
+            match self.retype(1, Lang::En, &[first.press]) {
+                Ok(()) => {
+                    tracing::info!("English layout in a password field");
+                    // A first symbol stays recorded in its old layout; the
+                    // chunk is checked again when it ends.
+                    if !self.word.is_empty() {
+                        self.word_lang = Some(Lang::En);
+                    }
+                    out.push(Event::Converted {
+                        from: first.lang,
+                        to: Lang::En,
+                        kind: ConversionKind::Automatic,
+                    });
+                }
+                Err(err) => self.fail("cannot switch a password field to English", &err, out),
             }
         }
-        matches!(focus.is_password_field(), Ok(Some(true)))
+        if let Some(gate) = &gate {
+            gate.end_operation();
+        }
+    }
+
+    /// Break without a tracked word: Ctrl+Shift+Left selects the word left of
+    /// the caret, which is converted like a selection. Terminals select
+    /// differently, and password fields cannot be copied.
+    fn convert_left_word(&mut self, out: &mut Vec<Event>) {
+        let terminal = self
+            .backends
+            .focus
+            .as_ref()
+            .is_some_and(|focus| focus.is_terminal().unwrap_or(false));
+        if terminal || self.focus_blocks_for(true) {
+            return;
+        }
+        if let Err(err) = self.backends.injector.tap(
+            &[PhysKey::ControlLeft, PhysKey::ShiftLeft],
+            PhysKey::ArrowLeft,
+        ) {
+            return self.fail("cannot select the previous word", &err, out);
+        }
+        if self.convert_selection(TextOp::Layout, one_word, out) == SelectionLeft::Selected {
+            // The caret goes back to where it was, after the word.
+            if let Err(err) = self.backends.injector.tap(&[], PhysKey::ArrowRight) {
+                tracing::warn!("cannot clear the selection: {err}");
+            }
+        }
     }
 
     fn foreground_excluded(&mut self) -> bool {
@@ -2023,10 +2327,23 @@ impl Processor {
         if from == to {
             return;
         }
-        let keys: Vec<KeyPress> = last.all_keys().collect();
+        // The detector judged the word alone; Break converts the whole chunk.
+        let keys: Vec<KeyPress> = if automatic {
+            last.all_keys().collect()
+        } else {
+            last.chunk_keys().collect()
+        };
         match self.retype(keys.len(), to, &keys) {
             Ok(()) => {
                 if let Some(l) = &mut self.last {
+                    if !automatic {
+                        let prefix = std::mem::take(&mut l.prefix);
+                        l.keys = prefix
+                            .iter()
+                            .map(|k| k.press)
+                            .chain(l.keys.iter().copied())
+                            .collect();
+                    }
                     l.conversion = Some(Conversion {
                         from,
                         to,
@@ -2130,7 +2447,10 @@ impl Processor {
     }
 
     /// «Отменить конвертацию раскладки»: undoes an automatic conversion of the
-    /// last word, otherwise converts the current or last word manually.
+    /// last word, otherwise converts the current or last chunk manually — the
+    /// text since the last Space, Enter or Tab, symbols included. Without one
+    /// (after a click, the arrows, another window or a long pause) the word
+    /// left of the caret is selected and converted.
     fn cancel_or_convert(&mut self, out: &mut Vec<Event>) {
         if self.word.is_empty()
             && let Some(undo) = self.spelling_undo.take()
@@ -2140,13 +2460,21 @@ impl Processor {
         if !self.word.is_empty() {
             let from = match self.word_lang.or_else(|| self.current_lang()) {
                 Some(lang) => lang,
-                None => return,
+                None => return self.convert_left_word(out),
             };
             let to = from.other();
-            let keys = self.word.clone();
+            let keys: Vec<KeyPress> = self
+                .word_prefix
+                .iter()
+                .map(|k| k.press)
+                .chain(self.word.iter().copied())
+                .collect();
             match self.retype(keys.len(), to, &keys) {
                 Ok(()) => {
                     tracing::info!(%from, %to, "word being typed converted by hotkey");
+                    for key in &mut self.word_prefix {
+                        key.lang = to;
+                    }
                     self.word_lang = Some(to);
                     self.word_blocked = true;
                     self.context = Some(to);
@@ -2162,9 +2490,29 @@ impl Processor {
             }
             return;
         }
-        let Some(last) = self.last.clone() else {
-            return;
+        // The caret may be in another control of the same window by now.
+        let Some(last) = self
+            .last
+            .clone()
+            .filter(|last| last.target.is_none() || self.target_matches(last.target))
+        else {
+            return self.convert_left_word(out);
         };
+        // Symbols typed after the space are a chunk of their own: in
+        // «знаеш .» Break converts only the dot.
+        let tail = last.tail_after_space();
+        // Key names of the separators only: letters are never logged.
+        tracing::debug!(
+            word_keys = last.keys.len(),
+            prefix_keys = last.prefix.len(),
+            separator = ?last.separator.iter().map(|k| k.key).collect::<Vec<_>>(),
+            tail = tail.as_ref().map(|(keys, _)| keys.len()),
+            automatic = last.conversion.map(|c| c.automatic),
+            "Break on the last word"
+        );
+        if let Some((keys, spaces)) = tail {
+            return self.convert_tail(&last, keys, spaces, out);
+        }
         match last.conversion {
             Some(Conversion {
                 from,
@@ -2198,6 +2546,46 @@ impl Processor {
                 let to = last.shown_in().other();
                 self.convert_last(to, false, out);
             }
+        }
+    }
+
+    /// Break on the symbols typed after a space: only they are converted (with
+    /// the spaces typed after them), the word before the space stays as it is.
+    fn convert_tail(
+        &mut self,
+        last: &LastWord,
+        keys: Vec<KeyPress>,
+        spaces: Vec<KeyPress>,
+        out: &mut Vec<Event>,
+    ) {
+        let from = last.shown_in();
+        let to = from.other();
+        let typed: Vec<KeyPress> = keys.iter().chain(&spaces).copied().collect();
+        match self.retype(typed.len(), to, &typed) {
+            Ok(()) => {
+                tracing::info!(%from, %to, "text after the last space converted by hotkey");
+                self.last = Some(LastWord {
+                    prefix: Vec::new(),
+                    keys,
+                    separator: spaces,
+                    typed_in: from,
+                    conversion: Some(Conversion {
+                        from,
+                        to,
+                        automatic: false,
+                    }),
+                    target: last.target,
+                });
+                self.context = None;
+                self.previous_word = None;
+                out.push(Event::Converted {
+                    from,
+                    to,
+                    kind: ConversionKind::Manual,
+                });
+                self.play(Sound::ManualConvert);
+            }
+            Err(err) => self.fail("conversion failed", &err, out),
         }
     }
 
@@ -2292,20 +2680,39 @@ impl Processor {
     }
 
     fn transform_selection(&mut self, op: TextOp, out: &mut Vec<Event>) {
+        let _ = self.convert_selection(op, |_| true, out);
+    }
+
+    /// Replaces the selection with `op` applied to it when `accept` takes the
+    /// copied text; tells whether that text is still selected.
+    fn convert_selection(
+        &mut self,
+        op: TextOp,
+        accept: impl Fn(&str) -> bool,
+        out: &mut Vec<Event>,
+    ) -> SelectionLeft {
         self.reset_all();
         let copied = match self.copy_selection() {
             Ok(Some(copied)) => copied,
             Ok(None) => {
                 tracing::debug!("nothing selected");
-                return;
+                return SelectionLeft::Nothing;
             }
-            Err(err) => return self.fail("cannot copy the selection", &err, out),
+            Err(err) => {
+                self.fail("cannot copy the selection", &err, out);
+                return SelectionLeft::Nothing;
+            }
         };
         let (text, saved) = copied;
+        if !accept(&text) {
+            tracing::debug!("the selection is not one word, left unchanged");
+            self.restore_clipboard(saved, &text);
+            return SelectionLeft::Selected;
+        }
         let Some(result) = op.apply(&text) else {
             self.restore_clipboard(saved, &text);
             self.play(Sound::Error);
-            return;
+            return SelectionLeft::Selected;
         };
         let pasted = (|| -> Result<(), PlatformError> {
             let clipboard = self
@@ -2323,7 +2730,8 @@ impl Processor {
             // Setting the result may have failed before replacing the copied text.
             self.restore_clipboard(saved.clone(), &result);
             self.restore_clipboard(saved, &text);
-            return self.fail("cannot paste the result", &err, out);
+            self.fail("cannot paste the result", &err, out);
+            return SelectionLeft::Selected;
         }
         if op == TextOp::Layout
             && let Some(lang) = layouts::guess_text_lang(&result)
@@ -2335,6 +2743,7 @@ impl Processor {
         self.restore_clipboard(saved, &result);
         out.push(Event::SelectionConverted(op));
         self.play(Sound::ManualConvert);
+        SelectionLeft::Replaced
     }
 
     /// Copy before opening our window, while the original application has

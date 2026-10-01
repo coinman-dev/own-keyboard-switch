@@ -677,3 +677,25 @@ fn suggested_exclusions_are_added_once() {
             .all(|name| name.ends_with(".exe") && !name.contains(['/', '\\']))
     );
 }
+
+#[test]
+fn password_recognition_is_on_by_default_and_roundtrips() {
+    assert!(Config::default().general.passwords_to_english);
+    let loaded = config::from_toml_str("[general]\npasswords_to_english = false\n");
+    assert!(loaded.issues.is_empty());
+    assert!(!loaded.config.general.passwords_to_english);
+    let saved = config::to_toml_string(&loaded.config).unwrap();
+    assert!(
+        !config::from_toml_str(&saved)
+            .config
+            .general
+            .passwords_to_english
+    );
+    // Files written before the option existed get it switched on.
+    assert!(
+        config::from_toml_str("[general]\nautoswitch = true\n")
+            .config
+            .general
+            .passwords_to_english
+    );
+}

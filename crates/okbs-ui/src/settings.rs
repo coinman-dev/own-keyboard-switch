@@ -934,6 +934,25 @@ impl SettingsView {
                     cfg!(windows),
                 );
                 checkbox(ui, &mut g.autoswitch, Text::OptAutoswitch, lang, true);
+                ui.add_enabled_ui(g.autoswitch, |ui| {
+                    checkbox(
+                        ui,
+                        &mut g.passwords_to_english,
+                        Text::OptPasswordsToEnglish,
+                        lang,
+                        true,
+                    );
+                    ui.indent("passwords_to_english_hint", |ui| {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(tr(Text::PasswordsToEnglishHint, lang))
+                                    .weak()
+                                    .small(),
+                            )
+                            .wrap(),
+                        );
+                    });
+                });
                 if cfg!(windows) {
                     checkbox(ui, &mut g.run_elevated, Text::OptRunElevated, lang, true);
                     if g.run_elevated {
@@ -2702,6 +2721,23 @@ mod tests {
                 restart,
                 "only «{label}» asks for the restart"
             );
+        }
+    }
+
+    #[test]
+    fn password_recognition_is_on_by_default_and_can_be_turned_off() {
+        for lang in Lang::ALL {
+            let ctx = test_context();
+            let mut config = Config::default();
+            config.general.ui_language = lang.into();
+            let mut view = SettingsView::new(config, Section::General, Lang::Ru);
+            assert!(view.draft.general.passwords_to_english);
+            click(&mut view, &ctx, tr(Text::OptPasswordsToEnglish, lang));
+            assert!(!view.draft.general.passwords_to_english);
+            let mut events = Vec::new();
+            view.apply(&mut events);
+            assert!(events.iter().any(|event| matches!(event,
+                SettingsEvent::Apply(config) if !config.general.passwords_to_english)));
         }
     }
 

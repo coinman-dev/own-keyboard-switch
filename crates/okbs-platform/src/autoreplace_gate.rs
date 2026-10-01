@@ -17,10 +17,15 @@ struct State {
     hotkeys: Hotkeys,
     hotkeys_enabled: bool,
     autoswitch: bool,
+    /// «Распознавать пароли»: Space, Enter and Tab after any text wait for the
+    /// engine, so a password is corrected before a form is submitted.
+    passwords: bool,
     no_switch_on_tab_enter: bool,
     capturing: bool,
     mods: ModState,
     keys: Vec<KeyPress>,
+    /// Printable keys since the last Space, Enter or Tab, symbols included.
+    chunk: usize,
     overflow: usize,
     max_len: usize,
     lang: Option<Lang>,
@@ -40,6 +45,11 @@ impl State {
         self.lang = None;
     }
 
+    fn reset_chunk(&mut self) {
+        self.reset_word();
+        self.chunk = 0;
+    }
+
     fn matches(&self) -> bool {
         let Some(lang) = self.lang else { return false };
         if self.overflow > 0 || self.keys.is_empty() {
@@ -57,7 +67,7 @@ impl State {
                 .last
                 .is_some_and(|last| time.saturating_duration_since(last) > Duration::from_secs(30))
         {
-            self.reset_word();
+            self.reset_chunk();
         }
         self.target = target;
         self.last = Some(time);
@@ -79,7 +89,7 @@ impl State {
                     return;
                 }
                 if self.mods.ctrl() || self.mods.alt() || self.mods.win() {
-                    self.reset_word();
+                    self.reset_chunk();
                     return;
                 }
                 if key == PhysKey::Backspace {
@@ -88,6 +98,7 @@ impl State {
                     } else {
                         self.keys.pop();
                     }
+                    self.chunk = self.chunk.saturating_sub(1);
                     return;
                 }
                 let press = KeyPress {
@@ -95,7 +106,19 @@ impl State {
                     shift: self.mods.shift(),
                     caps: false,
                 };
-                if repeat || !layouts::is_word_key(press) {
+                let printable = !matches!(
+                    key,
+                    PhysKey::Space | PhysKey::Enter | PhysKey::NumpadEnter | PhysKey::Tab
+                ) && Lang::ALL
+                    .iter()
+                    .any(|&lang| layouts::char_for(layouts::builtin_keymap(lang), press).is_some());
+                if repeat || !printable {
+                    self.reset_chunk();
+                    return;
+                }
+                self.chunk += 1;
+                if !layouts::is_word_key(press) {
+                    // A symbol ends the word but not the chunk: `BigVova#$`.
                     self.reset_word();
                     return;
                 }
@@ -109,7 +132,7 @@ impl State {
                 }
             }
             InputEvent::UnknownKey { pressed: true, .. } | InputEvent::MouseButton { .. } => {
-                self.reset_word()
+                self.reset_chunk()
             }
             _ => {}
         }
@@ -136,10 +159,12 @@ impl AutoReplaceGate {
             hotkeys_enabled: config.general.autoswitch
                 || !config.general.hotkeys_off_when_autoswitch_off,
             autoswitch: config.general.autoswitch,
+            passwords: config.general.passwords_to_english,
             no_switch_on_tab_enter: config.troubleshooting.no_switch_on_tab_enter,
             capturing: false,
             mods: ModState::default(),
             keys: Vec::new(),
+            chunk: 0,
             overflow: 0,
             max_len: config
                 .autoreplace
@@ -170,6 +195,7 @@ impl AutoReplaceGate {
             s.hotkeys_enabled =
                 config.general.autoswitch || !config.general.hotkeys_off_when_autoswitch_off;
             s.autoswitch = config.general.autoswitch;
+            s.passwords = config.general.passwords_to_english;
             s.no_switch_on_tab_enter = config.troubleshooting.no_switch_on_tab_enter;
             s.max_len = config
                 .autoreplace
@@ -179,7 +205,7 @@ impl AutoReplaceGate {
                 .max()
                 .unwrap_or(0)
                 .max(128);
-            s.reset_word();
+            s.reset_chunk();
         }
     }
 
@@ -211,7 +237,7 @@ impl AutoReplaceGate {
             } => (None, pressed, false, time),
             InputEvent::MouseButton { .. } => {
                 s.epoch = s.epoch.wrapping_add(1);
-                s.reset_word();
+                s.reset_chunk();
                 return false;
             }
             _ => return false,
@@ -245,9 +271,18 @@ impl AutoReplaceGate {
                     && (key == PhysKey::Space
                         || (!s.no_switch_on_tab_enter
                             && matches!(key, PhysKey::Enter | PhysKey::NumpadEnter)));
+                let password_boundary = s.autoswitch
+                    && s.passwords
+                    && s.chunk > 0
+                    && matches!(
+                        key,
+                        PhysKey::Space | PhysKey::Enter | PhysKey::NumpadEnter | PhysKey::Tab
+                    );
                 intercept = hotkey
                     || (s.mods.is_empty()
-                        && (boundary || (s.matches() && accepts(s.trigger, key))));
+                        && (boundary
+                            || password_boundary
+                            || (s.matches() && accepts(s.trigger, key))));
             }
         }
         if intercept {
@@ -339,18 +374,18 @@ impl AutoReplaceGate {
     pub fn end_operation(&self) {
         if let Ok(mut s) = self.0.lock() {
             s.active = s.pending > 0;
-            s.reset_word();
+            s.reset_chunk();
         }
     }
     pub fn reset_word(&self) {
         if let Ok(mut s) = self.0.lock() {
-            s.reset_word();
+            s.reset_chunk();
         }
     }
     pub fn set_capture(&self, on: bool) {
         if let Ok(mut s) = self.0.lock() {
             s.capturing = on;
-            s.reset_word();
+            s.reset_chunk();
         }
     }
     pub fn set_hotkeys_enabled(&self, enabled: bool) {
@@ -369,7 +404,7 @@ impl AutoReplaceGate {
             s.pending = 0;
             s.reserved.clear();
             s.discard_until_release.clear();
-            s.reset_word();
+            s.reset_chunk();
         }
     }
 }

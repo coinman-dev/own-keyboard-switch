@@ -73,6 +73,8 @@ texts! {
     // General → Basic
     OptAutostart => "Запускаться при старте", "Start with the system";
     OptAutoswitch => "Автопереключение", "Auto switch";
+    OptPasswordsToEnglish => "Распознавать пароли и набирать их по-английски", "Recognise passwords and type them in English";
+    PasswordsToEnglishHint => "Текст без пробелов, в котором смешаны заглавные и строчные буквы, цифры и знаки, набранный в русской раскладке, перепечатывается по-английски; русские слова с цифрами остаются как есть. В поле пароля английская раскладка включается с первого символа.", "Text without spaces that mixes capitals, lowercase letters, digits and symbols and was typed in the Russian layout is retyped in English; Russian words with digits stay as they are. In a password field the English layout is turned on from the first character.";
     OptImproveSwitching => "Улучшить переключение", "Improve layout switching";
     ImproveSwitchingHint => "Дополнительно распознавать короткие английские слова после русского слова или буквы.", "Recognise additional short English words after a Russian word or letter.";
     OptRunElevated => "Запускать с правами Администратора", "Run with administrator rights";

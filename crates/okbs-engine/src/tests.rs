@@ -124,8 +124,27 @@ impl Desktop {
                     }
                 }
             }
+            // Like Windows editors: the spaces before the caret, then the word.
+            PhysKey::ArrowLeft if self.ctrl && self.shift => {
+                let end = self.caret.unwrap_or(self.text.len());
+                let mut start = end;
+                while start > 0 && self.text[start - 1].is_whitespace() {
+                    start -= 1;
+                }
+                while start > 0 && !self.text[start - 1].is_whitespace() {
+                    start -= 1;
+                }
+                self.selection = (start < end).then_some(start..end);
+            }
             PhysKey::ArrowLeft => {
                 self.caret = Some(self.caret.unwrap_or(self.text.len()).saturating_sub(1));
+            }
+            PhysKey::ArrowRight => {
+                let caret = match self.selection.take() {
+                    Some(range) => range.end,
+                    None => (self.caret.unwrap_or(self.text.len()) + 1).min(self.text.len()),
+                };
+                self.caret = (caret < self.text.len()).then_some(caret);
             }
             _ if self.ctrl || self.alt => {}
             PhysKey::Enter | PhysKey::NumpadEnter => {
@@ -904,6 +923,8 @@ fn gated_boundaries_preserve_editor_undo_and_corrected_prefix_context() {
 fn terminal_preserves_protections_and_switch_toggle() {
     for protection in 0..5 {
         let mut config = improved_config();
+        // The password field of protection 2 is left alone without the option.
+        config.general.passwords_to_english = false;
         if protection == 0 {
             config.general.autoswitch = false;
         }
@@ -1108,6 +1129,8 @@ fn improvement_preserves_russian_phrases_and_protection_settings() {
     }
     for case in 0..5 {
         let mut config = improved_config();
+        // The password field of case 1 is left alone without the option.
+        config.general.passwords_to_english = false;
         if case == 0 {
             config.general.autoswitch = false;
         }
@@ -1939,10 +1962,12 @@ fn autoreplace_on_space_precedes_layout_detection_and_preserves_clipboard() {
         );
         assert_eq!(h.desktop.lock().clipboard.as_deref(), Some("saved"));
         assert_eq!(h.events, vec![Event::Autoreplaced]);
+        // The typed abbreviation is gone: Break converts the word left of
+        // the caret, the last one of the expansion.
         h.tap(PhysKey::Pause);
         assert_eq!(
             h.text(),
-            "С наилучшими пожеланиями,\nИван ",
+            "С наилучшими пожеланиями,\nBdfy ",
             "stale word was cleared"
         );
     }
@@ -2008,6 +2033,8 @@ fn autoreplace_does_not_run_for_other_triggers_or_separators() {
 fn autoreplace_respects_password_fields_own_windows_and_exclusions() {
     for case in 0..3 {
         let mut config = autoreplace_config();
+        // The password field of case 0 is left alone without the option.
+        config.general.passwords_to_english = false;
         config
             .exclusions
             .titles
@@ -3329,4 +3356,254 @@ fn the_menu_layout_is_left_alone_without_the_option_and_in_combinations() {
     h.processor
         .handle_focus(&okbs_platform::FocusEvent::WindowChanged(None));
     assert_eq!(h.layout(), Lang::Ru);
+}
+
+fn passwords_config() -> Config {
+    config_with(|c| c.general.passwords_to_english = true)
+}
+
+/// Break converts the whole chunk since the last space, symbols included,
+/// not only the letters after the last symbol.
+#[test]
+fn break_converts_the_whole_chunk_with_symbols() {
+    // The keys of an English password typed with the Russian layout on.
+    let mut h = Harness::new(Lang::Ru);
+    h.type_as("StartToGo@11Go", Lang::En);
+    assert_eq!(h.text(), "ЫефкеЕщПщ\"11Пщ");
+    h.tap(PhysKey::Pause);
+    assert_eq!(h.text(), "StartToGo@11Go");
+    assert_eq!(h.layout(), Lang::En);
+    h.type_as(" ", Lang::En);
+    h.tap(PhysKey::Pause);
+    assert_eq!(h.text(), "ЫефкеЕщПщ\"11Пщ ");
+    h.tap(PhysKey::Pause);
+    assert_eq!(h.text(), "StartToGo@11Go ");
+
+    // Without password recognition, which would retype it at the space.
+    let mut h = Harness::with_config(
+        Lang::Ru,
+        config_with(|c| c.general.passwords_to_english = false),
+    );
+    h.type_as("BigVova#$ ", Lang::En);
+    assert_eq!(h.text(), "ИшпМщмф№; ");
+    h.tap(PhysKey::Pause);
+    assert_eq!(h.text(), "BigVova#$ ");
+
+    // Text after the space is a chunk of its own: only the dot changes.
+    let mut h = Harness::new(Lang::Ru);
+    h.type_as("Ну знаеш .", Lang::Ru);
+    assert_eq!(h.text(), "Ну знаеш .");
+    h.tap(PhysKey::Pause);
+    assert_eq!(h.text(), "Ну знаеш /");
+    assert_eq!(h.layout(), Lang::En);
+    h.tap(PhysKey::Pause);
+    assert_eq!(h.text(), "Ну знаеш .");
+    assert_eq!(h.layout(), Lang::Ru);
+    // A space typed after the dot changes nothing: still only the dot.
+    let mut h = Harness::new(Lang::Ru);
+    h.type_as("Ну знаеш . ", Lang::Ru);
+    h.tap(PhysKey::Pause);
+    assert_eq!(h.text(), "Ну знаеш / ");
+    h.tap(PhysKey::Pause);
+    assert_eq!(h.text(), "Ну знаеш . ");
+    // A comma glued to the word belongs to it.
+    let mut h = Harness::new(Lang::Ru);
+    h.type_as("Ну знаеш, ", Lang::Ru);
+    h.tap(PhysKey::Pause);
+    assert_eq!(h.text(), "Ну pyfti? ");
+    // Right after the space the word before it is converted, as before.
+    let mut h = Harness::new(Lang::Ru);
+    h.type_as("Ну знаеш ", Lang::Ru);
+    h.tap(PhysKey::Pause);
+    assert_eq!(h.text(), "Ну pyfti ");
+
+    // A symbol right after the space belongs to the next chunk.
+    let mut h = Harness::new(Lang::Ru);
+    h.type_as("z @Vova2026", Lang::En);
+    assert_eq!(h.text(), "я \"Мщмф2026");
+    h.tap(PhysKey::Pause);
+    assert_eq!(h.text(), "я @Vova2026");
+}
+
+/// After a long pause, a click or another window the typed word is no longer
+/// known; Break then selects the word left of the caret and converts it.
+#[test]
+fn break_without_a_tracked_word_converts_the_word_left_of_the_caret() {
+    let mut h = Harness::new(Lang::En);
+    h.type_as("ghbd", Lang::En);
+    let later = Instant::now() + Duration::from_secs(31);
+    h.key_at(PhysKey::Pause, true, later);
+    h.key_at(PhysKey::Pause, false, later);
+    assert_eq!(h.text(), "прив");
+    assert_eq!(h.layout(), Lang::Ru);
+    assert_eq!(
+        h.desktop.lock().clipboard,
+        None,
+        "the clipboard is restored"
+    );
+
+    let mut h = Harness::with_config(Lang::En, config_with(|c| c.general.autoswitch = false));
+    h.type_as("ghbdtn rfr ltkf ", Lang::En);
+    h.events
+        .extend(h.processor.handle_input(InputEvent::MouseButton {
+            time: Instant::now(),
+            in_own_window: false,
+        }));
+    h.tap(PhysKey::Pause);
+    assert_eq!(h.text(), "ghbdtn rfr дела ");
+    h.tap(PhysKey::Pause);
+    assert_eq!(h.text(), "ghbdtn rfr ltkf ", "and back again");
+
+    // Terminals select differently: nothing happens there.
+    let mut h = Harness::new(Lang::En);
+    h.desktop.lock().terminal = true;
+    h.type_as("ghbd", Lang::En);
+    h.events
+        .extend(h.processor.handle_input(InputEvent::MouseButton {
+            time: Instant::now(),
+            in_own_window: false,
+        }));
+    h.tap(PhysKey::Pause);
+    assert_eq!(h.text(), "ghbd");
+}
+
+#[test]
+fn passwords_typed_in_the_russian_layout_become_english() {
+    for password in [
+        "BigVova#$",
+        "Tnone21$",
+        "StartToGo@11Go",
+        "P@ssw0rd",
+        "Qwerty123!",
+        "1q2w3e4R",
+    ] {
+        let mut h = Harness::with_config(Lang::Ru, passwords_config());
+        h.type_as(&format!("{password} "), Lang::En);
+        assert_eq!(h.text(), format!("{password} "), "{password}");
+        assert_eq!(h.layout(), Lang::En);
+        assert_eq!(h.conversions(), [ConversionKind::Automatic]);
+        h.tap(PhysKey::Pause);
+        assert_ne!(h.text(), format!("{password} "), "Break puts it back");
+    }
+}
+
+#[test]
+fn passwords_stay_as_typed_unless_recognition_is_on() {
+    let mut h = Harness::with_config(
+        Lang::Ru,
+        config_with(|c| c.general.passwords_to_english = false),
+    );
+    h.type_as("BigVova#$ ", Lang::En);
+    assert_eq!(h.text(), "ИшпМщмф№; ");
+    assert_eq!(h.layout(), Lang::Ru);
+}
+
+#[test]
+fn russian_words_with_digits_stay_russian() {
+    let mut h = Harness::with_config(Lang::Ru, passwords_config());
+    h.type_as("Москва2026! Шпаковский, Кот_Мурзик_7 ", Lang::Ru);
+    assert_eq!(h.text(), "Москва2026! Шпаковский, Кот_Мурзик_7 ");
+    assert_eq!(h.layout(), Lang::Ru);
+}
+
+/// Enter and Tab after a password wait until it is corrected: a login form
+/// is never submitted with the Russian letters.
+#[test]
+fn a_password_is_corrected_before_enter_or_tab_reaches_the_application() {
+    let mut h = Harness::with_config(Lang::Ru, passwords_config());
+    h.desktop.lock().terminal = true;
+    h.enable_gate();
+    h.type_as("BigVova#$", Lang::En);
+    h.tap(PhysKey::Enter);
+    assert_eq!(h.desktop.lock().submitted_lines, ["BigVova#$"]);
+    assert_eq!(h.desktop.lock().enter_count, 1);
+
+    let mut h = Harness::with_config(Lang::Ru, passwords_config());
+    h.enable_gate();
+    h.type_as("BigVova#$", Lang::En);
+    h.tap(PhysKey::Tab);
+    assert_eq!(h.text(), "BigVova#$\t");
+    assert_eq!(h.desktop.lock().tab_count, 1);
+
+    // Without the option Tab is not held back after symbols.
+    let mut h = Harness::with_config(
+        Lang::Ru,
+        config_with(|c| c.general.passwords_to_english = false),
+    );
+    h.enable_gate();
+    h.type_as("BigVova#$", Lang::En);
+    h.tap(PhysKey::Tab);
+    assert_eq!(h.text(), "ИшпМщмф№;\t");
+}
+
+#[test]
+fn a_password_field_gets_the_english_layout_from_the_first_character() {
+    for gate in [false, true] {
+        let mut h = Harness::with_config(Lang::Ru, passwords_config());
+        if gate {
+            h.enable_gate();
+        }
+        h.desktop.lock().password = true;
+        h.type_as("BigVova#$", Lang::En);
+        assert_eq!(h.text(), "BigVova#$", "gate: {gate}");
+        assert_eq!(h.layout(), Lang::En);
+    }
+    // Without the option the field is left alone, as before.
+    let mut h = Harness::with_config(
+        Lang::Ru,
+        config_with(|c| c.general.passwords_to_english = false),
+    );
+    h.desktop.lock().password = true;
+    h.type_as("BigVova#$", Lang::En);
+    assert_eq!(h.text(), "ИшпМщмф№;");
+}
+
+/// The fallback of Break replaces a single word only: in a table outside
+/// the cell editor Ctrl+Shift+Left selects cells, which are left alone.
+#[test]
+fn break_fallback_accepts_one_word_only() {
+    use crate::processor::one_word;
+    for word in ["ghbdtn", "ghbdtn ", "ghbdtn\r\n", "@Vova2026"] {
+        assert!(one_word(word), "{word:?}");
+    }
+    for text in [
+        "",
+        " ",
+        "a\tb\r\n",
+        "two words",
+        "line\nbreak",
+        &"x".repeat(65),
+    ] {
+        assert!(!one_word(text), "{text:?}");
+    }
+}
+
+/// The settings of the user's report: typed spelling, improved switching,
+/// password recognition and the input gate.
+fn reported_config() -> Config {
+    config_with(|c| {
+        c.general.passwords_to_english = true;
+        c.rules_options.improve_switching = true;
+        c.rules_options.extra_rules = true;
+        c.spellcheck.check_typed_words = true;
+        c.spellcheck.typed_mode = okbs_core::config::TypedSpellcheckMode::Auto;
+    })
+}
+
+#[test]
+fn break_after_a_dot_typed_after_the_space_converts_only_the_dot() {
+    for text in [
+        "И что ну ты знаеш .",
+        "Ну знаеш .",
+        "Нет Ну зневш .",
+        "Ну знаеш . ",
+        "Ну знаеш .  ",
+    ] {
+        let mut h = Harness::with_config(Lang::Ru, reported_config());
+        h.enable_gate();
+        h.type_as(text, Lang::Ru);
+        assert_eq!(h.text(), text);
+        h.tap(PhysKey::Pause);
+        assert_eq!(h.text(), text.replace('.', "/"), "{text}");
+    }
 }

@@ -17,6 +17,7 @@ pub mod lang;
 pub mod layouts;
 pub mod lm;
 pub mod numwords;
+pub mod password;
 pub mod rules;
 #[cfg(feature = "builtin-data")]
 mod short_words;
