@@ -3,14 +3,38 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore: ['**/*.md', 'docs/**', 'LICENSE*']
   pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore: ['**/*.md', 'docs/**', 'LICENSE*']
+  workflow_dispatch:
+    inputs:
+      full:
+        description: 'Run the full validation before a release or merge'
+        type: boolean
+        default: true
+  workflow_call:
+    inputs:
+      full:
+        type: boolean
+        default: true
 
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   fmt:
+    timeout-minutes: 30
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: rustfmt
     runs-on: ubuntu-latest
     steps:
@@ -21,6 +45,9 @@ jobs:
       - run: cargo fmt --all --check
 
   test:
+    timeout-minutes: 30
+    if: (github.event_name == 'pull_request' && !github.event.pull_request.draft) || inputs.full
+    needs: fmt
     name: clippy + test (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -44,6 +71,9 @@ jobs:
         run: cargo run -q -p okbswitch -- --diagnose || true
 
   deny:
+    timeout-minutes: 30
+    if: (github.event_name == 'pull_request' && !github.event.pull_request.draft) || inputs.full
+    needs: fmt
     name: cargo-deny
     runs-on: ubuntu-latest
     steps:
