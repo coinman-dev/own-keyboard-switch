@@ -100,15 +100,16 @@ jobs:
           name: windows-release
           path: target/dist/*
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 3
       - uses: actions/upload-artifact@v4
         with:
           name: release-notes
           path: target/notes/release-notes.md
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 3
 
   publish:
+    timeout-minutes: 5
     if: github.event_name != 'workflow_dispatch' || !inputs.dry_run
     needs: windows
     runs-on: ubuntu-latest
