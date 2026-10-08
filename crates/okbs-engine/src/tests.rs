@@ -1098,13 +1098,13 @@ fn improvement_never_uses_an_older_word_or_another_input_location() {
 }
 
 #[test]
-fn improvement_preserves_legacy_single_letter_context() {
+fn plan_exception_does_not_reach_past_an_unknown_word() {
     let mut baseline = Harness::new(Lang::En);
     let mut improved = Harness::with_config(Lang::En, improved_config());
     for h in [&mut baseline, &mut improved] {
         h.type_as("plan qwerty b ", Lang::En);
     }
-    assert_eq!(baseline.text(), "plan qwerty b ");
+    assert_eq!(baseline.text(), "plan qwerty и ");
     assert_eq!(improved.text(), baseline.text());
     assert_eq!(improved.layout(), baseline.layout());
 }
@@ -1295,6 +1295,161 @@ fn stray_letter_in_english_text_stays() {
     h.type_as("plan b is fine ", Lang::En);
     assert_eq!(h.text(), "plan b is fine ");
     assert!(h.conversions().is_empty());
+}
+
+#[test]
+fn russian_conjunction_after_an_english_name_switches_and_is_undoable() {
+    let mut h = Harness::new(Lang::En);
+    h.type_as("windows ", Lang::En);
+    h.type_as("и ", Lang::Ru);
+    assert_eq!(h.text(), "windows и ");
+    h.tap(PhysKey::Pause);
+    assert_eq!(h.text(), "windows b ");
+    h.tap(PhysKey::Pause);
+    assert_eq!(h.text(), "windows и ");
+    h.type_as("linux ", Lang::En);
+    assert_eq!(h.text(), "windows и linux ");
+    assert_eq!(h.layout(), Lang::En);
+}
+
+#[test]
+fn english_b_stays_only_immediately_after_plan() {
+    for initial in [Lang::En, Lang::Ru] {
+        for gated in [false, true] {
+            for (separator, ending) in [(PhysKey::Space, " "), (PhysKey::Enter, "\n")] {
+                for (prefix, letter, expected, language) in [
+                    ("plan ", "b", "b", Lang::En),
+                    ("Plan ", "B", "B", Lang::En),
+                    ("PLAN ", "b", "b", Lang::En),
+                    ("plan  ", "b", "b", Lang::En),
+                    ("plan, ", "b", "и", Lang::Ru),
+                    ("Github ", "b", "и", Lang::Ru),
+                    ("GitHub ", "B", "И", Lang::Ru),
+                    ("windows ", "b", "и", Lang::Ru),
+                    ("linux ", "b", "и", Lang::Ru),
+                    ("hello ", "b", "и", Lang::Ru),
+                    ("planet ", "b", "и", Lang::Ru),
+                    ("plan Github ", "b", "и", Lang::Ru),
+                    ("plan\n", "b", "и", Lang::Ru),
+                    ("", "b", "и", Lang::Ru),
+                ] {
+                    let mut h = Harness::new(initial);
+                    if gated {
+                        h.enable_gate();
+                    }
+                    h.type_as(prefix, Lang::En);
+                    h.type_as(letter, Lang::En);
+                    h.tap(separator);
+                    assert_eq!(
+                        h.text(),
+                        format!("{prefix}{expected}{ending}"),
+                        "initial={initial:?}, gated={gated}, prefix={prefix:?}"
+                    );
+                    assert_eq!(h.layout(), language, "{prefix:?}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn plan_exception_expires_when_the_input_location_changes() {
+    for action in 0..4 {
+        let mut h = Harness::new(Lang::En);
+        h.type_as("plan ", Lang::En);
+        match action {
+            0 => h.tap(PhysKey::ArrowRight),
+            1 => {
+                h.processor
+                    .handle_focus(&okbs_platform::FocusEvent::WindowChanged(None));
+            }
+            2 => {
+                h.events
+                    .extend(h.processor.handle_input(InputEvent::MouseButton {
+                        time: Instant::now(),
+                        in_own_window: false,
+                    }));
+            }
+            _ => h.tap(PhysKey::Tab),
+        }
+        let prefix = h.text();
+        h.type_as("b ", Lang::En);
+        assert_eq!(h.text(), format!("{prefix}и "), "action {action}");
+        assert_eq!(h.layout(), Lang::Ru);
+    }
+}
+
+#[test]
+fn technical_names_switch_at_word_boundaries_and_can_be_undone() {
+    for gated in [false, true] {
+        for (separator, ending) in [(PhysKey::Space, " "), (PhysKey::Enter, "\n")] {
+            for word in [
+                "Github",
+                "GitHub",
+                "windows",
+                "Windows",
+                "linux",
+                "Linux",
+                "GitLab",
+                "JavaScript",
+                "TypeScript",
+                "PostgreSQL",
+                "MySQL",
+                "NodeJS",
+                "VSCode",
+                "PowerShell",
+                "macOS",
+                "iOS",
+                "Kubernetes",
+                "npm",
+                "API",
+                "GraphQL",
+                "gRPC",
+                "PyTorch",
+                "GitHubActions",
+                "GITHUB",
+                "BITBUCKET",
+                "ELASTICSEARCH",
+                "FEDORA",
+                "JENKINS",
+            ] {
+                let mut h = Harness::new(Lang::Ru);
+                if gated {
+                    h.enable_gate();
+                }
+                h.type_as("ура ", Lang::Ru);
+                h.type_as(word, Lang::En);
+                let before = h.text();
+                assert_eq!(h.layout(), Lang::Ru, "no early switch: {word}");
+                h.tap(separator);
+                assert_eq!(
+                    h.text(),
+                    format!("ура {word}{ending}"),
+                    "{word}, gated={gated}, separator={separator:?}"
+                );
+                assert_eq!(h.layout(), Lang::En, "{word}");
+                assert_eq!(h.conversions(), vec![ConversionKind::Automatic], "{word}");
+                h.tap(PhysKey::Pause);
+                assert_eq!(h.text(), format!("{before}{ending}"), "undo {word}");
+                assert_eq!(h.layout(), Lang::Ru, "undo {word}");
+            }
+        }
+    }
+}
+
+#[test]
+fn technical_names_obey_autoswitch_and_password_field_protection() {
+    for password in [false, true] {
+        let mut config = Config::default();
+        config.general.passwords_to_english = false;
+        config.general.autoswitch = password;
+        let mut h = Harness::with_config(Lang::Ru, config);
+        h.desktop.lock().password = password;
+        h.type_as("GitHub ", Lang::En);
+        assert_eq!(h.text(), "ПшеРги ");
+        assert_eq!(h.layout(), Lang::Ru);
+        assert!(h.conversions().is_empty());
+    }
 }
 
 #[test]

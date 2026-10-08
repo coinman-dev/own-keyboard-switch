@@ -51,7 +51,7 @@ pub struct DetectorOptions {
     pub min_word_len: u32,
     /// `-1.0` (cautious) ..= `1.0` (eager).
     pub sensitivity: f32,
-    /// Never convert words with digits or mixed case.
+    /// Protect digits and mixed case, except exact known technical names.
     pub password_heuristic: bool,
     /// Convert words typed in capitals.
     pub fix_abbreviations: bool,
@@ -238,7 +238,7 @@ pub struct Reading {
     pub valid: bool,
     /// Capitalization of the core.
     pub case: CasePattern,
-    /// Found in the dictionary.
+    /// Found in the spelling dictionary or the built-in technical vocabulary.
     pub in_dictionary: bool,
     /// Frequency rank of the lowercase core.
     pub rank: Option<u32>,
@@ -402,6 +402,10 @@ impl Detector {
     }
 
     fn in_dictionary(&self, lang: Lang, core: &str) -> bool {
+        #[cfg(feature = "builtin-data")]
+        if lang == Lang::En && crate::technical_words::contains(core) {
+            return true;
+        }
         let case = case_pattern(core);
         let lower = core.to_lowercase();
         let checked = match case {
@@ -484,11 +488,25 @@ impl Detector {
         context: Option<Lang>,
         previous_word: Option<Lang>,
     ) -> Analysis {
+        self.analyze_with_word_context(keys, current, context, previous_word, false)
+    }
+
+    /// Adds the exact `plan b` exception to the word-language context.
+    /// `after_plan` means the immediately preceding word was English `plan`,
+    /// separated from this word only by spaces in the same input location.
+    pub fn analyze_with_word_context(
+        &self,
+        keys: &[KeyPress],
+        current: Lang,
+        context: Option<Lang>,
+        previous_word: Option<Lang>,
+        after_plan: bool,
+    ) -> Analysis {
         #[cfg(not(feature = "builtin-data"))]
         let _ = previous_word;
         let cur = self.read(current, keys);
         let alt = self.read(current.other(), keys);
-        let decision = self.judge(&cur, &alt, context);
+        let decision = self.judge(&cur, &alt, context, after_plan);
         #[cfg(feature = "builtin-data")]
         let decision = self.improve(&cur, &alt, previous_word, decision);
         Analysis {
@@ -556,7 +574,12 @@ impl Detector {
     }
 
     /// One-letter words: `z` → `я`, `ш` → `i`, but `я` and `a` stay.
-    fn judge_single_letter(cur: &Reading, alt: &Reading, context: Option<Lang>) -> Decision {
+    fn judge_single_letter(
+        cur: &Reading,
+        alt: &Reading,
+        context: Option<Lang>,
+        after_plan: bool,
+    ) -> Decision {
         let is_word = |r: &Reading| {
             let mut chars = r.core.chars();
             r.valid
@@ -569,8 +592,14 @@ impl Detector {
         if !is_word(alt) || alt.text.chars().count() != 1 {
             return Decision::Stay(StayReason::TooShort);
         }
-        // Stray Latin letters are common in English text ("plan b", "vitamin c").
-        if cur.lang == Lang::En && context == Some(Lang::En) {
+        // b means Russian и except in the exact phrase "plan b". Other Latin
+        // letters retain their English-context protection (e.g. "vitamin c").
+        let keep_english = if cur.core.eq_ignore_ascii_case("b") {
+            after_plan
+        } else {
+            context == Some(Lang::En)
+        };
+        if cur.lang == Lang::En && keep_english {
             return Decision::Stay(StayReason::NotConfident);
         }
         Self::switch(alt, SwitchReason::Dictionary)
@@ -585,6 +614,20 @@ impl Detector {
     }
 
     fn rare_word_yields(&self, cur: &Reading, alt: &Reading) -> bool {
+        // Added case-insensitive brand spellings must not hide a dictionary
+        // acronym in the other layout: VUE is also the wrong-layout МГУ.
+        #[cfg(feature = "builtin-data")]
+        if cur.lang == Lang::En
+            && cur.case == CasePattern::Upper
+            && crate::technical_words::contains(&cur.core)
+            && !self.lexicon.is_word(cur.lang, &cur.core)
+            && alt.valid
+            && alt.case == CasePattern::Upper
+            && alt.score.letters >= self.options.min_word_len.max(3)
+            && self.is_abbreviation(alt.lang, &alt.core)
+        {
+            return true;
+        }
         alt.valid
             && alt.score.letters >= self.options.min_word_len.max(2)
             && alt.in_dictionary
@@ -594,7 +637,13 @@ impl Detector {
             && alt.rank.is_some_and(|other| other < DOMINANT_RANK)
     }
 
-    fn judge(&self, cur: &Reading, alt: &Reading, context: Option<Lang>) -> Decision {
+    fn judge(
+        &self,
+        cur: &Reading,
+        alt: &Reading,
+        context: Option<Lang>,
+        after_plan: bool,
+    ) -> Decision {
         let letters = cur.score.letters.max(alt.score.letters);
         if letters == 0 {
             return Decision::Stay(StayReason::TooShort);
@@ -610,13 +659,28 @@ impl Detector {
         }
 
         if letters == 1 && self.options.min_word_len <= 1 {
-            return Self::judge_single_letter(cur, alt, context);
+            return Self::judge_single_letter(cur, alt, context, after_plan);
         }
         if letters < self.options.min_word_len.max(1) {
             return Decision::Stay(StayReason::TooShort);
         }
 
-        if self.options.password_heuristic && cur.valid && cur.case == CasePattern::Mixed {
+        // Only an exact technical target can bypass mixed-case protection.
+        // Unknown identifiers and passwords still retain the existing filters.
+        #[cfg(feature = "builtin-data")]
+        let technical_target = alt.lang == Lang::En
+            && alt.valid
+            && alt.score.letters >= self.options.min_word_len.max(2)
+            && crate::technical_words::contains(&alt.core)
+            && !cur.known()
+            && !cur.known_lenient;
+        #[cfg(not(feature = "builtin-data"))]
+        let technical_target = false;
+        if self.options.password_heuristic
+            && cur.valid
+            && cur.case == CasePattern::Mixed
+            && !technical_target
+        {
             return Decision::Stay(StayReason::MixedCase);
         }
         if !self.options.fix_abbreviations && cur.case == CasePattern::Upper {
@@ -634,7 +698,9 @@ impl Detector {
             // diagnostic evidence only and must not suppress our dictionary.
             // Keep the established rare-word arbitration too: dictionary «шт»
             // must still yield to the very frequent English word `in`.
-            let protected = (cur.known() || cur.known_lenient || cur.case == CasePattern::Upper)
+            let protected = (cur.known()
+                || cur.known_lenient
+                || (cur.case == CasePattern::Upper && !technical_target))
                 && !self.rare_word_yields(cur, alt);
             match extra_rules::resolve(current, alternative, false) {
                 RuleVerdict::Stay if protected => return Decision::Stay(StayReason::ExtraRule),
@@ -667,6 +733,9 @@ impl Detector {
             if !self.rare_word_yields(cur, alt) {
                 return Decision::Stay(StayReason::KnownWord);
             }
+            return Self::switch(alt, SwitchReason::Dictionary);
+        }
+        if technical_target {
             return Self::switch(alt, SwitchReason::Dictionary);
         }
         if !alt.valid || (self.options.password_heuristic && alt.case == CasePattern::Mixed) {
@@ -960,7 +1029,19 @@ mod tests {
         );
         assert_eq!(
             det.analyze(&keys("b", Lang::En), Lang::En, Some(Lang::En))
-                .decision,
+                .decision
+                .switch_to(),
+            Some(Lang::Ru)
+        );
+        assert_eq!(
+            det.analyze_with_word_context(
+                &keys("b", Lang::En),
+                Lang::En,
+                Some(Lang::En),
+                Some(Lang::En),
+                true,
+            )
+            .decision,
             Decision::Stay(StayReason::NotConfident)
         );
         assert_eq!(

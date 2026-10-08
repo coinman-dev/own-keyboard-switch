@@ -22,6 +22,8 @@ pub mod rules;
 #[cfg(feature = "builtin-data")]
 mod short_words;
 pub mod spell;
+#[cfg(feature = "builtin-data")]
+mod technical_words;
 pub mod text;
 pub mod translit;
 pub mod typo;

@@ -330,6 +330,8 @@ pub struct Processor {
     word: Vec<KeyPress>,
     word_lang: Option<Lang>,
     word_blocked: bool,
+    /// The word directly follows English `plan` with only spaces between.
+    word_after_plan: bool,
     /// The word follows the previous one without a space (`site.com`,
     /// `C:\dir`, `user@mail`): part of an address, path or code.
     word_glued: bool,
@@ -408,6 +410,7 @@ impl Processor {
             word: Vec::new(),
             word_lang: None,
             word_blocked: false,
+            word_after_plan: false,
             word_glued: false,
             word_prefix: Vec::new(),
             block_next_word: false,
@@ -562,6 +565,7 @@ impl Processor {
         self.word_prefix.clear();
         self.word_lang = None;
         self.word_blocked = false;
+        self.word_after_plan = false;
     }
 
     fn reset_all(&mut self) {
@@ -1462,6 +1466,14 @@ impl Processor {
 
     fn push_word_key(&mut self, press: KeyPress) {
         if self.word.is_empty() {
+            self.word_after_plan = self.last.as_ref().is_some_and(|last| {
+                last.shown_in() == Lang::En
+                    && last.prefix.is_empty()
+                    && !last.separator.is_empty()
+                    && last.separator.iter().all(|key| key.key == PhysKey::Space)
+                    && layouts::render(&last.keys, self.detector.keymap(Lang::En))
+                        .eq_ignore_ascii_case("plan")
+            });
             self.word_glued = self.last.as_ref().is_some_and(|last| {
                 !last.separator.is_empty()
                     && !last.separator.iter().any(|separator| {
@@ -1680,6 +1692,7 @@ impl Processor {
         }
         let keys = std::mem::take(&mut self.word);
         let prefix = std::mem::take(&mut self.word_prefix);
+        let after_plan = std::mem::take(&mut self.word_after_plan);
         let typed_in = self.word_lang.take();
         let blocked = std::mem::take(&mut self.word_blocked);
         let Some(typed_in) = typed_in else {
@@ -1725,11 +1738,12 @@ impl Processor {
         } else {
             self.previous_word
         };
-        let analysis = self.detector.analyze_with_previous_word(
+        let analysis = self.detector.analyze_with_word_context(
             &last.keys,
             typed_in,
             self.context,
             previous_word,
+            after_plan,
         );
         // Decision::Switch contains typed text. Log only non-text metadata.
         let (stay_reason, switch_reason) = match &analysis.decision {

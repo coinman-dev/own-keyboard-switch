@@ -2,6 +2,17 @@
 
 # Changelog
 
+## Unreleased
+
+- Switch English `b` to Russian `и` after any word except immediately after
+  English `plan`: `Github b` becomes `Github и`, while `plan b` stays English.
+  The exception ends at a line break, another word or a change of input location.
+
+- Recognise 436 English programming terms and software names when switching
+  layouts, including `Github`, `GitHub`, `TypeScript`, `Kubernetes` and `npm`.
+  Exact known names can use mixed case; user rules, password-field protection
+  and ambiguous Russian words retain their priority.
+
 ## 0.3.0-beta — 2026-10-01
 
 ### Added
