@@ -55,7 +55,19 @@ int main(int argc, char **argv)
     }
     puts("ready"); fflush(stdout);
     unsigned code, state;
-    while (scanf("%u %u", &code, &state) == 2) {
+    char line[128];
+    while (fgets(line, sizeof(line), stdin)) {
+        int x,y;
+        if (sscanf(line, "p %d %d", &x, &y)==2) {
+            alarm(5);
+            org_kde_kwin_fake_input_pointer_motion_absolute(keyboard,wl_fixed_from_int(x),wl_fixed_from_int(y));
+            org_kde_kwin_fake_input_button(keyboard,272,1);
+            org_kde_kwin_fake_input_button(keyboard,272,0);
+            if (wl_display_roundtrip(display)<0) return 1;
+            alarm(0);
+            printf("p %d %d\n",x,y); fflush(stdout); continue;
+        }
+        if (sscanf(line,"%u %u",&code,&state)!=2) return 1;
         if (code >= 768 || state > 1) return 1;
         alarm(5);
         org_kde_kwin_fake_input_keyboard_key(keyboard, code, state);

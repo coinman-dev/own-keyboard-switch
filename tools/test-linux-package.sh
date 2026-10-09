@@ -14,6 +14,7 @@ linux_paths=$(APPIMAGE_EXTRACT_AND_RUN=1 "$linux_image" --paths)
 [[ "$linux_paths" != *".mount"* ]]
 APPIMAGE_EXTRACT_AND_RUN=1 "$linux_image" --licenses >tmp/linux-package-licenses.log
 grep -q 'gtk 0.19.0' tmp/linux-package-licenses.log
+grep -q 'wl-clipboard-rs 0.9.4' tmp/linux-package-licenses.log
 grep -q 'PolyForm' tmp/linux-package-licenses.log
 [[ "$(dpkg-deb --field "$linux_deb" Package)" == okbswitch ]]
 [[ "$(dpkg-deb --field "$linux_deb" Architecture)" == amd64 ]]

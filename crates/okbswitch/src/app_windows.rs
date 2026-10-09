@@ -256,6 +256,7 @@ pub fn run(
         settings,
         engine,
         crate::controller::PlatformHooks {
+            popup_focus: None,
             settings_window: None,
             cursor_position: None,
             spelling_position: None,

@@ -436,6 +436,14 @@ impl KeyboardSource for LinuxSource {
                             },
                         };
                         if filter.gate.discard(event) {
+                            // The GUI received the original down event. Even
+                            // when repeats are suppressed, its compositor must
+                            // receive the release or the virtual key stays held.
+                            if value == 0
+                                && let Ok(mut output) = output.lock()
+                            {
+                                let _ = output.emit(code, value);
+                            }
                             continue;
                         }
                         let current = desktop.cached();

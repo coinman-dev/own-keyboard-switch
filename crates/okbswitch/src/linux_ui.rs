@@ -25,6 +25,7 @@ pub struct LinuxAutoreplaceUi {
     labels: AutoreplaceLabels,
     theme: Theme,
     target: Option<InputTarget>,
+    focus_list: bool,
 }
 impl LinuxAutoreplaceUi {
     pub fn new(
@@ -45,6 +46,7 @@ impl LinuxAutoreplaceUi {
             labels,
             theme,
             target: None,
+            focus_list: false,
         }
     }
     fn position(&self) -> [f32; 2] {
@@ -149,11 +151,31 @@ impl AutoreplaceUi for LinuxAutoreplaceUi {
                 ..Panel::default()
             })
         } else {
+            self.focus_list = true;
             self.list.show(self.list_config(), false, point);
             self.desktop.place_owned_window(&self.labels.title, point)
         }
     }
     fn poll(&mut self) -> Option<AutoreplaceInsertion> {
+        // Wayland does not guarantee that an explicit show request activates
+        // a newly mapped viewport. Restore keyboard navigation once our owned
+        // interactive picker exists; keep the original editor in self.target.
+        if self.focus_list
+            && self.list.is_visible()
+            && let Ok(Some(window)) = self.desktop.placed_window(&self.labels.title)
+        {
+            if self.desktop.cached().window != window.window {
+                if self
+                    .desktop
+                    .command("ActivateWindow", window.window)
+                    .is_ok()
+                {
+                    self.focus_list = false;
+                }
+            } else {
+                self.focus_list = false;
+            }
+        }
         let native = self
             .panels
             .poll("list")
@@ -167,11 +189,15 @@ impl AutoreplaceUi for LinuxAutoreplaceUi {
         if !self.settings.enabled {
             return None;
         }
-        self.gate.suppress_until_release(PhysKey::Enter);
+        self.gate
+            .suppress_held_own_key_until_release(PhysKey::Enter);
         let item = self.settings.items.get(index)?.clone();
         Some(AutoreplaceInsertion {
             item,
             target: self.target,
         })
+    }
+    fn poll_cancelled(&mut self) -> Option<InputTarget> {
+        self.list.poll_cancelled().then_some(self.target).flatten()
     }
 }

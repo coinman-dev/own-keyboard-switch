@@ -206,7 +206,12 @@ export default class OkbSwitchExtension extends Extension {
     TakePanelEvents() { const events = this._events; this._events = []; return JSON.stringify(events); }
     GetPanelGeometry(id) {
         const panel = this._panels.get(id);
-        return JSON.stringify({panel:panel ? {x:panel.x,y:panel.y,width:panel.width,height:panel.height} : null,
+        const rows = (panel?._rowButtons ?? []).map(button => {
+            const [x, y] = button.get_transformed_position();
+            const [width, height] = button.get_transformed_size();
+            return {x, y, width, height};
+        });
+        return JSON.stringify({panel:panel ? {x:panel.x,y:panel.y,width:panel.width,height:panel.height} : null, rows,
             monitors:Main.layoutManager.monitors.map((monitor, index) => ({x:monitor.x,y:monitor.y,
                 width:monitor.width,height:monitor.height,scale:global.display.get_monitor_scale(index)}))});
     }
@@ -232,10 +237,12 @@ export default class OkbSwitchExtension extends Extension {
         }
         if (model.text) panel.add_child(new St.Label({text: model.text}));
         const rows = new St.BoxLayout({vertical:true});
+        panel._rowButtons = [];
         for (const [index, row] of (model.rows ?? []).entries()) {
             const button = new St.Button({label: row, style_class: 'popup-menu-item', can_focus: false});
             button.connect('clicked', () => this._events.push({id:model.id, action:'insert', index}));
             rows.add_child(button);
+            panel._rowButtons.push(button);
         }
         if (model.rows?.length) {
             const scroll = new St.ScrollView({style:'max-height: 320px; min-width: 320px;'});

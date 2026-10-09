@@ -26,6 +26,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[cfg(all(test, target_os = "linux"))]
+#[path = "linux_picker_acceptance.rs"]
+mod linux_picker_acceptance;
+
 /// How long the icon stays amber after a possible typo.
 const ALERT: Duration = Duration::from_millis(1200);
 
@@ -231,6 +235,7 @@ pub type IndicatorFactory = Box<
 /// Platform services used by the controller.
 pub type PopupPosition = Box<dyn Fn(Option<InputTarget>) -> Option<[f32; 2]>>;
 pub type PopupPlacement = Box<dyn Fn(&str, [f32; 2]) -> okbs_platform::Result<()>>;
+pub type PopupFocus = Box<dyn Fn(&str) -> okbs_platform::Result<bool>>;
 #[derive(Default)]
 pub struct PlatformHooks {
     /// Reuse the first-run UI's event loop rather than creating a second one.
@@ -238,6 +243,8 @@ pub struct PlatformHooks {
     pub cursor_position: Option<Box<dyn Fn() -> [f32; 2]>>,
     pub spelling_position: Option<PopupPosition>,
     pub popup_placement: Option<PopupPlacement>,
+    /// Focus an explicitly opened picker once its owned viewport is mapped.
+    pub popup_focus: Option<PopupFocus>,
     pub autoreplace_ui: Option<AutoreplaceUiFactory>,
     /// Installed layouts, for the flag settings and the tray icon.
     pub list_layouts: Option<LayoutLister>,
@@ -294,6 +301,8 @@ pub struct Controller {
     history_entries: History,
     /// Application the entry picked in the history window goes back to.
     history_target: Option<InputTarget>,
+    history_focus: Option<String>,
+    popup_focus: Option<PopupFocus>,
     /// Set when the user confirmed a restart with administrator rights.
     restart_elevated: bool,
     file_dialogs: Option<Arc<dyn FileDialogs>>,
@@ -457,6 +466,8 @@ impl Controller {
             history,
             history_entries,
             history_target: None,
+            history_focus: None,
+            popup_focus: platform.popup_focus,
             restart_elevated: false,
             file_dialogs: platform.file_dialogs,
             system_settings: platform.system_settings,
@@ -565,6 +576,10 @@ impl Controller {
     fn show_history(&mut self, target: Option<InputTarget>) {
         self.history_target = target;
         let config = self.history_config();
+        self.history_focus = self
+            .popup_focus
+            .as_ref()
+            .map(|_| config.labels.title.clone());
         if let Some(history) = &self.history {
             let position = self
                 .cursor_position
@@ -1253,12 +1268,25 @@ impl Controller {
         while let Ok(event) = self.window_events.try_recv() {
             self.handle_window_event(event);
         }
+        if let Some(title) = &self.history_focus
+            && self
+                .history
+                .as_ref()
+                .is_some_and(|history| history.is_visible())
+            && let Some(focus) = &self.popup_focus
+            && matches!(focus(title), Ok(true))
+        {
+            self.history_focus = None;
+        }
         if let Some(popup) = &mut self.autoreplace_ui {
             while let Some(insertion) = popup.poll() {
                 self.engine.send(Command::InsertAutoreplace {
                     item: insertion.item,
                     target: insertion.target,
                 });
+            }
+            if let Some(target) = popup.poll_cancelled() {
+                self.engine.send(Command::RestoreInputTarget(target));
             }
         }
         let mut indicator_events = Vec::new();
@@ -1290,6 +1318,11 @@ impl Controller {
                     self.history_entries.clear();
                     self.persist_history();
                     self.configure_history();
+                }
+                HistoryChoice::Cancel => {
+                    if let Some(target) = self.history_target {
+                        self.engine.send(Command::RestoreInputTarget(target));
+                    }
                 }
             }
         }
@@ -1413,7 +1446,9 @@ impl Controller {
                 TrayCommand::ClipboardSpellcheck => {
                     self.engine.send(Command::SpellcheckClipboard);
                 }
-                TrayCommand::ClipboardHistory => self.show_history(None),
+                TrayCommand::ClipboardHistory => {
+                    self.engine.send(Command::ShowClipboardHistory);
+                }
                 TrayCommand::KeyboardSettings => {
                     if let Some(system) = &self.system_settings
                         && let Err(err) = system.open_keyboard_settings()

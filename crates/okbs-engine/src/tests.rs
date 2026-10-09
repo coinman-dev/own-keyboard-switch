@@ -20,6 +20,68 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+#[test]
+fn cancelled_picker_restores_its_editor_without_stealing_another_application() {
+    let h = Harness::with_config(Lang::En, Config::default());
+    let target = FakeFocus(h.desktop.clone())
+        .input_target()
+        .unwrap()
+        .unwrap();
+    h.desktop.lock().window_pid = std::process::id();
+    assert!(h.processor.restore_input_target(target).is_empty());
+    assert_eq!(h.desktop.lock().window_pid, target.window as u32);
+    h.desktop.lock().window_pid = 2;
+    assert!(h.processor.restore_input_target(target).is_empty());
+    assert_eq!(h.desktop.lock().window_pid, 2);
+}
+
+#[test]
+fn picker_capture_failure_cannot_fall_back_to_a_remembered_field() {
+    let mut h = Harness::with_config(Lang::En, Config::default());
+    assert!(
+        h.processor
+            .clipboard_history()
+            .iter()
+            .any(|event| matches!(event, Event::ClipboardHistory { target: Some(_) }))
+    );
+    h.desktop.lock().fail_picker_capture = true;
+    for events in [
+        h.processor.clipboard_history(),
+        h.processor.autoreplace_list(false),
+        h.processor.autoreplace_list(true),
+    ] {
+        assert!(events.iter().any(|event| matches!(event, Event::Error(_))));
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            Event::ClipboardHistory { .. } | Event::AutoreplaceList { .. }
+        )));
+    }
+    let fresh = InputTarget {
+        window: 1,
+        control: 2,
+    };
+    {
+        let mut d = h.desktop.lock();
+        d.fail_picker_capture = false;
+        d.picker_target = Some(fresh);
+    }
+    assert!(
+        h.processor
+            .clipboard_history()
+            .contains(&Event::ClipboardHistory {
+                target: Some(fresh)
+            })
+    );
+    assert!(
+        h.processor
+            .autoreplace_list(false)
+            .contains(&Event::AutoreplaceList {
+                toggle: false,
+                target: Some(fresh)
+            })
+    );
+}
+
 #[derive(Debug)]
 struct Desktop {
     text: Vec<char>,
@@ -42,6 +104,8 @@ struct Desktop {
     fail_clipboard_write: bool,
     copy_during_paste: Option<String>,
     fail_layout: bool,
+    fail_picker_capture: bool,
+    picker_target: Option<InputTarget>,
     focus_change_on_layout: bool,
     enter_count: usize,
     terminal: bool,
@@ -75,6 +139,8 @@ impl Desktop {
             fail_clipboard_write: false,
             copy_during_paste: None,
             fail_layout: false,
+            fail_picker_capture: false,
+            picker_target: None,
             focus_change_on_layout: false,
             enter_count: 0,
             terminal: false,
@@ -257,6 +323,17 @@ impl LayoutManager for FakeLayouts {
 
 struct FakeFocus(Shared);
 impl FocusInfo for FakeFocus {
+    fn capture_input_target(&self) -> Result<Option<InputTarget>> {
+        let d = self.0.lock();
+        if d.fail_picker_capture {
+            return Err(PlatformError::Other("field metadata unavailable".into()));
+        }
+        if let Some(target) = d.picker_target {
+            return Ok(Some(target));
+        }
+        drop(d);
+        self.input_target()
+    }
     fn is_terminal(&self) -> Result<bool> {
         Ok(self.0.lock().terminal)
     }
@@ -3278,6 +3355,56 @@ fn picker_confirmation_does_not_repeat_in_the_restored_editor() {
     assert_eq!(h.desktop.lock().enter_count, 0);
     h.tap(PhysKey::Enter);
     assert_eq!(h.desktop.lock().enter_count, 1);
+}
+
+#[test]
+fn asynchronously_polled_picker_only_suppresses_a_still_held_confirmation() {
+    let mut h = gated_autoreplace(okbs_core::config::AutoReplaceTrigger::Tooltip, Lang::En);
+    let gate = h.gate.as_ref().unwrap().clone();
+    gate.suppress_held_own_key_until_release(PhysKey::Enter);
+    h.tap(PhysKey::Enter);
+    assert_eq!(
+        h.desktop.lock().enter_count,
+        1,
+        "pointer selection ate the next Enter"
+    );
+    let press = InputEvent::Key {
+        key: PhysKey::NumpadEnter,
+        pressed: true,
+        repeat: false,
+        injected: false,
+        time: Instant::now(),
+    };
+    gate.observe_own_window(press, None);
+    gate.suppress_held_own_key_until_release(PhysKey::Enter);
+    for _ in 0..3 {
+        let event = h.source_event(PhysKey::NumpadEnter, true, true, Instant::now());
+        h.processor.handle_input(event);
+    }
+    h.key(PhysKey::NumpadEnter, false);
+    assert_eq!(
+        h.desktop.lock().enter_count,
+        1,
+        "held picker confirmation repeated"
+    );
+    gate.observe_own_window(press, None);
+    gate.observe_own_window(
+        InputEvent::Key {
+            key: PhysKey::NumpadEnter,
+            pressed: false,
+            repeat: false,
+            injected: false,
+            time: Instant::now(),
+        },
+        None,
+    );
+    gate.suppress_held_own_key_until_release(PhysKey::Enter);
+    h.tap(PhysKey::NumpadEnter);
+    assert_eq!(
+        h.desktop.lock().enter_count,
+        2,
+        "already released picker confirmation ate a new press"
+    );
 }
 
 #[test]

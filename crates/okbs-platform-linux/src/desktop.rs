@@ -333,6 +333,21 @@ impl LinuxDesktop {
         .map_err(error)?;
         proxy.call::<_, _, ()>(method, &(data,)).map_err(error)
     }
+    pub(crate) fn gnome_panel_geometry(&self, id: &str) -> Result<serde_json::Value> {
+        let backend = self.backend.lock().map_err(error)?;
+        let Backend::Gnome(bus) = &*backend else {
+            return Err(error("GNOME panel service is unavailable"));
+        };
+        let proxy = zbus::blocking::Proxy::new(
+            bus,
+            "org.own_keyboard_switch.Gnome",
+            "/org/own_keyboard_switch/Gnome",
+            "org.own_keyboard_switch.Gnome",
+        )
+        .map_err(error)?;
+        let geometry: String = proxy.call("GetPanelGeometry", &(id,)).map_err(error)?;
+        serde_json::from_str(&geometry).map_err(error)
+    }
     pub fn gnome_events(&self) -> Result<Vec<crate::panels::PanelEvent>> {
         let backend = self.backend.lock().map_err(error)?;
         let Backend::Gnome(bus) = &*backend else {
@@ -620,6 +635,44 @@ impl LinuxDesktop {
         }
     }
 }
+fn capture_picker_target(
+    initial: Snapshot,
+    timeout: Duration,
+    mut refresh: impl FnMut() -> Result<Snapshot>,
+    identified_editor: impl Fn(u64, u32) -> bool,
+) -> Result<Option<InputTarget>> {
+    if initial.window == 0 || initial.locked || initial.session_inactive {
+        return Err(error("no active unlocked editor for picker"));
+    }
+    let identity = (initial.window, initial.pid);
+    let deadline = Instant::now() + timeout;
+    let mut current = initial;
+    loop {
+        if (current.window, current.pid) != identity || current.locked || current.session_inactive {
+            return Err(error("active window changed while capturing picker target"));
+        }
+        if current.control != 0 {
+            return Ok(Some(InputTarget {
+                window: current.window,
+                control: current.control,
+            }));
+        }
+        if Instant::now() >= deadline {
+            // Preserve the window-only fallback for toolkits without a field
+            // identity. A previously identified editor must recover a fresh
+            // identity instead of silently weakening cross-field protection.
+            if identified_editor(identity.0, identity.1) {
+                return Err(error("editor field is temporarily unavailable"));
+            }
+            return Ok(Some(InputTarget {
+                window: current.window,
+                control: 0,
+            }));
+        }
+        std::thread::sleep(Duration::from_millis(10));
+        current = refresh()?;
+    }
+}
 fn fallback_popup_position(cursor: [i32; 2], client: [i32; 4], frame: [i32; 4]) -> [i32; 2] {
     let area = if client[2] > 0 && client[3] > 0 {
         client
@@ -771,6 +824,22 @@ impl FocusInfo for LinuxDesktop {
     }
     fn input_target(&self) -> Result<Option<InputTarget>> {
         Ok(self.target())
+    }
+    fn capture_input_target(&self) -> Result<Option<InputTarget>> {
+        let initial = self.refresh()?;
+        tracing::debug!(target: "okbs_input", window=initial.window, pid=initial.pid, control=initial.control,
+            known=self.accessibility.identified_editor(initial.window, initial.pid), "capturing picker target");
+        if initial.pid == std::process::id() {
+            return Ok(None);
+        }
+        let result = capture_picker_target(
+            initial,
+            Duration::from_millis(300),
+            || self.refresh(),
+            |window, pid| self.accessibility.identified_editor(window, pid),
+        );
+        tracing::debug!(target: "okbs_input", ?result, "picker target captured");
+        result
     }
     fn activate_target(&self, target: InputTarget) -> Result<()> {
         self.command("ActivateWindow", target.window)?;
@@ -1098,7 +1167,120 @@ pub fn serve_kde_bridge() -> Result<BridgeConnection> {
 }
 
 #[cfg(test)]
+#[path = "picker_capture_acceptance.rs"]
+mod picker_capture_acceptance;
+#[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn picker_capture_recovers_a_fresh_field_without_remembering_the_previous_one() {
+        let initial = Snapshot {
+            window: 1,
+            pid: 2,
+            ..Snapshot::default()
+        };
+        let fresh = Snapshot {
+            control: 22,
+            ..initial.clone()
+        };
+        let target = capture_picker_target(
+            initial,
+            Duration::from_millis(50),
+            || Ok(fresh.clone()),
+            |_, _| true,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!((target.window, target.control), (1, 22));
+    }
+
+    #[test]
+    fn picker_capture_aborts_on_window_process_lock_and_seat_changes() {
+        let initial = Snapshot {
+            window: 1,
+            pid: 2,
+            ..Snapshot::default()
+        };
+        for changed in [
+            Snapshot {
+                window: 3,
+                control: 22,
+                ..initial.clone()
+            },
+            Snapshot {
+                pid: 3,
+                control: 22,
+                ..initial.clone()
+            },
+            Snapshot {
+                locked: true,
+                control: 22,
+                ..initial.clone()
+            },
+            Snapshot {
+                session_inactive: true,
+                control: 22,
+                ..initial.clone()
+            },
+        ] {
+            assert!(
+                capture_picker_target(
+                    initial.clone(),
+                    Duration::from_millis(50),
+                    || Ok(changed.clone()),
+                    |_, _| true
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn picker_capture_only_allows_window_fallback_for_an_unidentified_toolkit() {
+        let initial = Snapshot {
+            window: 1,
+            pid: 2,
+            ..Snapshot::default()
+        };
+        assert!(
+            capture_picker_target(
+                initial.clone(),
+                Duration::ZERO,
+                || panic!("no extra query after deadline"),
+                |_, _| true
+            )
+            .is_err()
+        );
+        let target = capture_picker_target(
+            initial,
+            Duration::ZERO,
+            || panic!("no extra query after deadline"),
+            |_, _| false,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!((target.window, target.control), (1, 0));
+    }
+
+    #[test]
+    fn picker_capture_does_not_delay_an_already_identified_field() {
+        let initial = Snapshot {
+            window: 1,
+            pid: 2,
+            control: 11,
+            ..Snapshot::default()
+        };
+        let target = capture_picker_target(
+            initial,
+            Duration::from_millis(300),
+            || panic!("no retry needed"),
+            |_, _| true,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(target.control, 11);
+    }
     #[test]
     #[ignore = "requires isolated X11 with XKB; creates and reparents only its own test window"]
     fn x11_geometry_uses_root_coordinates_for_reparented_client_windows() {
@@ -1187,7 +1369,6 @@ mod tests {
             [112, 132]
         );
     }
-    use super::*;
     #[test]
     #[ignore = "requires isolated X11; reconnects the layout backend without changing the desktop group"]
     fn x11_backend_change_preserves_clones_and_rejects_unavailable_methods() {

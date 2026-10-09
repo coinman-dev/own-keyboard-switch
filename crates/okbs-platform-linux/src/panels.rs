@@ -352,6 +352,60 @@ impl Panels {
             .get(id)
             .is_some_and(|panel| panel.visible)
     }
+    /// Read-only geometry of our own panel rows for diagnostics and acceptance.
+    /// A panel must already be mapped; this never reads application fields.
+    pub fn row_center(&self, id: &str, index: usize) -> Result<Option<[i32; 2]>> {
+        if !self.visible(id) {
+            return Ok(None);
+        }
+        if self.desktop.is_gnome() {
+            let geometry = self.desktop.gnome_panel_geometry(id)?;
+            let row = &geometry["rows"][index];
+            return Ok((|| {
+                let x = row["x"].as_f64()?;
+                let y = row["y"].as_f64()?;
+                let width = row["width"].as_f64()?;
+                let height = row["height"].as_f64()?;
+                (width > 0.0 && height > 0.0)
+                    .then_some([(x + width / 2.0) as i32, (y + height / 2.0) as i32])
+            })());
+        }
+        let windows = self.native.borrow();
+        let Some(window) = windows.get(id).filter(|window| window.is_mapped()) else {
+            return Ok(None);
+        };
+        let mut queue: VecDeque<_> = window.children().into();
+        let mut row_index = 0;
+        while let Some(widget) = queue.pop_front() {
+            if let Some(button) = widget.downcast_ref::<gtk::Button>() {
+                if row_index == index {
+                    let Some((x, y)) = button.translate_coordinates(
+                        window,
+                        button.allocated_width() / 2,
+                        button.allocated_height() / 2,
+                    ) else {
+                        return Ok(None);
+                    };
+                    let origin = if crate::layer::is_layer(window) {
+                        self.models
+                            .borrow()
+                            .get(id)
+                            .map(|model| model.position)
+                            .unwrap_or_default()
+                    } else {
+                        let (x, y) = window.position();
+                        Self::source_point([x, y])
+                    };
+                    let offset = Self::source_point([x, y]);
+                    return Ok(Some([origin[0] + offset[0], origin[1] + offset[1]]));
+                }
+                row_index += 1;
+            } else if let Some(container) = widget.downcast_ref::<gtk::Container>() {
+                queue.extend(container.children());
+            }
+        }
+        Ok(None)
+    }
     pub fn poll(&self, id: &str) -> Option<PanelEvent> {
         if self.desktop.is_gnome() {
             if let Ok(events) = self.desktop.gnome_events() {

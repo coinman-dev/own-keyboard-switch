@@ -1138,10 +1138,18 @@ impl Processor {
         self.remember_target();
         self.reset_all();
         let mut out = self.autoreplace_feedback();
-        out.push(Event::AutoreplaceList {
-            toggle,
-            target: self.insertion_target(),
-        });
+        let target = match self.capture_insertion_target() {
+            Ok(target) => target,
+            Err(error) => {
+                self.fail(
+                    "cannot capture editor for autoreplace list",
+                    &error,
+                    &mut out,
+                );
+                return out;
+            }
+        };
+        out.push(Event::AutoreplaceList { toggle, target });
         out
     }
 
@@ -1151,10 +1159,43 @@ impl Processor {
         self.remember_target();
         self.reset_all();
         let mut out = self.autoreplace_feedback();
-        out.push(Event::ClipboardHistory {
-            target: self.insertion_target(),
-        });
+        let target = match self.capture_insertion_target() {
+            Ok(target) => target,
+            Err(error) => {
+                self.fail(
+                    "cannot capture editor for clipboard history",
+                    &error,
+                    &mut out,
+                );
+                return out;
+            }
+        };
+        out.push(Event::ClipboardHistory { target });
         out
+    }
+
+    pub fn restore_input_target(&self, target: InputTarget) -> Vec<Event> {
+        let Some(focus) = &self.backends.focus else {
+            return Vec::new();
+        };
+        if focus.input_target().ok().flatten() == Some(target) {
+            return Vec::new();
+        }
+        match focus.active_window() {
+            Ok(Some(window)) if window.pid != Some(std::process::id()) => return Vec::new(),
+            Err(error) => {
+                return vec![Event::Error(format!(
+                    "cannot determine focus after closing picker: {error}"
+                ))];
+            }
+            _ => {}
+        }
+        if let Err(error) = focus.activate_target(target) {
+            return vec![Event::Error(format!(
+                "cannot restore editor after closing picker: {error}"
+            ))];
+        }
+        Vec::new()
     }
 
     /// New clipboard contents for «Следить за буфером обмена».
@@ -1243,6 +1284,15 @@ impl Processor {
         out
     }
 
+    fn capture_insertion_target(&self) -> okbs_platform::Result<Option<InputTarget>> {
+        let target = match &self.backends.focus {
+            Some(focus) => focus.capture_input_target()?,
+            None => None,
+        };
+        Ok(target
+            .or_else(|| self.input_gate.as_ref().and_then(|gate| gate.last_target()))
+            .or(self.last_input_target))
+    }
     fn insertion_target(&self) -> Option<InputTarget> {
         self.backends
             .focus

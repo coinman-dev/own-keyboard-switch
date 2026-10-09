@@ -36,6 +36,7 @@ struct State {
     pending: usize,
     reserved: HashSet<PhysKey>,
     discard_until_release: HashSet<PhysKey>,
+    own_keys_down: HashSet<PhysKey>,
 }
 
 impl State {
@@ -182,6 +183,7 @@ impl AutoReplaceGate {
             pending: 0,
             reserved: HashSet::new(),
             discard_until_release: HashSet::new(),
+            own_keys_down: HashSet::new(),
         }))
     }
 
@@ -301,6 +303,23 @@ impl AutoReplaceGate {
         intercept
     }
 
+    /// Suppress only a confirmation key still held in our asynchronously polled GUI.
+    /// Pointer selection and an already delivered release must not eat the next press.
+    pub fn suppress_held_own_key_until_release(&self, key: PhysKey) {
+        if let Ok(mut s) = self.0.lock() {
+            let keys: &[PhysKey] = if matches!(key, PhysKey::Enter | PhysKey::NumpadEnter) {
+                &[PhysKey::Enter, PhysKey::NumpadEnter]
+            } else {
+                std::slice::from_ref(&key)
+            };
+            for key in keys {
+                if s.own_keys_down.contains(key) {
+                    s.discard_until_release.insert(*key);
+                }
+            }
+        }
+    }
+
     /// A picker consumed this press before returning focus to the editor.
     pub fn suppress_until_release(&self, key: PhysKey) {
         if let Ok(mut s) = self.0.lock() {
@@ -325,6 +344,9 @@ impl AutoReplaceGate {
         let Ok(mut s) = self.0.lock() else {
             return false;
         };
+        if !pressed {
+            s.own_keys_down.remove(&key);
+        }
         if !s.discard_until_release.contains(&key) {
             return false;
         }
@@ -353,6 +375,19 @@ impl AutoReplaceGate {
     /// last editor target and leave any explicit insertion transaction alone.
     pub fn observe_own_window(&self, event: InputEvent, lang: Option<Lang>) {
         if let Ok(mut state) = self.0.lock() {
+            if let InputEvent::Key {
+                key,
+                pressed,
+                injected: false,
+                ..
+            } = event
+            {
+                if pressed {
+                    state.own_keys_down.insert(key);
+                } else {
+                    state.own_keys_down.remove(&key);
+                }
+            }
             state.target = None;
             state.feed(event, lang);
         }
@@ -415,6 +450,10 @@ impl AutoReplaceGate {
     pub fn pending_events(&self) -> usize {
         self.0.lock().map_or(0, |state| state.pending)
     }
+    /// Input is waiting for the engine or an explicit insertion is in progress.
+    pub fn is_busy(&self) -> bool {
+        self.0.lock().map_or(true, |state| state.active)
+    }
     pub fn set_autoswitch(&self, enabled: bool) {
         if let Ok(mut s) = self.0.lock() {
             s.autoswitch = enabled;
@@ -427,6 +466,7 @@ impl AutoReplaceGate {
             s.pending = 0;
             s.reserved.clear();
             s.discard_until_release.clear();
+            s.own_keys_down.clear();
             s.reset_chunk();
         }
     }

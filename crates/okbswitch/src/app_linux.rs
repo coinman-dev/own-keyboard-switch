@@ -133,6 +133,7 @@ pub fn run(
     let picker_desktop = desktop.clone();
     let picker_gate = filter.gate.clone();
     let picker_settings = settings.config.autoreplace.clone();
+    let history_desktop = desktop.clone();
     let picker_theme = settings.config.general.theme;
     let picker_labels = crate::controller::autoreplace_labels(
         settings
@@ -148,6 +149,13 @@ pub fn run(
         engine,
         PlatformHooks {
             settings_window,
+            popup_focus: Some(Box::new(move |title| {
+                let Some(window) = history_desktop.placed_window(title)? else {
+                    return Ok(false);
+                };
+                history_desktop.command("ActivateWindow", window.window)?;
+                Ok(true)
+            })),
             popup_placement: Some(Box::new(move |title, position| {
                 popup_desktop.place_owned_window(title, position)
             })),

@@ -7,7 +7,7 @@ use okbs_platform::{
     Autostart, Clipboard, FileDialogs, FileRequest, Result, SoundPlayer, StopGuard, SystemSettings,
 };
 use std::ffi::CString;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -117,6 +117,21 @@ impl Clipboard for LinuxClipboard {
         {
             return Ok(Some(text));
         }
+        // ext-data-control on current KDE, wlr-data-control on older desktops.
+        // These protocols never need the wl-clipboard fallback's focus window.
+        use wl_clipboard_rs::paste::{self, ClipboardType, MimeType, Seat};
+        match paste::get_contents(ClipboardType::Regular, Seat::Unspecified, MimeType::Text) {
+            Ok((mut pipe, _)) => {
+                let mut text = String::new();
+                pipe.read_to_string(&mut text).map_err(error)?;
+                return Ok(Some(text));
+            }
+            Err(
+                paste::Error::NoSeats | paste::Error::ClipboardEmpty | paste::Error::NoMimeType,
+            ) => return Ok(None),
+            Err(paste::Error::MissingProtocol { .. }) => {}
+            Err(err) => return Err(error(err)),
+        }
         let output = Command::new("wl-paste")
             .args(["--no-newline", "--type", "text"])
             .output()
@@ -140,6 +155,12 @@ impl Clipboard for LinuxClipboard {
             && proxy.call::<_, _, ()>("SetClipboard", &(text,)).is_ok()
         {
             return Ok(());
+        }
+        use wl_clipboard_rs::copy::{self, MimeType, Options, Source};
+        match Options::new().copy(Source::Bytes(text.as_bytes().into()), MimeType::Text) {
+            Ok(()) => return Ok(()),
+            Err(copy::Error::MissingProtocol { .. }) => {}
+            Err(err) => return Err(error(err)),
         }
         let mut child = Command::new("wl-copy")
             .args(["--type", "text/plain;charset=utf-8"])

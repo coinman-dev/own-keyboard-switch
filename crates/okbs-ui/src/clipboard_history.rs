@@ -39,6 +39,8 @@ pub enum HistoryChoice {
     Insert(usize),
     /// «Очистить»: forget every remembered text.
     Clear,
+    /// The picker closed without inserting anything.
+    Cancel,
 }
 
 pub(crate) enum HistoryRequest {
@@ -192,11 +194,15 @@ impl HistoryView {
             && self.config.entries.get(index).is_some()
         {
             let _ = self.chosen.send(HistoryChoice::Insert(index));
-            self.close(ctx);
+            self.hide(ctx);
         }
     }
 
     pub fn close(&self, ctx: &egui::Context) {
+        let _ = self.chosen.send(HistoryChoice::Cancel);
+        self.hide(ctx);
+    }
+    fn hide(&self, ctx: &egui::Context) {
         self.set_visible(false);
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -211,6 +217,20 @@ impl HistoryView {
             return;
         }
         self.keep_on_screen(ui.ctx());
+        let moved =
+            ui.input(|i| i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::ArrowUp));
+        if !self.config.entries.is_empty() {
+            let last = self.config.entries.len() - 1;
+            if ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+                self.selected_index = Some(
+                    self.selected_index
+                        .map_or(0, |index| index.saturating_add(1).min(last)),
+                );
+            }
+            if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+                self.selected_index = Some(self.selected_index.unwrap_or(0).saturating_sub(1));
+            }
+        }
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.close(ui.ctx());
         }
@@ -233,6 +253,9 @@ impl HistoryView {
                                 self.selected_index == Some(index),
                                 preview(&self.config.entries[index]),
                             );
+                            if moved && self.selected_index == Some(index) {
+                                response.scroll_to_me(Some(egui::Align::Center));
+                            }
                             if response.clicked() {
                                 self.selected_index = Some(index);
                             }

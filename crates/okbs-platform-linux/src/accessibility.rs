@@ -39,6 +39,9 @@ pub(crate) struct WindowMenu {
 struct AccessibilityState {
     focus: Option<FocusedControl>,
     menu: Option<WindowMenu>,
+    identified_editors: VecDeque<(u64, u32)>,
+    #[cfg(test)]
+    unavailable_until: Option<Instant>,
 }
 #[derive(Debug)]
 pub struct Accessibility {
@@ -93,10 +96,20 @@ impl Accessibility {
                         None
                     };
                 if let Ok(mut state) = shared.lock() {
-                    *state = AccessibilityState {
-                        focus: focused,
-                        menu,
-                    };
+                    if let Some(focus) = &focused
+                        && focus.text_input
+                    {
+                        let identity = (focus.window, focus.pid);
+                        state
+                            .identified_editors
+                            .retain(|editor| *editor != identity);
+                        state.identified_editors.push_back(identity);
+                        if state.identified_editors.len() > 64 {
+                            state.identified_editors.pop_front();
+                        }
+                    }
+                    state.focus = focused;
+                    state.menu = menu;
                 }
                 std::thread::sleep(Duration::from_millis(40));
             }
@@ -112,9 +125,15 @@ impl Accessibility {
         self.menus_enabled.store(enabled, Ordering::Release);
     }
     pub fn current(&self, window: u64, pid: u32) -> Option<FocusedControl> {
-        self.state
-            .lock()
-            .ok()?
+        let state = self.state.lock().ok()?;
+        #[cfg(test)]
+        if state
+            .unavailable_until
+            .is_some_and(|until| Instant::now() < until)
+        {
+            return None;
+        }
+        state
             .focus
             .as_ref()
             .filter(|focus| {
@@ -123,6 +142,15 @@ impl Accessibility {
                     && focus.updated.elapsed() < Duration::from_millis(500)
             })
             .cloned()
+    }
+    pub(crate) fn identified_editor(&self, window: u64, pid: u32) -> bool {
+        self.state
+            .lock()
+            .is_ok_and(|state| state.identified_editors.contains(&(window, pid)))
+    }
+    #[cfg(test)]
+    pub(crate) fn make_temporarily_unavailable(&self, duration: Duration) {
+        self.state.lock().unwrap().unavailable_until = Some(Instant::now() + duration);
     }
     pub(crate) fn menu(&self, window: u64, pid: u32) -> Option<WindowMenu> {
         self.state

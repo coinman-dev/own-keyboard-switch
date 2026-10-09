@@ -64,6 +64,14 @@ for linux_attempt in {1..60}; do
     if ! kill -0 "$linux_test_pid" 2>/dev/null; then cat tmp/linux-kde/kwin.log; exit 1; fi
     sleep 0.5
 done
+if [[ ${OKBS_TEST_APP:-} == capture ]]; then
+    timeout 60s "$OKBS_TEST_BROWSER_BINARY" wayland_picker_capture_recovers_metadata_and_rejects_stale_fields --ignored --nocapture
+    exit
+fi
+if [[ ${OKBS_TEST_APP:-} == picker ]]; then
+    timeout 120s "$OKBS_TEST_BROWSER_BINARY" real_linux_pickers_and_process_restart_preserve_editor_and_history --ignored --nocapture
+    exit
+fi
 if [[ ${OKBS_TEST_APP:-} == native ]]; then
     timeout 120s "$OKBS_TEST_BROWSER_BINARY" real_wayland_writer_and_terminal_correct_paste_and_submit --ignored --nocapture
     exit

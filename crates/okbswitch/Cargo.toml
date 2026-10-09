@@ -38,6 +38,10 @@ okbs-platform-windows.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 okbs-platform-linux.workspace = true
 
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+serde_json = "1.0"
+evdev.workspace = true
+
 [build-dependencies]
 embed-resource = "3.0.8"
 

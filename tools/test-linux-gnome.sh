@@ -76,6 +76,19 @@ gdbus call --session --dest org.own_keyboard_switch.Gnome --object-path /org/own
 gdbus call --session --dest org.own_keyboard_switch.Gnome --object-path /org/own_keyboard_switch/Gnome --method org.own_keyboard_switch.Gnome.SetPanel '{"id":"list","visible":true,"position":[40,80],"rows":["first","second"],"opacity":0.8}'
 gdbus call --session --dest org.own_keyboard_switch.Gnome --object-path /org/own_keyboard_switch/Gnome --method org.own_keyboard_switch.Gnome.TakePanelEvents
 gdbus call --session --dest org.own_keyboard_switch.Gnome --object-path /org/own_keyboard_switch/Gnome --method org.own_keyboard_switch.Gnome.SetPanel '{"id":"indicator","visible":true,"position":[980,740],"locked":false,"settings":"Settings","hide":"Hide","lock":"Lock","opacity":1}'
+if [[ ${OKBS_TEST_APP:-} == capture ]]; then
+    timeout 60s "$OKBS_TEST_BROWSER_BINARY" wayland_picker_capture_recovers_metadata_and_rejects_stale_fields --ignored --nocapture
+    exit
+fi
+if [[ ${OKBS_TEST_APP:-} == picker ]]; then
+    # Earlier panel smoke fixtures overlap the app picker at [40,120]. Close
+    # them before real pointer selection so Shell chrome cannot receive it.
+    for linux_panel in hint list indicator; do
+        gdbus call --session --dest org.own_keyboard_switch.Gnome --object-path /org/own_keyboard_switch/Gnome --method org.own_keyboard_switch.Gnome.SetPanel "{\"id\":\"$linux_panel\",\"visible\":false}"
+    done
+    timeout 120s "$OKBS_TEST_BROWSER_BINARY" real_linux_pickers_and_process_restart_preserve_editor_and_history --ignored --nocapture
+    exit
+fi
 if [[ ${OKBS_TEST_APP:-} == native ]]; then
     timeout 120s "$OKBS_TEST_BROWSER_BINARY" real_wayland_writer_and_terminal_correct_paste_and_submit --ignored --nocapture
     exit

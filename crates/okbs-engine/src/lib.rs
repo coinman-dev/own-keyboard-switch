@@ -35,6 +35,10 @@ pub enum Command {
     ApplyConfig(Box<Config>),
     /// Runs a text operation on the clipboard (tray menu «Буфер обмена»).
     ClipboardOp(TextOp),
+    /// Capture the editor before the controller opens clipboard history.
+    ShowClipboardHistory,
+    /// Return from a cancelled picker if its own window still owns focus.
+    RestoreInputTarget(InputTarget),
     /// Read the clipboard for spelling checks off the input thread (tray menu
     /// «Буфер обмена»: the selection belongs to the window left behind).
     SpellcheckClipboard,
@@ -307,6 +311,8 @@ fn handle_command(processor: &mut Processor, command: Command) -> Vec<Event> {
             Vec::new()
         }
         Command::ClipboardOp(op) => processor.clipboard_op(op),
+        Command::ShowClipboardHistory => processor.clipboard_history(),
+        Command::RestoreInputTarget(target) => processor.restore_input_target(target),
         Command::SpellcheckClipboard => processor.spellcheck_clipboard(),
         Command::CorrectClipboard {
             original,

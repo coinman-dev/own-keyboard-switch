@@ -56,6 +56,9 @@ pub trait AutoreplaceUi {
     fn hint(&mut self, index: Option<usize>) -> Result<()>;
     fn show_list(&mut self, toggle: bool, target: Option<InputTarget>) -> Result<()>;
     fn poll(&mut self) -> Option<AutoreplaceInsertion>;
+    fn poll_cancelled(&mut self) -> Option<InputTarget> {
+        None
+    }
 }
 
 /// Result type of platform operations.
@@ -148,6 +151,11 @@ pub trait FocusInfo: Send {
     /// Stable identity used to avoid applying delayed input in another control.
     fn input_target(&self) -> Result<Option<InputTarget>> {
         Ok(None)
+    }
+    /// Capture an editor before opening an explicit picker. Backends may wait
+    /// briefly for fresh focus metadata; failure must not use a remembered field.
+    fn capture_input_target(&self) -> Result<Option<InputTarget>> {
+        self.input_target()
     }
     /// Restore a previously selected application for an explicit insertion.
     fn activate_target(&self, _target: InputTarget) -> Result<()> {
