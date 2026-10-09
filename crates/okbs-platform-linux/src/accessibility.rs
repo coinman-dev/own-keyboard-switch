@@ -149,6 +149,7 @@ struct Reader {
     bus: Connection,
     owners: HashMap<String, u32>,
     previous: Option<Object>,
+    previous_window: u64,
     menu: Option<MenuCache>,
     menus_enabled: bool,
     wayland: bool,
@@ -158,6 +159,7 @@ struct FocusScan {
     window: u64,
     pid: u32,
     queue: VecDeque<Object>,
+    menu_queue: VecDeque<Object>,
     visited: HashSet<Object>,
     fallback: Option<(Object, FocusedControl)>,
 }
@@ -188,6 +190,7 @@ impl Reader {
             bus,
             owners: HashMap::new(),
             previous: None,
+            previous_window: 0,
             menu: None,
             menus_enabled: false,
             wayland: crate::session::SessionInfo::detect().session_type
@@ -457,6 +460,7 @@ impl Reader {
     }
     fn focused(&mut self, snapshot: &Snapshot) -> Result<Option<FocusedControl>> {
         if let Some(previous) = self.previous.clone()
+            && self.previous_window == snapshot.window
             && self.owner(&previous.0) == Some(snapshot.pid)
             && let Ok(Some(focus)) = self.inspect(&previous, snapshot)
             && focus.text_input
@@ -498,6 +502,7 @@ impl Reader {
                 window: snapshot.window,
                 pid: snapshot.pid,
                 queue,
+                menu_queue: VecDeque::new(),
                 visited: HashSet::new(),
                 fallback: None,
             });
@@ -505,7 +510,10 @@ impl Reader {
         let Some(mut scan) = self.scan.take() else {
             return Ok(None);
         };
-        while !scan.queue.is_empty() {
+        while !scan.queue.is_empty() || !scan.menu_queue.is_empty() {
+            if scan.queue.is_empty() {
+                std::mem::swap(&mut scan.queue, &mut scan.menu_queue);
+            }
             if Instant::now() >= deadline {
                 let fallback = scan
                     .fallback
@@ -529,6 +537,7 @@ impl Reader {
                         self.menu_language(&object, snapshot);
                     }
                     self.previous = Some(object);
+                    self.previous_window = snapshot.window;
                     return Ok(Some(focus));
                 }
                 // Browsers expose focused containers alongside the actual
@@ -537,20 +546,40 @@ impl Reader {
                 scan.fallback = Some((object.clone(), focus));
             }
             if let Ok(proxy) = self.proxy(&object, "org.a11y.atspi.Accessible")
+                && let Ok(role) = proxy.call::<_, _, u32>("GetRole", &())
+                // Hidden office menus can have hundreds of descendants. Do
+                // not exhaust the bounded scan before reaching the editor.
+                // Showing menus remain searchable, including editable items.
+                && (!matches!(role, 33 | 34 | 35 | 41)
+                    || proxy.call::<_, _, Vec<u32>>("GetState", &()).ok().is_some_and(|state|
+                        state.first().is_some_and(|bits| bits & (1 << 25) != 0)))
                 && let Ok(children) = proxy.call::<_, _, Vec<Object>>("GetChildren", &())
             {
-                let remaining = 512usize.saturating_sub(scan.queue.len());
-                scan.queue
-                    .extend(children.into_iter().take(remaining).map(|(name, path)| {
-                        (
-                            if name.is_empty() {
-                                object.0.clone()
-                            } else {
-                                name
-                            },
-                            path,
-                        )
-                    }));
+                // Search editor/container branches before potentially large
+                // visible menu trees. LibreOffice exposes collapsed menu
+                // descendants as showing; inspecting all of them first can
+                // hit the node bound before the focused paragraph is reached.
+                let queue = if matches!(role, 33 | 34 | 35 | 41) {
+                    &mut scan.menu_queue
+                } else {
+                    &mut scan.queue
+                };
+                let capacity: usize = if matches!(role, 33 | 34 | 35 | 41) {
+                    128
+                } else {
+                    512
+                };
+                let remaining = capacity.saturating_sub(queue.len());
+                queue.extend(children.into_iter().take(remaining).map(|(name, path)| {
+                    (
+                        if name.is_empty() {
+                            object.0.clone()
+                        } else {
+                            name
+                        },
+                        path,
+                    )
+                }));
             }
         }
         if let Some((object, _)) = scan.fallback
@@ -560,6 +589,7 @@ impl Reader {
                 self.menu_language(&object, snapshot);
             }
             self.previous = Some(object);
+            self.previous_window = snapshot.window;
             return Ok(Some(focus));
         }
         self.previous = None;

@@ -83,13 +83,17 @@ export default class OkbSwitchExtension extends Extension {
     }
     GetState() {
         const manager = getInputSourceManager();
-        const window = global.display.focus_window;
+        // Shell overview and modal dialogs own the keyboard while Mutter can
+        // retain a background application's focus_window. Never identify
+        // that application as the input target of Shell search/password UI.
+        const window = Main.overview.visible || Main.modalCount > 0
+            ? null : global.display.focus_window;
         const frame = window?.get_frame_rect();
         const client = window?.get_client_content_rect?.() ?? window?.get_buffer_rect();
         const [x, y] = global.get_pointer();
         const keymap = Clutter.get_default_backend()?.get_default_seat?.()?.get_keymap?.();
         return JSON.stringify({
-            protocol:4,
+            protocol:5,
             group: manager.currentSource?.index ?? 0,
             sources: Object.values(manager.inputSources).map(source => ({
                 code: source.type === 'xkb' ? source.id : 'ibus', name: source.displayName,
@@ -104,7 +108,7 @@ export default class OkbSwitchExtension extends Extension {
             client:client ? [client.x,client.y,client.width,client.height] : [0,0,0,0]
         });
     }
-    GetVersion() { return 4; }
+    GetVersion() { return 5; }
     SetLayout(index) {
         if (Main.sessionMode.isLocked) throw new Error('Session is locked');
         const source = getInputSourceManager().inputSources[index];
@@ -113,6 +117,8 @@ export default class OkbSwitchExtension extends Extension {
     }
     _window(id) {
         if (Main.sessionMode.isLocked) throw new Error('Session is locked');
+        if (Main.overview.visible || Main.modalCount > 0)
+            throw new Error('Shell owns keyboard focus');
         const window = global.get_window_actors().map(actor => actor.meta_window)
             .find(window => window.get_stable_sequence() === id);
         if (!window) throw new Error('Input window no longer exists');

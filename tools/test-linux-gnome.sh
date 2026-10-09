@@ -6,10 +6,12 @@ export PATH="$HOME/.cargo/bin:$PATH"
 mkdir -p tmp
 exec 9>tmp/linux-wayland-session.lock
 flock 9
-mkdir -p tmp/linux-gnome/{run,config,data/gnome-shell/extensions/okbswitch@own-keyboard-switch}
-export XDG_RUNTIME_DIR="$PWD/tmp/linux-gnome/run"
-export XDG_CONFIG_HOME="$PWD/tmp/linux-gnome/config"
-export XDG_DATA_HOME="$PWD/tmp/linux-gnome/data"
+linux_gnome_data=tmp/linux-gnome
+if [[ ${OKBS_TEST_BROWSER_INPUT:-0} == 1 ]]; then linux_gnome_data=tmp/linux-gnome-input; fi
+mkdir -p "$linux_gnome_data"/{run,config,data/gnome-shell/extensions/okbswitch@own-keyboard-switch}
+export XDG_RUNTIME_DIR="$PWD/$linux_gnome_data/run"
+export XDG_CONFIG_HOME="$PWD/$linux_gnome_data/config"
+export XDG_DATA_HOME="$PWD/$linux_gnome_data/data"
 export XDG_CURRENT_DESKTOP=GNOME XDG_SESSION_TYPE=wayland LIBGL_ALWAYS_SOFTWARE=1
 unset DISPLAY AT_SPI_BUS_ADDRESS
 export GSETTINGS_BACKEND=keyfile
@@ -23,8 +25,8 @@ chmod 700 "$XDG_RUNTIME_DIR"
 cp packaging/linux/gnome/{metadata.json,extension.js} "$XDG_DATA_HOME/gnome-shell/extensions/okbswitch@own-keyboard-switch/"
 if [[ ${OKBS_TEST_OLD_EXTENSION:-0} == 1 ]]; then
     linux_extension="$XDG_DATA_HOME/gnome-shell/extensions/okbswitch@own-keyboard-switch"
-    sed -i 's/GetVersion() { return 4; }/GetVersion() { return 3; }/' "$linux_extension/extension.js"
-    sed -i 's/"version": 4/"version": 3/' "$linux_extension/metadata.json"
+    sed -i 's/GetVersion() { return 5; }/GetVersion() { return 4; }/' "$linux_extension/extension.js"
+    sed -i 's/"version": 5/"version": 4/' "$linux_extension/metadata.json"
 fi
 gsettings set org.gnome.desktop.input-sources sources "[('xkb', 'us'), ('xkb', 'ru')]"
 gsettings set org.gnome.shell enabled-extensions "['okbswitch@own-keyboard-switch']"
@@ -59,6 +61,11 @@ for linux_attempt in {1..30}; do
     sleep 0.1
 done
 test -f "$linux_keyboard_ready"
+# The private headless compositor can start in Overview. Native window
+# acceptance needs an actual application input target, not the background WM
+# focus_window retained while Shell owns the keyboard.
+gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell --method org.freedesktop.DBus.Properties.Set org.gnome.Shell OverviewActive '<false>'
+sleep 0.5
 gdctl show >tmp/linux-gnome/monitors.log
 gdctl set -L -M Meta-1 --primary -L -M Meta-0 --scale "$linux_test_scale" --right-of Meta-1
 gdctl show >tmp/linux-gnome/scaled-monitors.log
@@ -69,8 +76,16 @@ gdbus call --session --dest org.own_keyboard_switch.Gnome --object-path /org/own
 gdbus call --session --dest org.own_keyboard_switch.Gnome --object-path /org/own_keyboard_switch/Gnome --method org.own_keyboard_switch.Gnome.SetPanel '{"id":"list","visible":true,"position":[40,80],"rows":["first","second"],"opacity":0.8}'
 gdbus call --session --dest org.own_keyboard_switch.Gnome --object-path /org/own_keyboard_switch/Gnome --method org.own_keyboard_switch.Gnome.TakePanelEvents
 gdbus call --session --dest org.own_keyboard_switch.Gnome --object-path /org/own_keyboard_switch/Gnome --method org.own_keyboard_switch.Gnome.SetPanel '{"id":"indicator","visible":true,"position":[980,740],"locked":false,"settings":"Settings","hide":"Hide","lock":"Lock","opacity":1}'
+if [[ ${OKBS_TEST_APP:-} == native ]]; then
+    timeout 120s "$OKBS_TEST_BROWSER_BINARY" real_wayland_writer_and_terminal_correct_paste_and_submit --ignored --nocapture
+    exit
+fi
 if [[ ${OKBS_TEST_APP:-} == browser ]]; then
-    timeout 90s cargo test -p okbs-platform-linux real_firefox_fields_password_and_editable_document_have_distinct_targets --locked -- --ignored --nocapture
+    if [[ ${OKBS_TEST_BROWSER_INPUT:-0} == 1 ]]; then
+        timeout 90s "$OKBS_TEST_BROWSER_BINARY" real_firefox_engine_corrects_and_pastes_without_crossing_fields --ignored --nocapture
+    else
+        timeout 90s cargo test -p okbs-platform-linux real_firefox_fields_password_and_editable_document_have_distinct_targets --locked -- --ignored --nocapture
+    fi
     exit
 fi
 cargo test -p okbs-platform-linux gnome_panel_is_clamped_on_a_second_scaled_monitor --locked -- --ignored --nocapture

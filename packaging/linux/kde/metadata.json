@@ -1,9 +1,10 @@
 {
+  "KPackageStructure": "KWin/Script",
   "KPlugin": {
     "Id": "okbswitch",
     "Name": "Own Keyboard Switch integration",
     "Description": "Window integration for Own Keyboard Switch",
-    "Version": "4.0",
+    "Version": "5.0",
     "License": "PolyForm-Noncommercial-1.0.0"
   },
   "X-Plasma-API": "javascript",

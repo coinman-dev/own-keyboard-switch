@@ -148,7 +148,8 @@ fn real_wayland_egui_popups_and_caret_use_the_requested_monitor() {
             }
             assert!(
                 Instant::now() < deadline,
-                "editor focus unavailable: {state:?}; GTK active={} hasFocus={} isFocus={}",
+                "editor focus unavailable: expected {}, {state:?}; GTK active={} hasFocus={} isFocus={}",
+                placed_editor.window,
                 editor.is_active(),
                 first.has_focus(),
                 first.is_focus()

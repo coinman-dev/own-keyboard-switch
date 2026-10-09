@@ -75,8 +75,8 @@ enum Backend {
     Gnome(zbus::blocking::Connection),
     Kde(zbus::blocking::Connection),
 }
-pub const INTEGRATION_PROTOCOL_VERSION: u32 = 4;
-pub const KDE_INTEGRATION_PROTOCOL_VERSION: u32 = 4;
+pub const INTEGRATION_PROTOCOL_VERSION: u32 = 5;
+pub const KDE_INTEGRATION_PROTOCOL_VERSION: u32 = 5;
 #[derive(Debug, Clone)]
 pub struct LinuxDesktop {
     backend: Arc<Mutex<Backend>>,
@@ -1239,23 +1239,7 @@ mod tests {
     #[ignore = "requires a KDE Wayland session with us,ru layouts"]
     fn kde_reads_switches_and_verifies_the_real_keyboard_group() {
         let _bridge = serve_kde_bridge().unwrap();
-        let bus = zbus::blocking::Connection::session().unwrap();
-        let scripting = zbus::blocking::Proxy::new(
-            &bus,
-            "org.kde.KWin",
-            "/Scripting",
-            "org.kde.kwin.Scripting",
-        )
-        .unwrap();
-        let path = format!(
-            "{}/../../packaging/linux/kde/contents/code/main.js",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let script: i32 = scripting
-            .call("loadScript", &(path.as_str(), "okbswitch-layout-test"))
-            .unwrap();
-        assert!(script >= 0);
-        scripting.call::<_, _, ()>("start", &()).unwrap();
+        crate::integration::install_current(&Desktop::Kde).unwrap();
         let mut desktop = LinuxDesktop::connect().unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);
         while desktop.cached().locked {
@@ -1282,23 +1266,7 @@ mod tests {
         use gtk::prelude::*;
         gtk::init().unwrap();
         let _bridge = serve_kde_bridge().unwrap();
-        let bus = zbus::blocking::Connection::session().unwrap();
-        let scripting = zbus::blocking::Proxy::new(
-            &bus,
-            "org.kde.KWin",
-            "/Scripting",
-            "org.kde.kwin.Scripting",
-        )
-        .unwrap();
-        let path = format!(
-            "{}/../../packaging/linux/kde/contents/code/main.js",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        let id: i32 = scripting
-            .call("loadScript", &(path.as_str(), "okbswitch-test"))
-            .unwrap();
-        assert!(id >= 0);
-        scripting.call::<_, _, ()>("start", &()).unwrap();
+        crate::integration::install_current(&Desktop::Kde).unwrap();
         let window = gtk::Window::new(gtk::WindowType::Toplevel);
         window.set_title("OKBS KDE focus fixture");
         window.set_default_size(320, 200);

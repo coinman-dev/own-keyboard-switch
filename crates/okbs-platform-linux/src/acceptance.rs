@@ -303,7 +303,7 @@ fn title(conn: &RustConnection, window: u32) -> String {
     }
     String::new()
 }
-fn type_physical(device: &mut VirtualDevice, text: &str) {
+pub(crate) fn type_physical(device: &mut VirtualDevice, text: &str) {
     for press in keys_for_text(text, builtin_keymap(Lang::En)).unwrap() {
         if press.shift {
             device

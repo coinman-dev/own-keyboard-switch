@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Local Firefox acceptance page. Reports field identity/geometry, not values."""
+"""Local Firefox acceptance page; optional value reporting uses synthetic fields only."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import sys
 
 state, command, ready = map(Path, sys.argv[1:4])
+report_values = "--report-synthetic-values" in sys.argv[4:]
 page = """<!doctype html><html lang="en"><meta charset="utf-8">
 <title>OKBS browser acceptance</title>
 <style>body {margin:40px;font:20px sans-serif} input, textarea, #editable {display:block;width:500px;margin:16px 0;padding:8px;font:20px monospace;border:2px solid #777} #editable {min-height:70px}</style>
@@ -16,20 +17,30 @@ page = """<!doctype html><html lang="en"><meta charset="utf-8">
 <script>
 function focusField(id, offset=4) {
  const field=document.getElementById(id); field.focus();
- if (id==='editable') { const range=document.createRange();range.setStart(field.firstChild,offset);range.collapse(true);const selection=getSelection();selection.removeAllRanges();selection.addRange(range); }
+ if (id==='editable') { const range=document.createRange();if(field.firstChild) range.setStart(field.firstChild,offset);else range.selectNodeContents(field);range.collapse(true);const selection=getSelection();selection.removeAllRanges();selection.addRange(range); }
  else field.setSelectionRange(offset,offset);
 }
-let busy=false;
+let busy=false, acknowledgement=null;
 setInterval(async()=>{
  if(busy) return;busy=true;
  try { const action=await (await fetch('/command',{cache:'no-store'})).json();
-  if(action.field) focusField(action.field,action.offset??4);
+  if(action.field) {
+   const selected=document.getElementById(action.field);
+   if(typeof action.text==='string') {
+    if(action.field==='editable') selected.textContent=action.text;
+    else selected.value=action.text;
+   }
+   focusField(action.field,action.offset??4);
+   acknowledgement=action.token??null;
+  }
   const field=document.activeElement;const rect=field.getBoundingClientRect();
-  await fetch('/state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({focus:field.id,documentFocus:document.hasFocus(),visibility:document.visibilityState,rect:[rect.x,rect.y,rect.width,rect.height]})});
+  const state={focus:field.id,documentFocus:document.hasFocus(),visibility:document.visibilityState,rect:[rect.x,rect.y,rect.width,rect.height],acknowledgement};
+  if(REPORT_SYNTHETIC_VALUES) state.values=Object.fromEntries(['first','password','second','editable'].map(id=>{const item=document.getElementById(id);return [id,id==='editable'?item.innerText:item.value];}));
+  await fetch('/state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(state)});
  } finally {busy=false;}
 },50);
 addEventListener('load',()=>focusField('first'));
-</script></html>""".encode()
+</script></html>""".replace("REPORT_SYNTHETIC_VALUES", "true" if report_values else "false").encode()
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_): pass

@@ -582,13 +582,13 @@ mod tests {
         assert!(
             !std::fs::read_to_string(&installed)
                 .unwrap()
-                .contains("protocol:4")
+                .contains("protocol:5")
         );
         assert_eq!(install_current(&Desktop::Kde).unwrap(), Activation::Enabled);
         assert!(
             std::fs::read_to_string(&installed)
                 .unwrap()
-                .contains("protocol:4")
+                .contains("protocol:5")
         );
         let desktop = crate::desktop::LinuxDesktop::connect().unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);

@@ -3,5 +3,5 @@
   "name": "Own Keyboard Switch integration",
   "description": "Keyboard layout, window and clipboard integration for Own Keyboard Switch",
   "shell-version": ["45", "46", "47", "48", "49", "50"],
-  "version": 4
+  "version": 5
 }

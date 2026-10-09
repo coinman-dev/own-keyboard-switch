@@ -58,7 +58,19 @@ workspace.windowRemoved.connect(window => {
 });
 workspace.screensChanged.connect(() => workspace.windowList().forEach(place));
 workspace.windowActivated.connect(window => { if (window) place(window); });
-function pulse() {
+let generation = 0;
+let lastProgress = 0;
+function pulse(epoch) {
+    // The script can load before the application and survive its restart.
+    // KWin does not invoke callbacks after a failed D-Bus call. Check the
+    // owner first; the timer restarts stalled exchanges with a fresh epoch.
+    callDBus('org.freedesktop.DBus', '/org/freedesktop/DBus',
+        'org.freedesktop.DBus', 'NameHasOwner', 'org.own_keyboard_switch.Kde', function (owned) {
+        if (epoch !== generation || !owned) return;
+        publish(epoch);
+    });
+}
+function publish(epoch) {
     const window = workspace.activeWindow;
     const cursor = workspace.cursorPos;
     const client = window ? window.clientGeometry : null;
@@ -66,14 +78,18 @@ function pulse() {
         const rect = w.frameGeometry;
         return {pid:w.pid, title:w.caption, window:windowId(w), frame:geometry(rect)};
     });
-    const state = JSON.stringify({protocol:4, placed_windows:placed, window:windowId(window), pid:window ? window.pid : 0,
+    const state = JSON.stringify({protocol:5, placed_windows:placed, window:windowId(window), pid:window ? window.pid : 0,
         title:window ? window.caption : '', app_id:window ? window.resourceClass.toString() : '',
         cursor:cursor ? [Math.round(cursor.x),Math.round(cursor.y)] : [0,0], frame:geometry(window?.frameGeometry),
         client:geometry(client)});
     callDBus('org.own_keyboard_switch.Kde', '/org/own_keyboard_switch/Kde',
         'org.own_keyboard_switch.Kde', 'UpdateState', state, function () {
+            if (epoch !== generation) return;
+            lastProgress = Date.now();
             callDBus('org.own_keyboard_switch.Kde', '/org/own_keyboard_switch/Kde',
                 'org.own_keyboard_switch.Kde', 'TakeCommand', function (command) {
+                    if (epoch !== generation) return;
+                    lastProgress = Date.now();
                     if (command) {
                         const action = JSON.parse(command);
                         if (action.operation === 'PlaceWindow') {
@@ -92,8 +108,14 @@ function pulse() {
                             }
                         }
                     }
-                    pulse();
+                    pulse(epoch);
                 });
         });
 }
-pulse();
+const reconnect = new QTimer();
+reconnect.interval = 1000;
+reconnect.timeout.connect(() => {
+    if (Date.now() - lastProgress >= 1000) pulse(++generation);
+});
+reconnect.start();
+pulse(++generation);

@@ -18,6 +18,8 @@ pub mod diagnose;
 pub mod input;
 pub mod integration;
 mod layer;
+#[cfg(test)]
+mod native_input_acceptance;
 pub mod panels;
 pub mod permissions;
 mod placement;
@@ -25,6 +27,8 @@ pub mod seat;
 pub mod services;
 pub mod session;
 mod watch;
+#[cfg(test)]
+mod wayland_input_acceptance;
 pub mod x11_windows;
 
 pub use diagnose::diagnose;
