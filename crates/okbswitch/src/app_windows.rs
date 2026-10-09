@@ -256,6 +256,10 @@ pub fn run(
         settings,
         engine,
         crate::controller::PlatformHooks {
+            settings_window: None,
+            cursor_position: None,
+            spelling_position: None,
+            popup_placement: None,
             autoreplace_ui,
             list_layouts: Some(Box::new(okbs_platform_windows::layouts::installed_layouts)),
             sound: Some(Box::new(WinSound)),
@@ -264,7 +268,10 @@ pub fn run(
             window_control: Some(Box::new(WinWindowControl)),
             indicator,
             history_file: Some(paths.state_dir.join(crate::paths::HISTORY_FILE)),
-            on_apply: Some(Box::new(move |config| filter.configure(config))),
+            on_apply: Some(Box::new(move |config| {
+                filter.configure(config);
+                Ok(())
+            })),
             file_dialogs: Some(std::sync::Arc::new(WinFileDialogs)),
             system_settings: Some(Box::new(WinSystemSettings)),
         },

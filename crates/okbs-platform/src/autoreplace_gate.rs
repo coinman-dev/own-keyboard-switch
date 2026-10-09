@@ -349,6 +349,15 @@ impl AutoReplaceGate {
         }
     }
 
+    /// An event delivered directly to this program's own GUI. Preserve the
+    /// last editor target and leave any explicit insertion transaction alone.
+    pub fn observe_own_window(&self, event: InputEvent, lang: Option<Lang>) {
+        if let Ok(mut state) = self.0.lock() {
+            state.target = None;
+            state.feed(event, lang);
+        }
+    }
+
     pub fn complete_event(&self, hold: bool) {
         if let Ok(mut s) = self.0.lock() {
             s.pending = s.pending.saturating_sub(1);
@@ -393,6 +402,19 @@ impl AutoReplaceGate {
             s.hotkeys_enabled = enabled;
         }
     }
+
+    /// Live hook policy, including changes made by the toggle hotkey.
+    pub fn hotkeys_enabled(&self) -> bool {
+        self.0.lock().is_ok_and(|state| state.hotkeys_enabled)
+    }
+
+    pub fn is_capturing(&self) -> bool {
+        self.0.lock().is_ok_and(|state| state.capturing)
+    }
+
+    pub fn pending_events(&self) -> usize {
+        self.0.lock().map_or(0, |state| state.pending)
+    }
     pub fn set_autoswitch(&self, enabled: bool) {
         if let Ok(mut s) = self.0.lock() {
             s.autoswitch = enabled;
@@ -400,6 +422,7 @@ impl AutoReplaceGate {
     }
     pub fn fail_open(&self) {
         if let Ok(mut s) = self.0.lock() {
+            s.epoch = s.epoch.wrapping_add(1);
             s.active = false;
             s.pending = 0;
             s.reserved.clear();

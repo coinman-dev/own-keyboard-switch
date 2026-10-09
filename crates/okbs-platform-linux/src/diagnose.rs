@@ -34,7 +34,7 @@ pub fn diagnose(config: &Config) -> DiagnosticReport {
         r.push(
             DiagnosticStatus::Warning,
             "wsl",
-            "running inside WSL: no /dev/input, keyboard capture cannot work here",
+            "WSL does not expose the Windows physical keyboard; virtual-device tests require the evdev kernel module",
         );
     }
     r.push(
@@ -59,20 +59,56 @@ pub fn diagnose(config: &Config) -> DiagnosticReport {
         LayoutBackend::Kde => "kde (org.kde.keyboard D-Bus)",
         LayoutBackend::X11 => "x11 (XKB extension)",
         LayoutBackend::GnomeExtension => "gnome-extension (bundled GNOME Shell extension)",
-        LayoutBackend::GnomeFallback => "gnome-fallback (gsettings + switch shortcut)",
-        LayoutBackend::Internal => "internal (layout state is tracked by the program)",
+        LayoutBackend::GnomeFallback => "gnome-fallback (not implemented)",
+        LayoutBackend::Internal => "internal (not implemented)",
     };
-    let backend_status = match backend {
-        LayoutBackend::Kde | LayoutBackend::X11 | LayoutBackend::GnomeExtension => {
-            DiagnosticStatus::Ok
+    match session::validate_layout_backend(config.linux.layout_backend, &s)
+        .and_then(crate::desktop::LinuxDesktop::connect_with)
+    {
+        Ok(desktop) => {
+            let state = desktop.cached();
+            r.push(
+                if state.locked || state.session_inactive {
+                    DiagnosticStatus::Error
+                } else {
+                    DiagnosticStatus::Ok
+                },
+                "input session",
+                if state.locked || state.session_inactive {
+                    "an active unlocked local graphical session is required"
+                } else {
+                    "active and unlocked"
+                },
+            );
+            r.push(
+                if desktop.integration_ready() {
+                    DiagnosticStatus::Ok
+                } else {
+                    DiagnosticStatus::Error
+                },
+                "layout backend",
+                backend_name,
+            );
+            if !desktop.integration_ready() {
+                r.push(
+                    DiagnosticStatus::Error,
+                    "desktop integration",
+                    "install or update and enable the bundled desktop component",
+                );
+            }
         }
-        _ => DiagnosticStatus::Warning,
-    };
-    r.push(backend_status, "layout backend", backend_name);
+        Err(err) => r.push(
+            DiagnosticStatus::Error,
+            "layout backend",
+            format!("{backend_name}: {err}"),
+        ),
+    }
     if s.desktop == Desktop::Gnome {
         r.push(
             if extension {
                 DiagnosticStatus::Ok
+            } else if s.session_type == SessionType::X11 && backend == LayoutBackend::X11 {
+                DiagnosticStatus::Info
             } else {
                 DiagnosticStatus::Warning
             },
@@ -81,14 +117,16 @@ pub fn diagnose(config: &Config) -> DiagnosticReport {
                 "installed".to_string()
             } else {
                 format!(
-                    "{} not installed: program exclusions and password detection are limited",
+                    "{} not installed; GNOME Wayland requires the desktop component",
                     session::GNOME_EXTENSION_UUID
                 )
             },
         );
     }
 
-    let scan = access::scan_input_devices();
+    let mut scan = access::scan_input_devices();
+    scan.keyboards
+        .retain(|keyboard| keyboard.name != crate::input::VIRTUAL_NAME);
     if !scan.input_dir_exists {
         r.push(
             DiagnosticStatus::Error,
@@ -144,4 +182,30 @@ pub fn diagnose(config: &Config) -> DiagnosticReport {
         );
     }
     r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    #[ignore = "requires an isolated X11 display; probes the actual layout service"]
+    fn x11_diagnosis_uses_the_same_backend_as_the_application() {
+        let mut config = Config::default();
+        let report = diagnose(&config);
+        let item = report
+            .items
+            .iter()
+            .find(|item| item.name == "layout backend")
+            .unwrap();
+        assert_eq!(item.status, DiagnosticStatus::Ok);
+        assert!(item.detail.starts_with("x11"));
+        config.linux.layout_backend = LayoutBackend::GnomeFallback;
+        let report = diagnose(&config);
+        let item = report
+            .items
+            .iter()
+            .find(|item| item.name == "layout backend")
+            .unwrap();
+        assert_eq!(item.status, DiagnosticStatus::Error);
+    }
 }

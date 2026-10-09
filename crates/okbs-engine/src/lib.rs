@@ -283,6 +283,8 @@ fn handle_command(processor: &mut Processor, command: Command) -> Vec<Event> {
             }
         }
         Command::ApplyConfig(config) => {
+            let backend_changed =
+                config.linux.layout_backend != processor.config().linux.layout_backend;
             let mut events = Vec::new();
             if config.general.autoswitch != processor.config().general.autoswitch {
                 events.push(Event::AutoswitchChanged(config.general.autoswitch));
@@ -294,6 +296,9 @@ fn handle_command(processor: &mut Processor, command: Command) -> Vec<Event> {
             events.extend(processor.autoreplace_feedback());
             tracing::info!("configuration applied");
             events.push(Event::ConfigApplied);
+            if backend_changed {
+                events.push(Event::LayoutChanged(processor.current_layout_info()));
+            }
             events
         }
         Command::SelectLayout(id) => processor.select_layout(id),

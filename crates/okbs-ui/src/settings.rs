@@ -153,6 +153,7 @@ impl SoundId {
 /// Requests from the settings window to the application.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SettingsEvent {
+    LinuxSetup(crate::linux_setup::Action),
     /// Save and apply this configuration.
     Apply(Box<Config>),
     /// Report the next key combination (sent back as [`SettingsInput::HotkeyCaptured`]).
@@ -205,6 +206,13 @@ pub enum DictionaryState {
 /// Messages from the application to the settings window.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SettingsInput {
+    ApplyRejected {
+        previous: Box<Config>,
+        attempted: Box<Config>,
+    },
+    LinuxSetup(crate::linux_setup::Status),
+    LinuxSetupConfig(Box<Config>),
+    LinuxSetupFinished,
     /// The engine has completed a particular replacement button action.
     SpellingReplacementFinished {
         request_id: u64,
@@ -280,6 +288,7 @@ enum RulesStatus {
 enum GeneralTab {
     Basic,
     Advanced,
+    Linux,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -291,6 +300,8 @@ enum ExclusionTab {
 
 #[derive(Debug, Clone, PartialEq)]
 enum Dialog {
+    ApplyError,
+    LinuxSetup(crate::linux_setup::Status),
     Hotkey {
         action: HotkeyAction,
         text: String,
@@ -417,6 +428,7 @@ pub struct SettingsView {
     rules_status: Option<RulesStatus>,
     /// «Лицензии...» of «О программе» is shown.
     licenses_open: bool,
+    linux_devices_text: String,
 }
 
 fn weak(ui: &mut Ui, text: &str) {
@@ -605,6 +617,7 @@ impl SettingsView {
     /// Opens the window on `section` with `config`.
     pub fn new(config: Config, section: Section, system_language: Lang) -> Self {
         Self {
+            linux_devices_text: config.linux.devices.join("\n"),
             system_language,
             draft: config.clone(),
             applied: config,
@@ -662,6 +675,14 @@ impl SettingsView {
     /// Handles a message from the application.
     pub fn handle(&mut self, input: SettingsInput) {
         match input {
+            SettingsInput::ApplyRejected {
+                previous,
+                attempted,
+            } => {
+                self.applied = *previous;
+                self.draft = *attempted;
+                self.dialog = Some(Dialog::ApplyError);
+            }
             SettingsInput::HotkeyCaptured(hotkey) => {
                 if let Some(Dialog::Hotkey {
                     text,
@@ -712,6 +733,21 @@ impl SettingsView {
                 self.section = Section::General;
                 self.general_tab = GeneralTab::Basic;
                 self.dialog = Some(Dialog::Elevation { failed });
+            }
+            SettingsInput::LinuxSetup(status) => {
+                self.dialog = Some(Dialog::LinuxSetup(status));
+            }
+            SettingsInput::LinuxSetupFinished => {
+                if matches!(self.dialog, Some(Dialog::LinuxSetup(_))) {
+                    self.dialog = None;
+                }
+            }
+            SettingsInput::LinuxSetupConfig(config) => {
+                if matches!(self.dialog, Some(Dialog::LinuxSetup(_))) {
+                    self.draft = (*config).clone();
+                    self.applied = *config;
+                    self.linux_devices_text = self.draft.linux.devices.join("\n");
+                }
             }
             SettingsInput::DictionaryError { id, message } => {
                 self.dictionary_errors.insert(id, message);
@@ -921,8 +957,19 @@ impl SettingsView {
                 GeneralTab::Advanced,
                 tr(Text::TabAdvanced, lang),
             );
+            if cfg!(target_os = "linux") {
+                ui.selectable_value(
+                    &mut self.general_tab,
+                    GeneralTab::Linux,
+                    tr(Text::TabLinux, lang),
+                );
+            }
         });
         ui.separator();
+        if self.general_tab == GeneralTab::Linux {
+            self.linux_settings(ui, lang);
+            return;
+        }
         let g = &mut self.draft.general;
         match self.general_tab {
             GeneralTab::Basic => {
@@ -931,7 +978,7 @@ impl SettingsView {
                     &mut g.autostart,
                     Text::OptAutostart,
                     lang,
-                    cfg!(windows),
+                    cfg!(any(windows, target_os = "linux")),
                 );
                 checkbox(ui, &mut g.autoswitch, Text::OptAutoswitch, lang, true);
                 ui.add_enabled_ui(g.autoswitch, |ui| {
@@ -960,6 +1007,10 @@ impl SettingsView {
                             ui.label(RichText::new(tr(Text::ElevationHint, lang)).weak().small());
                         });
                     }
+                }
+                if cfg!(target_os = "linux") {
+                    ui.checkbox(&mut g.run_elevated, tr(Text::LinuxAutoAuthorize, lang))
+                        .on_hover_text(tr(Text::LinuxPermissionHint, lang));
                 }
                 checkbox(ui, &mut g.tray_flags, Text::OptTrayFlags, lang, true);
                 ui.add_enabled_ui(g.tray_flags, |ui| {
@@ -1121,7 +1172,7 @@ impl SettingsView {
                     &mut a.disable_capslock,
                     Text::OptDisableCapsLock,
                     lang,
-                    cfg!(windows),
+                    cfg!(any(windows, target_os = "linux")),
                 );
                 checkbox(
                     ui,
@@ -1130,7 +1181,7 @@ impl SettingsView {
                     lang,
                     true,
                 );
-                if cfg!(windows) {
+                if cfg!(any(windows, target_os = "linux")) {
                     checkbox(
                         ui,
                         &mut a.fix_layout_in_menus,
@@ -1151,7 +1202,7 @@ impl SettingsView {
                     &mut a.clipboard_history,
                     Text::OptClipboardHistory,
                     lang,
-                    cfg!(windows),
+                    cfg!(any(windows, target_os = "linux")),
                 );
                 ui.add_enabled_ui(a.clipboard_history, |ui| {
                     checkbox(
@@ -1159,7 +1210,7 @@ impl SettingsView {
                         &mut a.clipboard_history_persist,
                         Text::OptClipboardHistoryPersist,
                         lang,
-                        cfg!(windows),
+                        cfg!(any(windows, target_os = "linux")),
                     );
                 });
                 checkbox(ui, &mut a.show_tooltips, Text::OptShowTooltips, lang, true);
@@ -1171,6 +1222,7 @@ impl SettingsView {
                     true,
                 );
             }
+            GeneralTab::Linux => {}
         }
         ui.add_space(10.0);
         ui.group(|ui| {
@@ -1215,6 +1267,84 @@ impl SettingsView {
         });
     }
 
+    fn linux_settings(&mut self, ui: &mut Ui, lang: Lang) {
+        use okbs_core::config::LayoutBackend;
+        let linux = &mut self.draft.linux;
+        ui.add(egui::Label::new(tr(Text::LinuxBackendHint, lang)).wrap());
+        form_row(ui, tr(Text::LinuxBackendLabel, lang), |ui| {
+            egui::ComboBox::from_id_salt("linux_layout_backend")
+                .selected_text(tr(backend_text(linux.layout_backend), lang))
+                .show_ui(ui, |ui| {
+                    for backend in [
+                        LayoutBackend::Auto,
+                        LayoutBackend::X11,
+                        LayoutBackend::Kde,
+                        LayoutBackend::GnomeExtension,
+                    ] {
+                        ui.selectable_value(
+                            &mut linux.layout_backend,
+                            backend,
+                            tr(backend_text(backend), lang),
+                        );
+                    }
+                    for backend in [LayoutBackend::GnomeFallback, LayoutBackend::Internal] {
+                        ui.add_enabled(false, egui::Button::new(tr(backend_text(backend), lang)));
+                    }
+                });
+        });
+        ui.add_space(8.0);
+        ui.label(tr(
+            if linux.gnome_extension_installed {
+                Text::LinuxComponentRecorded
+            } else {
+                Text::LinuxComponentNotRecorded
+            },
+            lang,
+        ));
+        ui.add(
+            egui::Label::new(
+                RichText::new(tr(Text::LinuxComponentHint, lang))
+                    .weak()
+                    .small(),
+            )
+            .wrap(),
+        );
+        ui.add_space(8.0);
+        form_row(ui, tr(Text::LinuxSwitchShortcut, lang), |ui| {
+            ui.add_enabled(
+                false,
+                egui::TextEdit::singleline(&mut linux.gnome_switch_hotkey)
+                    .desired_width(ui.available_width()),
+            );
+        });
+        ui.add(
+            egui::Label::new(
+                RichText::new(tr(Text::LinuxFallbackPending, lang))
+                    .weak()
+                    .small(),
+            )
+            .wrap(),
+        );
+        ui.add_space(12.0);
+        ui.label(RichText::new(tr(Text::LinuxDevicesLabel, lang)).strong());
+        ui.add(egui::Label::new(tr(Text::LinuxDevicesHint, lang)).wrap());
+        if ui
+            .add(
+                egui::TextEdit::multiline(&mut self.linux_devices_text)
+                    .desired_rows(4)
+                    .desired_width(ui.available_width()),
+            )
+            .changed()
+        {
+            linux.devices = self
+                .linux_devices_text
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(str::to_string)
+                .collect();
+        }
+    }
     fn hotkeys(&mut self, ui: &mut Ui, lang: Lang, events: &mut Vec<SettingsEvent>) {
         ui.label(tr(Text::HotkeysHint, lang));
         ui.add_space(4.0);
@@ -1288,7 +1418,7 @@ impl SettingsView {
     /// «Импорт...» and «Экспорт...» under the rules list, with the outcome of
     /// the last one. The file dialogs belong to the platform (Windows).
     fn rules_transfer_ui(&mut self, ui: &mut Ui, lang: Lang, events: &mut Vec<SettingsEvent>) {
-        let idle = self.rules_transfer.is_none() && cfg!(windows);
+        let idle = self.rules_transfer.is_none() && cfg!(any(windows, target_os = "linux"));
         ui.horizontal_wrapped(|ui| {
             if ui
                 .add_enabled(idle, action_button(tr(Text::BtnImport, lang)))
@@ -1309,7 +1439,7 @@ impl SettingsView {
                 self.rules_status = None;
                 events.push(SettingsEvent::ExportRules(self.draft.rules.clone()));
             }
-            if !cfg!(windows) {
+            if !cfg!(any(windows, target_os = "linux")) {
                 soon(ui, lang);
             }
         });
@@ -1502,7 +1632,7 @@ impl SettingsView {
             });
         }
         // The suggested names are Windows program files.
-        if cfg!(windows)
+        if cfg!(any(windows, target_os = "linux"))
             && ui
                 .add(action_button(tr(Text::SuggestExclusionsButton, lang)))
                 .clicked()
@@ -1706,7 +1836,7 @@ impl SettingsView {
             &mut a.show_in_tray_menu,
             Text::OptShowInTrayMenu,
             lang,
-            cfg!(windows),
+            cfg!(any(windows, target_os = "linux")),
         );
         form_row(ui, tr(Text::OptReplaceOn, lang), |ui| {
             egui::ComboBox::from_id_salt("autoreplace_trigger")
@@ -2002,6 +2132,16 @@ impl SettingsView {
         let ctx = ui.ctx().clone();
         let mut keep = true;
         match &mut dialog {
+            Dialog::ApplyError => {
+                egui::Modal::new(egui::Id::new("apply_error_dialog")).show(&ctx, |ui| {
+                    ui.set_width(420.0);
+                    ui.heading(tr(Text::SettingsApplyFailed, lang));
+                    ui.add(egui::Label::new(tr(Text::LinuxBackendUnavailable, lang)).wrap());
+                    if ui.button(tr(Text::BtnOk, lang)).clicked() {
+                        keep = false;
+                    }
+                });
+            }
             Dialog::Hotkey {
                 action,
                 text,
@@ -2274,6 +2414,99 @@ impl SettingsView {
                     });
                 });
             }
+            Dialog::LinuxSetup(status) => {
+                use crate::linux_setup::Action;
+                egui::Modal::new(egui::Id::new("linux_setup_dialog")).show(&ctx, |ui| {
+                    content_style(ui);
+                    ui.set_width(500.0);
+                    ui.heading(tr(Text::LinuxSetupTitle, lang));
+                    egui::ScrollArea::vertical()
+                        .id_salt("linux_setup_status")
+                        .max_height(300.0)
+                        .show(ui, |ui| {
+                            ui.add(egui::Label::new(tr(Text::LinuxSetupHint, lang)).wrap());
+                            ui.add_space(8.0);
+                            for line in status.lines(lang) {
+                                ui.add(egui::Label::new(line).wrap());
+                            }
+                            if status.session_restart {
+                                ui.add(egui::Label::new(tr(Text::LinuxSetupRestart, lang)).wrap());
+                            }
+                            if let Some(error) = &status.error {
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(tr(Text::LinuxSetupFailed, lang))
+                                            .color(Color32::from_rgb(0xB4, 0x2A, 0x2A)),
+                                    )
+                                    .wrap(),
+                                );
+                                ui.add(egui::Label::new(error).wrap());
+                            }
+                            if status.busy {
+                                ui.horizontal(|ui| {
+                                    ui.spinner();
+                                    ui.label(tr(Text::LinuxSetupBusy, lang));
+                                });
+                            }
+                            if ui
+                                .add_enabled(
+                                    !status.busy,
+                                    egui::Checkbox::new(
+                                        &mut self.draft.general.run_elevated,
+                                        tr(Text::LinuxAutoAuthorize, lang),
+                                    ),
+                                )
+                                .changed()
+                            {
+                                events.push(SettingsEvent::Apply(Box::new(self.draft.clone())));
+                            }
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(tr(Text::LinuxPermissionHint, lang))
+                                        .weak()
+                                        .small(),
+                                )
+                                .wrap(),
+                            );
+                        });
+                    ui.add_space(8.0);
+                    for (action, text) in [
+                        (Action::Authorize, Text::LinuxAuthorize),
+                        (Action::InstallIntegration, Text::LinuxInstallIntegration),
+                    ] {
+                        if ui
+                            .add_enabled(status.allows(action), action_button(tr(text, lang)))
+                            .clicked()
+                        {
+                            events.push(SettingsEvent::LinuxSetup(action));
+                        }
+                    }
+                    for (action, text) in [
+                        (Action::UseAutoBackend, Text::LinuxUseAuto),
+                        (Action::UseAllKeyboards, Text::LinuxUseAllKeyboards),
+                        (Action::KeyboardSettings, Text::MenuSystemKeyboardSettings),
+                    ] {
+                        if status.allows(action) && ui.add(action_button(tr(text, lang))).clicked()
+                        {
+                            events.push(SettingsEvent::LinuxSetup(action));
+                        }
+                    }
+                    ui.horizontal(|ui| {
+                        for (action, text) in [
+                            (Action::Recheck, Text::LinuxRecheck),
+                            (Action::Continue, Text::LinuxContinue),
+                            (Action::Quit, Text::MenuExit),
+                        ] {
+                            if ui
+                                .add_enabled(status.allows(action), action_button(tr(text, lang)))
+                                .clicked()
+                            {
+                                events.push(SettingsEvent::LinuxSetup(action));
+                            }
+                        }
+                    });
+                });
+            }
             Dialog::Elevation { failed } => {
                 let failed = *failed;
                 egui::Modal::new(egui::Id::new("elevation_dialog")).show(&ctx, |ui| {
@@ -2380,6 +2613,17 @@ impl SettingsView {
     }
 }
 
+fn backend_text(backend: okbs_core::config::LayoutBackend) -> Text {
+    use okbs_core::config::LayoutBackend;
+    match backend {
+        LayoutBackend::Auto => Text::LinuxBackendAuto,
+        LayoutBackend::X11 => Text::LinuxBackendX11,
+        LayoutBackend::Kde => Text::LinuxBackendKde,
+        LayoutBackend::GnomeExtension => Text::LinuxBackendGnome,
+        LayoutBackend::GnomeFallback => Text::LinuxBackendFallback,
+        LayoutBackend::Internal => Text::LinuxBackendInternal,
+    }
+}
 fn ui_language_label(preference: UiLanguage, system_language: Lang, lang: Lang) -> String {
     let native_name = |language| match language {
         Lang::Ru => tr(Text::LangRussian, Lang::Ru),
@@ -2627,18 +2871,23 @@ mod tests {
                         .collect();
                     // Options that only work on Windows keep the marker on the
                     // other platforms until their Linux port lands.
-                    let pending = match (section, tab) {
-                        _ if cfg!(windows) => 0,
-                        // «Запускаться при старте».
-                        (Section::General, GeneralTab::Basic) => 1,
-                        // Caps Lock and the two clipboard history options.
-                        (Section::General, GeneralTab::Advanced) => 3,
-                        // «Показывать список в меню».
-                        (Section::Autoreplace, _) => 1,
-                        // «Импорт...» and «Экспорт...» of the rules.
-                        (Section::Rules, _) => 1,
-                        _ => 0,
-                    };
+                    let pending =
+                        match (section, tab) {
+                            _ if cfg!(windows) => 0,
+                            // «Запускаться при старте».
+                            (Section::General, GeneralTab::Basic) => {
+                                usize::from(!cfg!(target_os = "linux"))
+                            }
+                            // Caps Lock and the two clipboard history options.
+                            (Section::General, GeneralTab::Advanced) => {
+                                if cfg!(target_os = "linux") { 0 } else { 3 }
+                            }
+                            // «Показывать список в меню».
+                            (Section::Autoreplace, _) => usize::from(!cfg!(target_os = "linux")),
+                            // «Импорт...» and «Экспорт...» of the rules.
+                            (Section::Rules, _) => usize::from(!cfg!(target_os = "linux")),
+                            _ => 0,
+                        };
                     assert_eq!(
                         marked.len(),
                         pending,
@@ -2844,6 +3093,243 @@ mod tests {
         }
     }
 
+    fn linux_status() -> crate::linux_setup::Status {
+        use crate::linux_setup::*;
+        Status {
+            input: InputAccess::Ready,
+            desktop: DesktopAccess::Ready,
+            session: SessionAccess::Ready,
+            busy: false,
+            error: None,
+            session_restart: false,
+            selected_devices: false,
+        }
+    }
+    #[test]
+    fn linux_setup_blocks_start_until_all_checks_pass_and_keeps_exit_available() {
+        use crate::linux_setup::*;
+        for lang in Lang::ALL {
+            let ctx = test_context();
+            let mut view = SettingsView::new(Config::default(), Section::General, lang);
+            for state in [
+                Status {
+                    input: InputAccess::NeedsSetup,
+                    ..linux_status()
+                },
+                Status {
+                    desktop: DesktopAccess::NeedsIntegration,
+                    ..linux_status()
+                },
+                Status {
+                    desktop: DesktopAccess::MissingLayouts,
+                    ..linux_status()
+                },
+                Status {
+                    session: SessionAccess::Inactive,
+                    ..linux_status()
+                },
+                Status {
+                    session: SessionAccess::Root,
+                    ..linux_status()
+                },
+                Status {
+                    busy: true,
+                    ..linux_status()
+                },
+            ] {
+                view.handle(SettingsInput::LinuxSetup(state));
+                assert!(click(&mut view, &ctx, tr(Text::LinuxContinue, lang)).is_empty());
+                assert_eq!(
+                    click(&mut view, &ctx, tr(Text::MenuExit, lang)),
+                    [SettingsEvent::LinuxSetup(Action::Quit)]
+                );
+            }
+            view.handle(SettingsInput::LinuxSetup(linux_status()));
+            assert_eq!(
+                click(&mut view, &ctx, tr(Text::LinuxContinue, lang)),
+                [SettingsEvent::LinuxSetup(Action::Continue)]
+            );
+            view.handle(SettingsInput::LinuxSetupFinished);
+            assert!(view.dialog.is_none());
+        }
+    }
+    #[test]
+    fn linux_setup_remains_usable_after_failed_authorization_and_saves_the_startup_option() {
+        use crate::linux_setup::*;
+        for lang in Lang::ALL {
+            let ctx = test_context();
+            let mut view = SettingsView::new(Config::default(), Section::General, lang);
+            view.handle(SettingsInput::LinuxSetup(Status {
+                input: InputAccess::NeedsSetup,
+                error: Some(tr(Text::LinuxAuthFailed, lang).into()),
+                ..linux_status()
+            }));
+            assert_eq!(
+                click(&mut view, &ctx, tr(Text::LinuxAuthorize, lang)),
+                [SettingsEvent::LinuxSetup(Action::Authorize)]
+            );
+            view.handle(SettingsInput::LinuxSetup(linux_status()));
+            let events = click(&mut view, &ctx, tr(Text::LinuxAutoAuthorize, lang));
+            assert!(
+                matches!(events.as_slice(), [SettingsEvent::Apply(config)] if config.general.run_elevated)
+            );
+            if let SettingsEvent::Apply(config) = &events[0] {
+                view.handle(SettingsInput::LinuxSetupConfig(config.clone()));
+            }
+            assert!(
+                !view.is_modified(),
+                "the saved setup option must not remain an unsaved draft"
+            );
+        }
+    }
+    #[test]
+    fn linux_setup_buttons_fit_the_window_with_long_failure_and_restart_messages() {
+        use crate::linux_setup::*;
+        for lang in Lang::ALL {
+            let ctx = test_context();
+            let mut view = SettingsView::new(Config::default(), Section::General, lang);
+            view.handle(SettingsInput::LinuxSetup(Status {
+                input: InputAccess::NoKeyboard,
+                desktop: DesktopAccess::NeedsIntegration,
+                session: SessionAccess::Inactive,
+                selected_devices: true,
+                session_restart: true,
+                error: Some(tr(Text::LinuxIntegrationFailed, lang).into()),
+                ..linux_status()
+            }));
+            for (text, pos) in drawn_texts(&mut view, &ctx) {
+                if [
+                    Text::LinuxSetupTitle,
+                    Text::MenuExit,
+                    Text::LinuxRecheck,
+                    Text::LinuxContinue,
+                    Text::LinuxAuthorize,
+                    Text::LinuxInstallIntegration,
+                    Text::LinuxUseAllKeyboards,
+                ]
+                .iter()
+                .any(|&id| text == tr(id, lang))
+                {
+                    assert!(
+                        pos.x >= 0.0
+                            && pos.x < WINDOW_SIZE[0]
+                            && pos.y >= 0.0
+                            && pos.y < WINDOW_SIZE[1],
+                        "{text}: {pos:?}"
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn linux_settings_select_the_native_backend_and_preserve_reserved_options() {
+        use okbs_core::config::LayoutBackend;
+        for lang in Lang::ALL {
+            let ctx = test_context();
+            let mut config = Config::default();
+            config.linux.gnome_switch_hotkey = "Ctrl+Space".into();
+            config.linux.gnome_extension_installed = true;
+            let mut view = SettingsView::new(config, Section::General, lang);
+            view.general_tab = GeneralTab::Linux;
+            click(&mut view, &ctx, tr(Text::LinuxBackendAuto, lang));
+            click(&mut view, &ctx, tr(Text::LinuxBackendGnome, lang));
+            let events = click(&mut view, &ctx, tr(Text::BtnApply, lang));
+            assert!(
+                matches!(&events[..], [SettingsEvent::Apply(config)] if config.linux.layout_backend == LayoutBackend::GnomeExtension
+                && config.linux.gnome_switch_hotkey == "Ctrl+Space" && config.linux.gnome_extension_installed)
+            );
+        }
+    }
+    #[test]
+    fn rejected_settings_keep_the_previous_configuration_and_the_editable_draft() {
+        use okbs_core::config::LayoutBackend;
+        let ctx = test_context();
+        let previous = Config::default();
+        let mut attempted = previous.clone();
+        attempted.linux.layout_backend = LayoutBackend::Kde;
+        attempted.general.autostart = !previous.general.autostart;
+        let mut view = SettingsView::new(previous.clone(), Section::General, Lang::Ru);
+        view.handle(SettingsInput::ApplyRejected {
+            previous: Box::new(previous.clone()),
+            attempted: Box::new(attempted.clone()),
+        });
+        assert_eq!(view.applied, previous);
+        assert_eq!(view.draft, attempted);
+        assert!(view.is_modified());
+        click(&mut view, &ctx, tr(Text::BtnOk, Lang::Ru));
+        assert!(view.dialog.is_none());
+        view.draft.linux.layout_backend = LayoutBackend::Auto;
+        let events = click(&mut view, &ctx, tr(Text::BtnApply, Lang::Ru));
+        assert!(
+            matches!(&events[..], [SettingsEvent::Apply(config)] if config.linux.layout_backend == LayoutBackend::Auto && config.general.autostart == attempted.general.autostart)
+        );
+    }
+    #[test]
+    fn linux_device_editor_accepts_multiple_paths_and_clears_to_all_keyboards() {
+        let ctx = test_context();
+        let mut config = Config::default();
+        config.linux.devices = vec!["/dev/input/event-fixture".into()];
+        let mut view = SettingsView::new(config, Section::General, Lang::En);
+        view.general_tab = GeneralTab::Linux;
+        click(&mut view, &ctx, "/dev/input/event-fixture");
+        let modifiers = egui::Modifiers {
+            ctrl: true,
+            command: true,
+            ..egui::Modifiers::NONE
+        };
+        let mut input = window_input();
+        input.events = vec![egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }];
+        let mut output = ctx.run_ui(input, |ui| {
+            view.ui(ui, &mut Vec::new());
+        });
+        output.textures_delta.clear();
+        let mut input = window_input();
+        input.events = vec![egui::Event::Text(
+            " /dev/input/event3 \n\n/dev/input/by-id/usb-fixture\n".into(),
+        )];
+        let mut output = ctx.run_ui(input, |ui| {
+            view.ui(ui, &mut Vec::new());
+        });
+        output.textures_delta.clear();
+        assert_eq!(
+            view.draft.linux.devices,
+            ["/dev/input/event3", "/dev/input/by-id/usb-fixture"]
+        );
+        let events = click(&mut view, &ctx, tr(Text::BtnApply, Lang::En));
+        assert!(
+            matches!(&events[..], [SettingsEvent::Apply(config)] if config.linux.devices.len() == 2)
+        );
+        let text = view.linux_devices_text.clone();
+        click(&mut view, &ctx, &text);
+        let mut input = window_input();
+        input.events = vec![
+            egui::Event::Key {
+                key: egui::Key::A,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers,
+            },
+            egui::Event::Key {
+                key: egui::Key::Backspace,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ];
+        let mut output = ctx.run_ui(input, |ui| {
+            view.ui(ui, &mut Vec::new());
+        });
+        output.textures_delta.clear();
+        assert!(view.draft.linux.devices.is_empty());
+    }
     #[test]
     fn first_start_saves_the_chosen_exclusions_at_once() {
         for add in [true, false] {
@@ -2884,13 +3370,13 @@ mod tests {
 
     #[test]
     fn suggested_exclusions_from_the_section_wait_for_apply() {
-        if !cfg!(windows) {
+        if !cfg!(any(windows, target_os = "linux")) {
             return;
         }
         let ctx = test_context();
         let mut config = Config::default();
         config.exclusions.executables.push(ExecutableExclusion {
-            path: "code.exe".into(),
+            path: okbs_core::config::SUGGESTED_EDITORS[0].to_ascii_lowercase(),
         });
         let mut view = SettingsView::new(config, Section::Exclusions, Lang::Ru);
         click(&mut view, &ctx, tr(Text::SuggestExclusionsButton, Lang::Ru));

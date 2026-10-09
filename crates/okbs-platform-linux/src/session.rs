@@ -1,7 +1,7 @@
 //! Detection of the graphical session and choice of the layout backend.
 
 use okbs_core::config::LayoutBackend;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Display server protocol of the session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,24 +107,53 @@ impl SessionInfo {
 
 /// Picks the concrete layout backend for `setting`.
 ///
-/// `Auto` resolves to KDE D-Bus on Plasma (X11 and Wayland), the GNOME Shell
-/// extension or its fallback on GNOME, XKB on other X11 sessions and the
-/// internal counter elsewhere. X11 is never chosen for a Wayland session,
-/// because XWayland only covers X11 clients.
+/// `Auto` uses XKB in X11 and the compositor integration in supported Wayland
+/// sessions. A missing component does not select an unimplemented fallback.
 pub fn resolve_layout_backend(
     setting: LayoutBackend,
     session: &SessionInfo,
-    gnome_extension_available: bool,
+    _gnome_extension_available: bool,
 ) -> LayoutBackend {
     if setting != LayoutBackend::Auto {
         return setting;
     }
-    match (&session.desktop, session.session_type) {
-        (Desktop::Kde, _) => LayoutBackend::Kde,
-        (Desktop::Gnome, _) if gnome_extension_available => LayoutBackend::GnomeExtension,
-        (Desktop::Gnome, _) => LayoutBackend::GnomeFallback,
-        (_, SessionType::X11) => LayoutBackend::X11,
+    match (session.session_type, &session.desktop) {
+        (SessionType::X11, _) => LayoutBackend::X11,
+        (SessionType::Wayland, Desktop::Kde) => LayoutBackend::Kde,
+        (SessionType::Wayland, Desktop::Gnome) => LayoutBackend::GnomeExtension,
         _ => LayoutBackend::Internal,
+    }
+}
+
+pub fn validate_layout_backend(
+    setting: LayoutBackend,
+    session: &SessionInfo,
+) -> okbs_platform::Result<LayoutBackend> {
+    let backend = resolve_layout_backend(setting, session, false);
+    let available = match backend {
+        LayoutBackend::X11 => session.session_type == SessionType::X11,
+        LayoutBackend::Kde => {
+            session.desktop == Desktop::Kde
+                && matches!(
+                    session.session_type,
+                    SessionType::X11 | SessionType::Wayland
+                )
+        }
+        LayoutBackend::GnomeExtension => {
+            session.desktop == Desktop::Gnome
+                && matches!(
+                    session.session_type,
+                    SessionType::X11 | SessionType::Wayland
+                )
+        }
+        _ => false,
+    };
+    if available {
+        Ok(backend)
+    } else {
+        Err(okbs_platform::PlatformError::Unsupported(
+            "selected Linux layout backend is not available in this session",
+        ))
     }
 }
 
@@ -133,8 +162,12 @@ pub const GNOME_EXTENSION_UUID: &str = "okbswitch@own-keyboard-switch";
 
 /// Whether the bundled GNOME Shell extension is installed for the user or system-wide.
 pub fn gnome_extension_installed(home: Option<&Path>) -> bool {
-    let user = home.map(|h| {
-        h.join(".local/share/gnome-shell/extensions")
+    let data = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| home.map(|path| path.join(".local/share")));
+    let user = data.map(|data| {
+        data.join("gnome-shell/extensions")
             .join(GNOME_EXTENSION_UUID)
             .join("metadata.json")
     });
@@ -173,7 +206,7 @@ mod tests {
         assert!(!s.wsl);
         assert_eq!(
             resolve_layout_backend(LayoutBackend::Auto, &s, false),
-            LayoutBackend::GnomeFallback
+            LayoutBackend::GnomeExtension
         );
         assert_eq!(
             resolve_layout_backend(LayoutBackend::Auto, &s, true),
@@ -191,7 +224,11 @@ mod tests {
             assert_eq!(s.desktop, Desktop::Kde);
             assert_eq!(
                 resolve_layout_backend(LayoutBackend::Auto, &s, true),
-                LayoutBackend::Kde
+                if kind == "x11" {
+                    LayoutBackend::X11
+                } else {
+                    LayoutBackend::Kde
+                }
             );
         }
     }
@@ -237,6 +274,37 @@ mod tests {
             resolve_layout_backend(LayoutBackend::X11, &s, false),
             LayoutBackend::X11
         );
+    }
+    #[test]
+    fn native_selection_is_shared_and_unimplemented_modes_are_rejected() {
+        for desktop in ["GNOME", "KDE", "XFCE"] {
+            let s = session(
+                &[
+                    ("XDG_SESSION_TYPE", "x11"),
+                    ("XDG_CURRENT_DESKTOP", desktop),
+                ],
+                "Linux",
+            );
+            assert_eq!(
+                validate_layout_backend(LayoutBackend::Auto, &s).unwrap(),
+                LayoutBackend::X11
+            );
+            assert!(validate_layout_backend(LayoutBackend::GnomeFallback, &s).is_err());
+            assert!(validate_layout_backend(LayoutBackend::Internal, &s).is_err());
+        }
+        let wayland = session(
+            &[
+                ("XDG_SESSION_TYPE", "wayland"),
+                ("XDG_CURRENT_DESKTOP", "KDE"),
+            ],
+            "Linux",
+        );
+        assert_eq!(
+            validate_layout_backend(LayoutBackend::Auto, &wayland).unwrap(),
+            LayoutBackend::Kde
+        );
+        assert!(validate_layout_backend(LayoutBackend::X11, &wayland).is_err());
+        assert!(validate_layout_backend(LayoutBackend::GnomeExtension, &wayland).is_err());
     }
 
     #[test]

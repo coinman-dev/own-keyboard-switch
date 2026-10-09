@@ -3467,6 +3467,27 @@ fn alt_matches_the_layout_to_the_menu_and_puts_it_back() {
         .handle_focus(&okbs_platform::FocusEvent::MenuClosed);
     assert_eq!(h.layout(), Lang::Ru, "the typing layout comes back");
 }
+#[test]
+fn late_menu_closure_does_not_restore_the_layout_of_a_new_alt_invocation() {
+    let mut h = Harness::with_config(Lang::Ru, menu_config());
+    h.desktop.lock().menu_language = Some(Lang::En);
+    let first = Instant::now();
+    h.key_at(PhysKey::AltLeft, true, first);
+    h.key_at(PhysKey::AltLeft, false, first + Duration::from_millis(10));
+    let second = first + Duration::from_millis(30);
+    h.key_at(PhysKey::AltLeft, true, second);
+    h.processor
+        .handle_focus(&okbs_platform::FocusEvent::MenuClosedFor(first));
+    assert_eq!(
+        h.layout(),
+        Lang::En,
+        "the late closure belongs to the first invocation"
+    );
+    h.key_at(PhysKey::AltLeft, false, second + Duration::from_millis(10));
+    h.processor
+        .handle_focus(&okbs_platform::FocusEvent::MenuClosedFor(second));
+    assert_eq!(h.layout(), Lang::Ru);
+}
 
 #[test]
 fn a_russian_menu_or_a_matching_layout_changes_nothing() {

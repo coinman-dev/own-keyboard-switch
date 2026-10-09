@@ -51,6 +51,7 @@ pub(crate) struct Shared {
     dictionary_states: Mutex<std::collections::BTreeMap<String, SettingsInput>>,
     open: AtomicBool,
     shutdown: AtomicBool,
+    failed: AtomicBool,
 }
 
 impl Shared {
@@ -240,7 +241,7 @@ impl App {
                         self.spellcheck_pending = None;
                         // Placed while still hidden, then shown without
                         // taking the focus from the editor.
-                        #[cfg(windows)]
+                        #[cfg(any(windows, target_os = "linux"))]
                         if let Some(result) = &self.spellcheck_result {
                             let title = result.title(self.lang);
                             if crate::window_position::keep_visible(title, position) {
@@ -256,6 +257,9 @@ impl App {
                     }
                 }
                 Request::Input(input) => {
+                    if matches!(&input, SettingsInput::ApplyRejected { .. }) {
+                        self.show_settings(ctx);
+                    }
                     if let SettingsInput::SpellingReplacementFinished {
                         request_id,
                         success,
@@ -366,6 +370,7 @@ impl App {
     }
 
     fn spellcheck_ui(&mut self, ui: &mut egui::Ui) {
+        let spelling_id = self.spellcheck_id();
         let Some(result) = &mut self.spellcheck_result else {
             return;
         };
@@ -376,13 +381,25 @@ impl App {
             .inner;
         if let Some(height) = result.compact_height() {
             // Frame margins above and below the contents.
-            self.spellcheck_height = (height + 20.0).clamp(100.0, 320.0);
+            let height = (height + 20.0).clamp(100.0, 320.0);
+            if self.spellcheck_height != height {
+                self.spellcheck_height = height;
+                // Apply from the child frame itself: its hidden parent may
+                // not rebuild the viewport until another event arrives.
+                ui.ctx().send_viewport_cmd_to(
+                    spelling_id,
+                    egui::ViewportCommand::InnerSize([360.0, height].into()),
+                );
+                ui.ctx().request_repaint();
+            }
         }
         // Placed once when shown; afterwards it may be moved, only kept on screen.
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         if crate::window_position::keep_visible(result.title(self.lang), self.spellcheck_position) {
             self.spellcheck_position = None;
         }
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(500));
         let word = result.original().to_string();
         match action {
             Some(SpellingAction::Replace(corrected)) => {
@@ -489,12 +506,16 @@ impl App {
                 }
             } else {
                 let _ = result.ui(ui, self.lang, false);
-                #[cfg(windows)]
+                #[cfg(any(windows, target_os = "linux"))]
                 if result.is_compact() {
-                    let _ = crate::window_position::keep_visible(
+                    if crate::window_position::keep_visible(
                         result.title(self.lang),
                         self.text_result_position,
-                    );
+                    ) {
+                        self.text_result_position = None;
+                    }
+                    ui.ctx()
+                        .request_repaint_after(std::time::Duration::from_millis(500));
                 }
             }
         }
@@ -556,6 +577,19 @@ impl eframe::App for App {
         }
         // No position here: it is set natively in physical pixels, and egui
         // would move the window back whenever this builder changed.
+        let spelling_visible = self.spellcheck_result.is_some();
+        #[cfg(target_os = "linux")]
+        let spelling_visible = if spelling_visible
+            && crate::window_position::uses_native_position()
+            && !crate::window_position::show_inactive(tr(Text::SpellcheckWordTitle, self.lang))
+        {
+            // Create the viewport hidden on its first frame so its no-focus
+            // X11 hint can be installed before the WM processes MapRequest.
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+            false
+        } else {
+            spelling_visible
+        };
         let builder = egui::ViewportBuilder::default()
             .with_title(tr(Text::SpellcheckWordTitle, self.lang))
             .with_icon(crate::branding::icon())
@@ -566,7 +600,7 @@ impl eframe::App for App {
             .with_maximize_button(false)
             .with_always_on_top()
             .with_active(false)
-            .with_visible(self.spellcheck_result.is_some());
+            .with_visible(spelling_visible);
         ctx.show_viewport_immediate(self.spellcheck_id(), builder, |ui, _| {
             self.spellcheck_ui(ui)
         });
@@ -578,6 +612,21 @@ impl eframe::App for App {
 }
 
 impl SettingsWindow {
+    pub fn is_alive(&self) -> bool {
+        !self.shared.failed.load(Ordering::SeqCst)
+            && self
+                .thread
+                .as_ref()
+                .is_some_and(|thread| !thread.is_finished())
+    }
+    pub fn show_linux_setup(&self, config: &Config, status: crate::linux_setup::Status) {
+        self.open_with_input(
+            config,
+            Section::General,
+            Some(SettingsInput::LinuxSetup(status)),
+            Vec::new(),
+        );
+    }
     pub fn autoreplace_list(&self) -> AutoreplaceListWindow {
         AutoreplaceListWindow::new(self.requests.clone(), self.shared.clone())
     }
@@ -742,6 +791,14 @@ fn native_options(title: &str, shared: &Arc<Shared>) -> eframe::NativeOptions {
     let _ = shared;
     eframe::NativeOptions {
         viewport: settings_builder(title),
+        // Wayland stops frame callbacks for hidden surfaces. Waiting for
+        // vsync while hiding a utility viewport can block the shared GUI loop
+        // in EGL, including later popup requests and shutdown. These windows
+        // repaint on events/timers, so they do not need continuous vsync.
+        glow_options: eframe::egui_glow::GlowConfiguration {
+            vsync: !cfg!(target_os = "linux") || crate::window_position::uses_native_position(),
+            ..Default::default()
+        },
         centered: true,
         persist_window: false,
         // Called once: later windows of this thread reuse the same event loop.
@@ -758,6 +815,9 @@ fn native_options(title: &str, shared: &Arc<Shared>) -> eframe::NativeOptions {
             #[cfg(target_os = "linux")]
             {
                 winit::platform::x11::EventLoopBuilderExtX11::with_any_thread(builder, true);
+                winit::platform::wayland::EventLoopBuilderExtWayland::with_any_thread(
+                    builder, true,
+                );
             }
         })),
         ..Default::default()
@@ -870,8 +930,12 @@ fn window_thread(
                 .with_max_inner_size([520.0, 170.0])
                 .with_resizable(false)
                 .with_maximize_button(false)
-                .with_active(false)
-                .with_position(position.unwrap_or([24.0, 24.0]));
+                .with_active(false);
+            if !crate::window_position::uses_native_position() {
+                options.viewport = options
+                    .viewport
+                    .with_position(position.unwrap_or([24.0, 24.0]));
+            }
         }
         if passive {
             options.viewport = options.viewport.with_active(false);
@@ -925,6 +989,7 @@ fn window_thread(
             }),
         );
         if let Err(err) = result {
+            shared.failed.store(true, Ordering::SeqCst);
             tracing::error!("cannot open the settings window: {err}");
         }
         if let Ok(mut slot) = shared.context.lock() {
@@ -941,6 +1006,240 @@ fn window_thread(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires isolated X11, Openbox and two RandR monitors; tools/test-linux-popups.sh"]
+    fn x11_real_egui_popups_fit_workareas_and_preserve_passive_focus() {
+        use std::time::{Duration, Instant};
+        use x11rb::{
+            connection::Connection,
+            protocol::xproto::{self, ConnectionExt},
+            wrapper::ConnectionExt as _,
+        };
+        let (conn, screen) = x11rb::connect(None).unwrap();
+        let root = conn.setup().roots[screen].root;
+        let atom = |name: &str| {
+            conn.intern_atom(false, name.as_bytes())
+                .unwrap()
+                .reply()
+                .unwrap()
+                .atom
+        };
+        let values = |window, property: &str| {
+            conn.get_property(
+                false,
+                window,
+                atom(property),
+                xproto::AtomEnum::ANY,
+                0,
+                1024,
+            )
+            .unwrap()
+            .reply()
+            .unwrap()
+            .value32()
+            .map(|v| v.collect::<Vec<_>>())
+            .unwrap_or_default()
+        };
+        let monitors = x11rb::protocol::randr::get_monitors(&conn, root, true)
+            .unwrap()
+            .reply()
+            .unwrap()
+            .monitors;
+        assert_eq!(monitors.len(), 2, "test must actually expose two monitors");
+        // A real dock asks the WM to reserve 48 physical pixels at the top.
+        let dock = conn.generate_id().unwrap();
+        conn.create_window(
+            x11rb::COPY_DEPTH_FROM_PARENT,
+            dock,
+            root,
+            0,
+            0,
+            2800,
+            48,
+            0,
+            xproto::WindowClass::INPUT_OUTPUT,
+            0,
+            &xproto::CreateWindowAux::new(),
+        )
+        .unwrap();
+        conn.change_property32(
+            xproto::PropMode::REPLACE,
+            dock,
+            atom("_NET_WM_WINDOW_TYPE"),
+            xproto::AtomEnum::ATOM,
+            &[atom("_NET_WM_WINDOW_TYPE_DOCK")],
+        )
+        .unwrap();
+        conn.change_property32(
+            xproto::PropMode::REPLACE,
+            dock,
+            atom("_NET_WM_STRUT_PARTIAL"),
+            xproto::AtomEnum::CARDINAL,
+            &[0, 0, 48, 0, 0, 0, 0, 0, 0, 2799, 0, 0],
+        )
+        .unwrap();
+        conn.map_window(dock).unwrap();
+        conn.flush().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while values(root, "_NET_WORKAREA").get(1) != Some(&48) {
+            assert!(
+                Instant::now() < deadline,
+                "Openbox must reserve the dock work area"
+            );
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        let bounds = |title: &str| -> Option<(u32, [i32; 4])> {
+            for window in values(root, "_NET_CLIENT_LIST") {
+                if values(window, "_NET_WM_PID").first() != Some(&std::process::id()) {
+                    continue;
+                }
+                let name = conn
+                    .get_property(
+                        false,
+                        window,
+                        atom("_NET_WM_NAME"),
+                        xproto::AtomEnum::ANY,
+                        0,
+                        1024,
+                    )
+                    .unwrap()
+                    .reply()
+                    .unwrap();
+                if String::from_utf8_lossy(&name.value) != title {
+                    continue;
+                }
+                if conn
+                    .get_window_attributes(window)
+                    .unwrap()
+                    .reply()
+                    .unwrap()
+                    .map_state
+                    != xproto::MapState::VIEWABLE
+                {
+                    continue;
+                }
+                let geometry = conn.get_geometry(window).unwrap().reply().unwrap();
+                let origin = conn
+                    .translate_coordinates(window, root, 0, 0)
+                    .unwrap()
+                    .reply()
+                    .unwrap();
+                let frame = values(window, "_NET_FRAME_EXTENTS");
+                assert_eq!(frame.len(), 4, "real WM decorations must be included");
+                return Some((
+                    window,
+                    [
+                        i32::from(origin.dst_x) - frame[0] as i32,
+                        i32::from(origin.dst_y) - frame[2] as i32,
+                        i32::from(geometry.width) + frame[0] as i32 + frame[1] as i32,
+                        i32::from(geometry.height) + frame[2] as i32 + frame[3] as i32,
+                    ],
+                ));
+            }
+            None
+        };
+        let wait_position = |title: &str, monitor: [i32; 4], near: Option<[i32; 2]>| {
+            let deadline = Instant::now() + Duration::from_secs(8);
+            loop {
+                if let Some((window, b)) = bounds(title)
+                    && b[0] >= monitor[0]
+                    && b[1] >= monitor[1]
+                    && b[0] + b[2] <= monitor[0] + monitor[2]
+                    && b[1] + b[3] <= monitor[1] + monitor[3]
+                    && near.is_none_or(|p| (b[0] - p[0]).abs() <= 16 && (b[1] - p[1]).abs() <= 16)
+                {
+                    return (window, b);
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "popup {title} outside {monitor:?}, actual {:?}",
+                    bounds(title)
+                );
+                std::thread::sleep(Duration::from_millis(40));
+            }
+        };
+        let (events, _rx) = unbounded();
+        let settings = SettingsWindow::spawn(events, Lang::En).unwrap();
+        let list = settings.autoreplace_list();
+        let history = settings.clipboard_history();
+        let list_config = crate::autoreplace_list::AutoreplaceListConfig {
+            labels: crate::autoreplace_list::AutoreplaceListLabels {
+                title: "OKBS X11 list fixture".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        list.show(list_config.clone(), false, [1500.0, 80.0]);
+        let right = [1400, 48, 1400, 1352];
+        let (editor, _) = wait_position("OKBS X11 list fixture", right, Some([1500, 80]));
+        // This already visible window is the focused editor for passive-popup
+        // acceptance. Reopening a spelling result must not change X11 focus.
+        conn.set_input_focus(xproto::InputFocus::PARENT, editor, x11rb::CURRENT_TIME)
+            .unwrap();
+        conn.flush().unwrap();
+        let mut config = Config::default();
+        config.general.ui_language = UiLanguage::En;
+        settings.show_text_passive(
+            &config,
+            TextResult::spelling_popup("wrold".into(), Vec::new()),
+            Some([2799.0, 1399.0]),
+            None,
+        );
+        let title = tr(Text::SpellcheckWordTitle, Lang::En);
+        wait_position(title, right, None);
+        assert_eq!(
+            conn.get_input_focus().unwrap().reply().unwrap().focus,
+            editor,
+            "spelling popup stole editor focus"
+        );
+        let history_config = crate::clipboard_history::ClipboardHistoryConfig {
+            entries: vec!["synthetic clipboard fixture".into()],
+            labels: crate::clipboard_history::ClipboardHistoryLabels {
+                title: "OKBS X11 history fixture".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        history.show(history_config, [2799.0, 1399.0]);
+        wait_position("OKBS X11 history fixture", right, None);
+        // Existing viewports must accept a new physical position, then allow
+        // user movement without returning to the original caret point.
+        list.show(list_config, false, [40.0, 80.0]);
+        let (window, _) =
+            wait_position("OKBS X11 list fixture", [0, 48, 1400, 1352], Some([40, 80]));
+        let move_event = xproto::ClientMessageEvent::new(
+            32,
+            window,
+            atom("_NET_MOVERESIZE_WINDOW"),
+            [1 | (3 << 8) | (1 << 12), 160, 140, 0, 0],
+        );
+        conn.send_event(
+            false,
+            root,
+            xproto::EventMask::SUBSTRUCTURE_REDIRECT | xproto::EventMask::SUBSTRUCTURE_NOTIFY,
+            move_event,
+        )
+        .unwrap();
+        conn.flush().unwrap();
+        wait_position(
+            "OKBS X11 list fixture",
+            [0, 48, 1400, 1352],
+            Some([160, 140]),
+        );
+        std::thread::sleep(Duration::from_millis(1100));
+        let (_, moved) = bounds("OKBS X11 list fixture").unwrap();
+        assert!(
+            (moved[0] - 160).abs() <= 16,
+            "popup must retain user movement"
+        );
+        history.hide();
+        list.hide();
+        drop(settings);
+        conn.destroy_window(dock).unwrap();
+        conn.flush().unwrap();
+    }
 
     #[test]
     fn spelling_popup_waits_for_matching_success_before_hiding() {

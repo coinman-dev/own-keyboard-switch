@@ -7,7 +7,22 @@ use std::path::PathBuf;
 #[derive(Debug, Parser)]
 #[command(name = "okbswitch", version, about, long_about = None)]
 pub struct Cli {
-    /// Use another configuration file inside the program directory.
+    /// Install the bundled GNOME extension and KDE script for this user.
+    #[cfg(target_os = "linux")]
+    #[arg(long)]
+    pub install_linux_integration: bool,
+    /// Keep Linux settings and logs beside the executable (automatic in AppImage).
+    #[cfg(target_os = "linux")]
+    #[arg(long)]
+    pub portable: bool,
+    /// Ask for administrator authorization to configure keyboard access.
+    #[cfg(target_os = "linux")]
+    #[arg(long)]
+    pub setup_linux_input: bool,
+    #[cfg(target_os = "linux")]
+    #[arg(long, hide = true)]
+    pub setup_linux_input_helper: bool,
+    /// Use another configuration file (on Windows, inside the program directory).
     #[arg(short, long, value_name = "FILE")]
     pub config: Option<PathBuf>,
 

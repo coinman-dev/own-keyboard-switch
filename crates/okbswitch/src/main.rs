@@ -14,6 +14,10 @@ mod controller;
 mod diagnose;
 mod dictionaries;
 mod instance;
+#[cfg(target_os = "linux")]
+mod linux_startup;
+#[cfg(target_os = "linux")]
+mod linux_ui;
 mod locale;
 mod logging;
 mod paths;
@@ -52,6 +56,24 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<ExitCode> {
+    #[cfg(target_os = "linux")]
+    if cli.setup_linux_input_helper {
+        okbs_platform_linux::permissions::install()?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    #[cfg(target_os = "linux")]
+    if cli.setup_linux_input {
+        okbs_platform_linux::permissions::request()?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    #[cfg(target_os = "linux")]
+    if cli.install_linux_integration {
+        okbs_platform_linux::integration::install()?;
+        println!(
+            "Desktop integration installed. Enable the Own Keyboard Switch GNOME extension or KDE script, then restart the desktop session if it was newly installed or updated."
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
     if cli.licenses {
         print!("{}", okbs_ui::about::licenses_text());
         return Ok(ExitCode::SUCCESS);
@@ -60,7 +82,16 @@ fn run(cli: Cli) -> Result<ExitCode> {
         print!("{}", config::to_toml_string(&config::Config::default())?);
         return Ok(ExitCode::SUCCESS);
     }
+    #[cfg(target_os = "linux")]
+    if !cli.paths && !cli.diagnose && okbs_platform_linux::permissions::is_root() {
+        anyhow::bail!(
+            "start the application as a regular user; administrator rights are only needed for the input setup helper"
+        );
+    }
 
+    #[cfg(target_os = "linux")]
+    let paths = AppPaths::resolve_linux(cli.config, cli.portable)?;
+    #[cfg(not(target_os = "linux"))]
     let paths = AppPaths::resolve(cli.config)?;
     if cli.paths {
         print!("{paths}");
@@ -145,7 +176,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
         .issues
         .iter()
         .any(|i| matches!(i, ConfigIssue::NewerVersion { .. }));
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     let first_run = loaded
         .issues
         .iter()
@@ -171,7 +202,14 @@ fn run(cli: Cli) -> Result<ExitCode> {
         &stop_rx,
     )?;
     #[cfg(target_os = "linux")]
-    app_linux::run(settings, cli.no_tray, cli.settings, &stop_rx)?;
+    app_linux::run(
+        settings,
+        &paths,
+        cli.no_tray,
+        cli.settings,
+        first_run,
+        &stop_rx,
+    )?;
     #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = (settings, stop_rx);

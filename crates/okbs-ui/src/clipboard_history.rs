@@ -155,15 +155,14 @@ impl HistoryView {
         if !self.visible() {
             return;
         }
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         if crate::window_position::keep_visible(
             &self.config.labels.title,
             self.place_on_open.then_some(self.position),
         ) {
             self.place_on_open = false;
         }
-        #[cfg(not(windows))]
-        if self.place_on_open {
+        if self.place_on_open && !crate::window_position::uses_native_position() {
             ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(self.position.into()));
             self.place_on_open = false;
         }

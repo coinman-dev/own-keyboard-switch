@@ -320,6 +320,7 @@ pub struct Processor {
     /// Layout to return to once the menu opened with Alt is closed
     /// («Исправлять раскладку при работе с меню, содержащим горячие клавиши»).
     layout_before_menu: Option<Lang>,
+    menu_started_at: Option<Instant>,
     hint: Option<usize>,
     config: Config,
     detector: Detector,
@@ -400,6 +401,7 @@ impl Processor {
             last_input_target: None,
             last_clipboard_text: None,
             layout_before_menu: None,
+            menu_started_at: None,
             hint: None,
             autoreplacer: AutoReplacer::new(&config.autoreplace),
             config,
@@ -477,6 +479,7 @@ impl Processor {
 
     /// Replaces the configuration and rebuilds the detector.
     pub fn apply_config(&mut self, config: Config) {
+        self.refresh_layouts();
         if let Some(gate) = &self.input_gate {
             gate.configure(&config);
         }
@@ -582,14 +585,14 @@ impl Processor {
     /// Handles a focus change: the caret moved to another place.
     /// Alt alone opens the menu bar: while it is open the layout has to match
     /// the underlined access keys, otherwise Alt+Ф never reaches «&File».
-    fn match_menu_layout(&mut self) {
-        if !self.config.advanced.fix_layout_in_menus || self.layout_before_menu.is_some() {
+    fn match_menu_layout(&mut self, time: Instant) {
+        if !self.config.advanced.fix_layout_in_menus {
             return;
         }
         let Some(focus) = self.backends.focus.as_ref() else {
             return;
         };
-        let menu = match focus.menu_access_language() {
+        let menu = match focus.menu_access_language_for(time) {
             Ok(Some(lang)) => lang,
             Ok(None) => return,
             Err(err) => {
@@ -603,12 +606,19 @@ impl Processor {
         let Some(current) = self.current_lang() else {
             return;
         };
-        if current == menu || self.foreground_excluded() {
+        if self.foreground_excluded() {
+            return;
+        }
+        if current == menu {
+            if self.layout_before_menu.is_some() {
+                self.menu_started_at = Some(time);
+            }
             return;
         }
         match self.set_lang(menu) {
             Ok(()) => {
-                self.layout_before_menu = Some(current);
+                self.layout_before_menu = self.layout_before_menu.or(Some(current));
+                self.menu_started_at = Some(time);
                 tracing::debug!(%menu, "layout matched to the menu access keys");
             }
             Err(err) => tracing::debug!("cannot match the menu layout: {err}"),
@@ -617,6 +627,7 @@ impl Processor {
 
     /// Puts back the layout that was active before the menu was opened.
     fn restore_layout_after_menu(&mut self) {
+        self.menu_started_at = None;
         let Some(lang) = self.layout_before_menu.take() else {
             return;
         };
@@ -626,6 +637,12 @@ impl Processor {
     }
 
     pub fn handle_focus(&mut self, event: &FocusEvent) {
+        if let FocusEvent::MenuClosedFor(time) = event {
+            if self.menu_started_at == Some(*time) {
+                self.restore_layout_after_menu();
+            }
+            return;
+        }
         if matches!(event, FocusEvent::MenuClosed | FocusEvent::WindowChanged(_)) {
             self.restore_layout_after_menu();
         }
@@ -676,6 +693,7 @@ impl Processor {
 
     /// Handles a layout change notification.
     pub fn handle_layout_change(&mut self, id: LayoutId) -> Vec<Event> {
+        self.refresh_layouts();
         let lang = self.lang_of(id);
         let ours = matches!(self.own_layout_change, Some((l, t)) if Some(l) == lang && t.elapsed() <= OWN_LAYOUT_CHANGE);
         if ours {
@@ -698,6 +716,13 @@ impl Processor {
     /// Description of a layout id from the cached list.
     fn layout_info(&self, id: LayoutId) -> Option<LayoutInfo> {
         self.layouts.iter().find(|l| l.id == id).cloned()
+    }
+    pub fn current_layout_info(&self) -> Option<LayoutInfo> {
+        self.backends
+            .layouts
+            .current()
+            .ok()
+            .and_then(|id| self.layout_info(id))
     }
 
     /// Description of the first layout of `lang`.
@@ -1296,7 +1321,7 @@ impl Processor {
                 self.mods.set(key, true);
                 self.switch_candidate = (alone && self.is_switch_key(key)).then_some((key, time));
                 if alone && matches!(key, PhysKey::AltLeft | PhysKey::AltRight) {
-                    self.match_menu_layout();
+                    self.match_menu_layout(time);
                 }
             }
             return;

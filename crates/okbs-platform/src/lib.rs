@@ -170,6 +170,13 @@ pub trait FocusInfo: Send {
     fn menu_access_language(&self) -> Result<Option<okbs_core::Lang>> {
         Ok(None)
     }
+    /// Associate an asynchronous menu closure with this Alt input event.
+    fn menu_access_language_for(
+        &self,
+        _time: std::time::Instant,
+    ) -> Result<Option<okbs_core::Lang>> {
+        self.menu_access_language()
+    }
 
     /// Reports focus changes.
     fn subscribe(&mut self, sink: Sender<FocusEvent>) -> Result<Box<dyn StopGuard>> {

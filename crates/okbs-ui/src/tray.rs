@@ -160,8 +160,11 @@ impl Tray {
         let clipboard_translit =
             MenuItem::new(tr(Text::MenuClipboardTransliterate, ui), true, None);
         let clipboard_spellcheck = MenuItem::new(tr(Text::MenuClipboardSpellcheck, ui), true, None);
-        let clipboard_history =
-            MenuItem::new(tr(Text::MenuClipboardHistory, ui), cfg!(windows), None);
+        let clipboard_history = MenuItem::new(
+            tr(Text::MenuClipboardHistory, ui),
+            cfg!(any(windows, target_os = "linux")),
+            None,
+        );
         let clipboard = Submenu::with_items(
             tr(Text::MenuClipboard, ui),
             true,
@@ -176,13 +179,16 @@ impl Tray {
         .map_err(err)?;
         let keyboard_settings = MenuItem::new(
             tr(Text::MenuSystemKeyboardSettings, ui),
-            cfg!(windows),
+            cfg!(any(windows, target_os = "linux")),
             None,
         );
         let about = MenuItem::new(tr(Text::MenuAbout, ui), true, None);
         let exit = MenuItem::new(tr(Text::MenuExit, ui), true, None);
-        let autoreplace_list =
-            MenuItem::new(tr(Text::MenuAutoreplaceList, ui), cfg!(windows), None);
+        let autoreplace_list = MenuItem::new(
+            tr(Text::MenuAutoreplaceList, ui),
+            cfg!(any(windows, target_os = "linux")),
+            None,
+        );
         let autoreplace_menu = Submenu::new(tr(Text::SectionAutoreplace, ui), true);
         autoreplace_menu.append(&autoreplace_list).map_err(err)?;
         let mut autoreplace_items = Vec::new();
@@ -198,7 +204,11 @@ impl Tray {
                     .map(|c| if c.is_control() { ' ' } else { c })
                     .collect();
                 let label = format!("{} — {text}", item.from).replace('&', "&&");
-                let entry = MenuItem::new(label, autoreplace.enabled && cfg!(windows), None);
+                let entry = MenuItem::new(
+                    label,
+                    autoreplace.enabled && cfg!(any(windows, target_os = "linux")),
+                    None,
+                );
                 autoreplace_menu.append(&entry).map_err(err)?;
                 autoreplace_items.push(entry);
             }

@@ -5,6 +5,7 @@
 use super::{Exclusions, ExecutableExclusion};
 
 /// Terminals and command lines (Windows file names).
+#[cfg(not(target_os = "linux"))]
 pub const SUGGESTED_TERMINALS: &[&str] = &[
     "WindowsTerminal.exe",
     "OpenConsole.exe",
@@ -20,6 +21,7 @@ pub const SUGGESTED_TERMINALS: &[&str] = &[
 ];
 
 /// Development environments and code editors (Windows file names).
+#[cfg(not(target_os = "linux"))]
 pub const SUGGESTED_EDITORS: &[&str] = &[
     "Code.exe",
     "Code - Insiders.exe",
@@ -37,6 +39,36 @@ pub const SUGGESTED_EDITORS: &[&str] = &[
     "rustrover64.exe",
     "datagrip64.exe",
     "studio64.exe",
+];
+
+/// Terminals offered in Linux, using their actual process file names.
+#[cfg(target_os = "linux")]
+pub const SUGGESTED_TERMINALS: &[&str] = &[
+    "gnome-terminal-server",
+    "konsole",
+    "kitty",
+    "alacritty",
+    "wezterm-gui",
+    "foot",
+    "xterm",
+    "ptyxis",
+    "kgx",
+    "tilix",
+    "xfce4-terminal",
+];
+/// Linux editors that run under their own executable names.
+#[cfg(target_os = "linux")]
+pub const SUGGESTED_EDITORS: &[&str] = &[
+    "code",
+    "codium",
+    "cursor",
+    "zed",
+    "zed-editor",
+    "sublime_text",
+    "gnome-builder",
+    "qtcreator",
+    "geany",
+    "kate",
 ];
 
 /// Adds the file names that are not excluded yet. Returns how many were added.

@@ -1,16 +1,31 @@
 //! Linux backend of Own Keyboard Switch.
 //!
-//! Input is read passively from evdev devices (no exclusive grab) and injected
-//! through a uinput virtual keyboard, which works identically on X11, Wayland
-//! and any desktop. The active layout is read and changed through a
-//! desktop-specific backend (KDE D-Bus, X11 XKB, GNOME Shell extension).
-//!
-//! Stage 0 contains session detection and the environment diagnostics.
+//! Physical keyboards are forwarded through a uinput virtual keyboard so word
+//! boundaries can wait for the common engine. Layout and window operations
+//! use X11 XKB, KDE D-Bus or the bundled GNOME Shell extension.
 #![cfg(target_os = "linux")]
 
+#[cfg(test)]
+mod acceptance;
 pub mod access;
+pub mod accessibility;
+#[cfg(test)]
+mod application_acceptance;
+#[cfg(test)]
+mod browser_acceptance;
+pub mod desktop;
 pub mod diagnose;
+pub mod input;
+pub mod integration;
+mod layer;
+pub mod panels;
+pub mod permissions;
+mod placement;
+pub mod seat;
+pub mod services;
 pub mod session;
+mod watch;
+pub mod x11_windows;
 
 pub use diagnose::diagnose;
 pub use session::{Desktop, SessionInfo, SessionType, resolve_layout_backend};

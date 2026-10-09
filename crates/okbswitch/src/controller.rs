@@ -212,7 +212,7 @@ fn export_rules(dialogs: &dyn FileDialogs, request: &FileRequest, rules: &[Rule]
 }
 
 /// Callback run after a configuration is applied.
-pub type ApplyHook = Box<dyn Fn(&Config)>;
+pub type ApplyHook = Box<dyn Fn(&Config) -> okbs_platform::Result<()>>;
 
 /// Lists installed keyboard layouts.
 pub type LayoutLister = Box<dyn Fn() -> Vec<LayoutInfo>>;
@@ -229,8 +229,15 @@ pub type IndicatorFactory = Box<
 >;
 
 /// Platform services used by the controller.
+pub type PopupPosition = Box<dyn Fn(Option<InputTarget>) -> Option<[f32; 2]>>;
+pub type PopupPlacement = Box<dyn Fn(&str, [f32; 2]) -> okbs_platform::Result<()>>;
 #[derive(Default)]
 pub struct PlatformHooks {
+    /// Reuse the first-run UI's event loop rather than creating a second one.
+    pub settings_window: Option<(SettingsWindow, Receiver<SettingsEvent>)>,
+    pub cursor_position: Option<Box<dyn Fn() -> [f32; 2]>>,
+    pub spelling_position: Option<PopupPosition>,
+    pub popup_placement: Option<PopupPlacement>,
     pub autoreplace_ui: Option<AutoreplaceUiFactory>,
     /// Installed layouts, for the flag settings and the tray icon.
     pub list_layouts: Option<LayoutLister>,
@@ -256,6 +263,9 @@ pub struct PlatformHooks {
 
 /// The application state owned by the main thread.
 pub struct Controller {
+    cursor_position: Option<Box<dyn Fn() -> [f32; 2]>>,
+    spelling_position: Option<PopupPosition>,
+    popup_placement: Option<PopupPlacement>,
     autoreplace_ui: Option<Box<dyn AutoreplaceUi>>,
     settings: Settings,
     engine: EngineHandle,
@@ -382,13 +392,17 @@ impl Controller {
             sounds: settings.config.sounds.enabled,
             layout: layout_index(&layouts, layout.as_ref()),
         };
-        let (events_tx, window_events) = unbounded();
         let system_language = crate::locale::system_ui_language();
-        let window = match SettingsWindow::spawn(events_tx, system_language) {
-            Ok(window) => Some(window),
-            Err(err) => {
-                tracing::error!("cannot start the settings window thread: {err}");
-                None
+        let (window, window_events) = match platform.settings_window {
+            Some((window, events)) => (Some(window), events),
+            None => {
+                let (events_tx, events) = unbounded();
+                let window = SettingsWindow::spawn(events_tx, system_language)
+                    .map_err(|err| {
+                        tracing::error!("cannot start the settings window thread: {err}")
+                    })
+                    .ok();
+                (window, events)
             }
         };
         let autoreplace_ui = platform.autoreplace_ui.and_then(|create| {
@@ -412,6 +426,9 @@ impl Controller {
                 .ok()
         });
         let mut controller = Self {
+            cursor_position: platform.cursor_position,
+            spelling_position: platform.spelling_position,
+            popup_placement: platform.popup_placement,
             autoreplace_ui,
             settings,
             engine,
@@ -549,7 +566,17 @@ impl Controller {
         self.history_target = target;
         let config = self.history_config();
         if let Some(history) = &self.history {
-            history.show(config, cursor_position());
+            let position = self
+                .cursor_position
+                .as_ref()
+                .map_or_else(cursor_position, |position| position());
+            if let Some(place) = &self.popup_placement {
+                self.run_window_command(
+                    "clipboard history placement",
+                    place(&config.labels.title, position),
+                );
+            }
+            history.show(config, position);
         }
     }
 
@@ -632,9 +659,7 @@ impl Controller {
         }
     }
 
-    /// First start: offers terminals and IDEs as excluded programs (their
-    /// names are Windows program files).
-    #[cfg(windows)]
+    /// First start: offers terminals and IDEs as excluded programs.
     pub fn suggest_exclusions(&mut self) {
         let layouts = self.layout_entries();
         if let Some(window) = &self.window {
@@ -920,6 +945,20 @@ impl Controller {
     fn handle_window_event(&mut self, event: SettingsEvent) {
         match event {
             SettingsEvent::Apply(config) => {
+                if let Some(on_apply) = &self.on_apply
+                    && let Err(err) = on_apply(&config)
+                {
+                    tracing::warn!("configuration rejected by platform: {err}");
+                    if let Some(window) = &self.window {
+                        window.send(SettingsInput::ApplyRejected {
+                            previous: Box::new(self.settings.config.clone()),
+                            attempted: config,
+                        });
+                    }
+                    return;
+                }
+                let backend_changed =
+                    config.linux.layout_backend != self.settings.config.linux.layout_backend;
                 let language_changed =
                     config.general.ui_language != self.settings.config.general.ui_language;
                 let autoreplace_changed = config.autoreplace != self.settings.config.autoreplace;
@@ -940,9 +979,6 @@ impl Controller {
                         Ok(()) => tracing::info!(on, elevated, "autostart changed"),
                         Err(err) => tracing::warn!("cannot change autostart: {err}"),
                     }
-                }
-                if let Some(on_apply) = &self.on_apply {
-                    on_apply(&config);
                 }
                 self.state.sounds = config.sounds.enabled;
                 crate::logging::set_level(config.log.enabled, config.log.level);
@@ -966,7 +1002,10 @@ impl Controller {
                     tracing::warn!("cannot delete the saved clipboard history: {err}");
                 }
                 self.configure_history();
-                if language_changed || autoreplace_changed || flags_changed {
+                if language_changed || autoreplace_changed || flags_changed || backend_changed {
+                    if let Some(list) = &self.list_layouts {
+                        self.layouts = list();
+                    }
                     self.rebuild_tray();
                 }
                 // Asking for the rights is the last step: the answer may end
@@ -993,6 +1032,7 @@ impl Controller {
             SettingsEvent::CaptureHotkey => {
                 self.engine.send(Command::CaptureHotkey);
             }
+            SettingsEvent::LinuxSetup(_) => {}
             SettingsEvent::CancelCapture | SettingsEvent::Closed => {
                 self.engine.send(Command::CancelCapture);
             }
@@ -1313,7 +1353,10 @@ impl Controller {
                             window.show_text_passive(
                                 &self.settings.config,
                                 view,
-                                spelling_popup_position(result.job.target),
+                                self.spelling_position.as_ref().map_or_else(
+                                    || spelling_popup_position(result.job.target),
+                                    |position| position(result.job.target),
+                                ),
                                 result
                                     .job
                                     .target
@@ -1500,6 +1543,107 @@ mod tests {
         assert_eq!(automatic_correction(&[misspelling(&[])]), None);
         let two = [misspelling(&["world"]), misspelling(&["world"])];
         assert_eq!(automatic_correction(&two), None);
+    }
+
+    /// Answers every dialog with the same path, or cancels.
+    #[test]
+    fn backend_rejection_precedes_autostart_persistence_and_engine_changes() {
+        use okbs_platform::{Injector, KeyStroke, LayoutId, LayoutManager};
+        struct QuietInjector;
+        impl Injector for QuietInjector {
+            fn send(&mut self, _: &[KeyStroke]) -> okbs_platform::Result<()> {
+                Ok(())
+            }
+        }
+        struct QuietLayouts;
+        impl LayoutManager for QuietLayouts {
+            fn layouts(&self) -> okbs_platform::Result<Vec<LayoutInfo>> {
+                Ok(Vec::new())
+            }
+            fn current(&self) -> okbs_platform::Result<LayoutId> {
+                Ok(LayoutId(0))
+            }
+            fn set(&mut self, _: LayoutId) -> okbs_platform::Result<()> {
+                Ok(())
+            }
+            fn keymap(&self, _: LayoutId) -> okbs_platform::Result<okbs_core::KeyMap> {
+                Err(okbs_platform::PlatformError::Unsupported(
+                    "test has no keyboard",
+                ))
+            }
+        }
+        struct Login(Arc<std::sync::atomic::AtomicUsize>);
+        impl Autostart for Login {
+            fn is_enabled(&self) -> okbs_platform::Result<bool> {
+                Ok(true)
+            }
+            fn set_enabled(&self, _: bool, _: &Path, _: bool) -> okbs_platform::Result<()> {
+                self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            }
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        let config = Config::default();
+        okbs_core::config::save(&path, &config).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let (_sender, input) = unbounded();
+        let processor = okbs_engine::Processor::new(
+            config.clone(),
+            okbs_engine::Backends {
+                injector: Box::new(QuietInjector),
+                layouts: Box::new(QuietLayouts),
+                clipboard: None,
+                sound: None,
+                focus: None,
+            },
+        );
+        let engine = EngineHandle::spawn(
+            processor,
+            okbs_engine::Inputs {
+                input,
+                layout: None,
+                focus: None,
+                clipboard: None,
+            },
+        )
+        .unwrap();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut controller = Controller::new(
+            Settings {
+                config: config.clone(),
+                path: path.clone(),
+                read_only: false,
+            },
+            engine,
+            PlatformHooks {
+                autostart: Some(Box::new(Login(calls.clone()))),
+                on_apply: Some(Box::new(|_| {
+                    Err(okbs_platform::PlatformError::Unsupported(
+                        "rejected fixture",
+                    ))
+                })),
+                ..PlatformHooks::default()
+            },
+            None,
+            false,
+        );
+        let mut attempted = config.clone();
+        attempted.general.autostart = false;
+        attempted.general.autoswitch = false;
+        attempted.linux.layout_backend = okbs_core::config::LayoutBackend::Kde;
+        controller.handle_window_event(SettingsEvent::Apply(Box::new(attempted)));
+        assert_eq!(controller.settings.config, config);
+        assert_eq!(std::fs::read(path).unwrap(), before);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(
+            !controller
+                .engine
+                .events()
+                .try_iter()
+                .any(|event| matches!(event, Event::ConfigApplied))
+        );
+        controller.shutdown();
     }
 
     /// Answers every dialog with the same path, or cancels.
