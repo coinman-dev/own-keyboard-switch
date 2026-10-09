@@ -24,6 +24,7 @@ pub struct FocusedControl {
     pub password: bool,
     pub caret: Option<[i32; 2]>,
     text_input: bool,
+    editor: Option<Object>,
     updated: Instant,
 }
 #[derive(Debug, Clone)]
@@ -150,6 +151,7 @@ struct Reader {
     owners: HashMap<String, u32>,
     previous: Option<Object>,
     previous_window: u64,
+    previous_editor: Option<Object>,
     menu: Option<MenuCache>,
     menus_enabled: bool,
     wayland: bool,
@@ -191,6 +193,7 @@ impl Reader {
             owners: HashMap::new(),
             previous: None,
             previous_window: 0,
+            previous_editor: None,
             menu: None,
             menus_enabled: false,
             wayland: crate::session::SessionInfo::detect().session_type
@@ -234,7 +237,12 @@ impl Reader {
         let text_input = matches!(role, 40 | 60 | 61 | 79)
             || state.first().is_some_and(|bits| bits & (1 << 7) != 0);
         let mut hash = std::collections::hash_map::DefaultHasher::new();
-        object.hash(&mut hash);
+        let identity = self.editor_identity(
+            object,
+            role,
+            state.first().is_some_and(|bits| bits & (1 << 7) != 0),
+        );
+        identity.hash(&mut hash);
         let caret = if role == 40 || !text_input {
             None
         } else {
@@ -278,8 +286,57 @@ impl Reader {
             password: role == 40,
             caret,
             text_input,
+            editor: (identity != *object).then_some(identity),
             updated: Instant::now(),
         }))
+    }
+    fn editor_identity(&self, object: &Object, role: u32, editable: bool) -> Object {
+        // Writer's focused Text object is a paragraph. Pasting a newline
+        // creates another paragraph inside the same editor; its new object
+        // path must not invalidate the operation's target before caret moves.
+        // Keep leaf geometry, but identify the editable DocumentText ancestor.
+        if role != 73 || !editable {
+            return object.clone();
+        }
+        let deadline = Instant::now() + Duration::from_millis(50);
+        let mut parent = object.clone();
+        for _ in 0..16 {
+            if Instant::now() >= deadline {
+                break;
+            }
+            let Some(next) = self
+                .proxy(&parent, "org.a11y.atspi.Accessible")
+                .ok()
+                .and_then(|proxy| proxy.get_property::<Object>("Parent").ok())
+            else {
+                break;
+            };
+            parent = next;
+            if parent.0.is_empty() {
+                parent.0 = object.0.clone();
+            }
+            let Ok(proxy) = self.proxy(&parent, "org.a11y.atspi.Accessible") else {
+                break;
+            };
+            let Ok(role) = proxy.call::<_, _, u32>("GetRole", &()) else {
+                break;
+            };
+            if role == 94 {
+                if proxy
+                    .call::<_, _, Vec<u32>>("GetState", &())
+                    .ok()
+                    .is_some_and(|state| state.first().is_some_and(|bits| bits & (1 << 7) != 0))
+                {
+                    return parent.clone();
+                }
+                break;
+            }
+            // A table cell or nested editable control is a distinct target.
+            if matches!(role, 16 | 23 | 40 | 55 | 56 | 60 | 61 | 69 | 75 | 79) {
+                break;
+            }
+        }
+        object.clone()
     }
     fn window_caret(
         &self,
@@ -471,6 +528,45 @@ impl Reader {
             }
             return Ok(Some(focus));
         }
+        // A paragraph can lose focus because an injected multiline paste
+        // moved the caret to its sibling. Check that already-confirmed editor
+        // before scanning the application's menus/toolbars again. Never keep
+        // a stale target: a sibling must actually report FOCUSED.
+        if self.previous_window == snapshot.window
+            && let Some(editor) = self.previous_editor.clone()
+            && self.owner(&editor.0) == Some(snapshot.pid)
+        {
+            let deadline = Instant::now() + Duration::from_millis(100);
+            if let Some(children) = self
+                .proxy(&editor, "org.a11y.atspi.Accessible")
+                .ok()
+                .and_then(|proxy| proxy.call::<_, _, Vec<Object>>("GetChildren", &()).ok())
+            {
+                for (name, path) in children.into_iter().take(64) {
+                    if Instant::now() >= deadline {
+                        break;
+                    }
+                    let child = (
+                        if name.is_empty() {
+                            editor.0.clone()
+                        } else {
+                            name
+                        },
+                        path,
+                    );
+                    if let Ok(Some(focus)) = self.inspect(&child, snapshot)
+                        && focus.editor.as_ref() == Some(&editor)
+                    {
+                        self.previous = Some(child.clone());
+                        self.scan = None;
+                        if self.menus_enabled {
+                            self.menu_language(&child, snapshot);
+                        }
+                        return Ok(Some(focus));
+                    }
+                }
+            }
+        }
         if self
             .scan
             .as_ref()
@@ -538,6 +634,7 @@ impl Reader {
                     }
                     self.previous = Some(object);
                     self.previous_window = snapshot.window;
+                    self.previous_editor = focus.editor.clone();
                     return Ok(Some(focus));
                 }
                 // Browsers expose focused containers alongside the actual
@@ -590,6 +687,7 @@ impl Reader {
             }
             self.previous = Some(object);
             self.previous_window = snapshot.window;
+            self.previous_editor = focus.editor.clone();
             return Ok(Some(focus));
         }
         self.previous = None;

@@ -99,7 +99,12 @@ try:
             document.CurrentController.Frame.activate()
             document.CurrentController.Frame.ContainerWindow.setFocus()
             acknowledgement = action["token"]
-        value = {"pid": native_pid, "active": active, "acknowledgement": acknowledgement,
+        positions = {}
+        for name, document in documents.items():
+            prefix = document.Text.createTextCursorByRange(document.CurrentController.ViewCursor.Start)
+            prefix.gotoStart(True)
+            positions[name] = len(prefix.String)
+        value = {"pid": native_pid, "active": active, "acknowledgement": acknowledgement, "cursor": positions,
                  "titles": {name: document.CurrentController.Frame.Title for name, document in documents.items()},
                  "values": {name: document.Text.String for name, document in documents.items()}}
         temporary = state.with_suffix(".new")

@@ -4,8 +4,11 @@ use crate::{
     wayland_input_acceptance::KeyboardDriver,
 };
 use evdev::{AttributeSet, KeyCode, uinput::VirtualDevice};
-use okbs_core::{PhysKey, config::Config};
-use okbs_engine::{Backends, Command, EngineHandle, Inputs, Processor};
+use okbs_core::{
+    PhysKey,
+    config::{AutoReplaceItem, AutoReplaceTrigger, Config, HotkeyBinding},
+};
+use okbs_engine::{Backends, Command, EngineHandle, Event, Inputs, Processor};
 use okbs_platform::{Clipboard, FocusInfo, KeyboardSource, LayoutId, LayoutManager, StopGuard};
 use std::{
     path::PathBuf,
@@ -119,6 +122,8 @@ struct RunningEngine {
     _focus: Box<dyn StopGuard>,
     driver: KeyboardDriver,
     hardware: VirtualDevice,
+    filter: crate::input::InputFilter,
+    config: Config,
 }
 impl RunningEngine {
     fn new(session: &Session) -> Self {
@@ -168,7 +173,7 @@ impl RunningEngine {
         let (focus_sink, focus_input) = crossbeam_channel::unbounded();
         let focus = FocusInfo::subscribe(&mut session.desktop.clone(), focus_sink).unwrap();
         let mut processor = Processor::new(
-            config,
+            config.clone(),
             Backends {
                 injector: Box::new(injector),
                 layouts: Box::new(session.desktop.clone()),
@@ -189,13 +194,38 @@ impl RunningEngine {
         )
         .unwrap();
         let capture = source.start(sink).unwrap();
-        std::thread::sleep(Duration::from_millis(300));
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let mut stable = None;
+        let mut previous = None;
+        loop {
+            session.desktop.refresh().unwrap();
+            let target = session.desktop.target();
+            let ready = target.is_some_and(|target| {
+                target.control != 0 || session.desktop.is_terminal().unwrap()
+            }) && session.desktop.current().unwrap() == LayoutId(1);
+            if ready && target == previous {
+                let since = stable.get_or_insert_with(Instant::now);
+                if since.elapsed() >= Duration::from_millis(400) {
+                    break;
+                }
+            } else {
+                stable = None;
+            }
+            previous = target;
+            assert!(
+                Instant::now() < deadline,
+                "native input target did not settle at startup"
+            );
+            std::thread::sleep(Duration::from_millis(30));
+        }
         Self {
             engine,
             _capture: capture,
             _focus: focus,
             driver,
             hardware,
+            filter: source.filter.clone(),
+            config,
         }
     }
     fn type_text(&mut self, text: &str) {
@@ -219,6 +249,34 @@ impl RunningEngine {
                 .emit(&[InputEvent::new(EventType::KEY.0, modifier.evdev_code(), 0)])
                 .unwrap();
         }
+    }
+    fn configure(&mut self, config: Config, path: &std::path::Path) {
+        // Exercise actual configuration serialization and the same live
+        // source/engine update used by the application's settings controller.
+        okbs_core::config::save(path, &config).unwrap();
+        let restored = okbs_core::config::load_or_create(path).unwrap().config;
+        assert_eq!(restored.autoreplace, config.autoreplace);
+        self.filter.configure(&restored);
+        assert!(
+            self.engine
+                .send(Command::ApplyConfig(Box::new(restored.clone())))
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if self
+                .engine
+                .events()
+                .recv_timeout(Duration::from_millis(100))
+                .is_ok_and(|event| event == Event::ConfigApplied)
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "live configuration was not acknowledged"
+            );
+        }
+        self.config = restored;
     }
 }
 
@@ -259,6 +317,8 @@ fn real_wayland_writer_and_terminal_correct_paste_and_submit() {
         let deadline = Instant::now() + Duration::from_secs(25);
         let mut registered = false;
         let mut clicked = false;
+        let mut stable = None;
+        let mut previous = None;
         loop {
             let native = session.desktop.refresh().unwrap();
             let value = page();
@@ -287,9 +347,21 @@ fn real_wayland_writer_and_terminal_correct_paste_and_submit() {
                 && native.title.contains(&format!("okbs-{document}"))
             {
                 if native.control != 0 {
-                    break;
+                    let current = (native.window, native.control);
+                    if previous == Some(current) {
+                        let since = stable.get_or_insert_with(Instant::now);
+                        if since.elapsed() >= Duration::from_millis(400) {
+                            break;
+                        }
+                    } else {
+                        stable = None;
+                    }
+                    previous = Some(current);
+                } else {
+                    stable = None;
+                    previous = None;
                 }
-                if session.remote.is_none() && !clicked {
+                if native.control == 0 && session.remote.is_none() && !clicked {
                     let [x, y, w, h] = native.client;
                     assert!(
                         std::process::Command::new(
@@ -362,6 +434,187 @@ fn real_wayland_writer_and_terminal_correct_paste_and_submit() {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
+    let config_path = temp.join("native-config.toml");
+    let mut changed = running.config.clone();
+    changed.general.autoswitch = false;
+    changed.autoreplace.enabled = true;
+    changed.autoreplace.also_in_other_layout = true;
+    changed.hotkeys.show_autoreplace_menu = HotkeyBinding::some("Ctrl+F12".parse().unwrap());
+    let item = AutoReplaceItem {
+        from: "sig".into(),
+        to: "Привет,\n<name>".into(),
+        cursor_pos: 9,
+    };
+    changed.autoreplace.items = vec![item.clone()];
+    let mut token = 10;
+    for layout in [LayoutId(0), LayoutId(1)] {
+        for (trigger, key) in [
+            (AutoReplaceTrigger::Space, PhysKey::Space),
+            (AutoReplaceTrigger::Enter, PhysKey::Enter),
+            (AutoReplaceTrigger::Enter, PhysKey::NumpadEnter),
+            (AutoReplaceTrigger::Tab, PhysKey::Tab),
+            (AutoReplaceTrigger::Tooltip, PhysKey::Enter),
+            (AutoReplaceTrigger::Tooltip, PhysKey::Tab),
+            (AutoReplaceTrigger::Hotkey, PhysKey::F12),
+        ] {
+            changed.autoreplace.trigger = trigger;
+            running.configure(changed.clone(), &config_path);
+            token += 1;
+            prepare("first", "", false, token);
+            session.desktop.clone().set(layout).unwrap();
+            running.type_text("sig");
+            let abbreviation_target = session.desktop.input_target().unwrap();
+            if trigger == AutoReplaceTrigger::Tooltip {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                loop {
+                    if running
+                        .engine
+                        .events()
+                        .recv_timeout(Duration::from_millis(100))
+                        .is_ok_and(|event| event == Event::AutoreplaceHint(Some(0)))
+                    {
+                        break;
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "Writer tooltip candidate missing"
+                    );
+                }
+            }
+            running.chord(
+                if trigger == AutoReplaceTrigger::Hotkey {
+                    &[PhysKey::ControlLeft]
+                } else {
+                    &[]
+                },
+                key,
+            );
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut feedback = Vec::new();
+            loop {
+                if let Ok(event) = running
+                    .engine
+                    .events()
+                    .recv_timeout(Duration::from_millis(100))
+                {
+                    if event == Event::Autoreplaced {
+                        break;
+                    }
+                    feedback.push(event);
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "Writer {trigger:?}/{layout:?} did not expand: {feedback:?}, desktop {:?}",
+                    session.desktop.cached()
+                );
+            }
+            let suffix = if trigger == AutoReplaceTrigger::Space {
+                " "
+            } else {
+                ""
+            };
+            let expected = format!("{}{suffix}", item.to);
+            expect("first", &expected);
+            assert_eq!(
+                session.desktop.input_target().unwrap(),
+                abbreviation_target,
+                "a multiline expansion must retain the same editor target"
+            );
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while page()["cursor"]["first"] != 9
+                || clipboard.text().unwrap().as_deref() != Some("synthetic preserved clipboard")
+            {
+                assert!(
+                    Instant::now() < deadline,
+                    "Writer {trigger:?}/{layout:?} cursor/clipboard not restored: {:?}",
+                    page()
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            assert_eq!(session.desktop.current().unwrap(), layout);
+            running.type_text("x");
+            let marker = if layout == LayoutId(0) { "x" } else { "ч" };
+            expect("first", &format!("Привет,\n<{marker}name>{suffix}"));
+        }
+    }
+    // Escape dismisses a tooltip, and its Enter must reach the editor normally.
+    changed.autoreplace.trigger = AutoReplaceTrigger::Tooltip;
+    running.configure(changed.clone(), &config_path);
+    token += 1;
+    prepare("first", "", false, token);
+    session.desktop.clone().set(LayoutId(0)).unwrap();
+    running.type_text("sig");
+    running.chord(&[], PhysKey::Escape);
+    running.chord(&[], PhysKey::Enter);
+    // Writer's own sentence capitalization still applies after dismissal.
+    expect("first", "Sig\n");
+    // Disable the feature live and verify the delimiter remains ordinary input.
+    changed.autoreplace.enabled = false;
+    changed.autoreplace.trigger = AutoReplaceTrigger::Space;
+    running.configure(changed.clone(), &config_path);
+    token += 1;
+    prepare("first", "", false, token);
+    session.desktop.clone().set(LayoutId(0)).unwrap();
+    running.type_text("sig ");
+    expect("first", "Sig ");
+    // The other-layout option must also take effect through a live update.
+    changed.autoreplace.enabled = true;
+    changed.autoreplace.also_in_other_layout = false;
+    running.configure(changed.clone(), &config_path);
+    token += 1;
+    prepare("first", "prefix ", false, token);
+    session.desktop.clone().set(LayoutId(1)).unwrap();
+    running.type_text("sig ");
+    expect("first", "prefix ышп ");
+    // An explicit menu/list insertion uses the configured entry and its end
+    // position; it follows the production command path without a text mock.
+    changed.autoreplace.also_in_other_layout = true;
+    changed.autoreplace.items[0].cursor_pos = -1;
+    running.configure(changed.clone(), &config_path);
+    token += 1;
+    prepare("first", "", false, token);
+    assert!(running.engine.send(Command::InsertAutoreplace {
+        item: changed.autoreplace.items[0].clone(),
+        target: session.desktop.input_target().unwrap()
+    }));
+    expect("first", &item.to);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while page()["cursor"]["first"] != item.to.chars().count()
+        || clipboard.text().unwrap().as_deref() != Some("synthetic preserved clipboard")
+    {
+        assert!(
+            Instant::now() < deadline,
+            "explicit Writer insertion did not preserve end position/clipboard"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // Break undoes the automatic conversion; it can also convert an unfinished word.
+    changed.general.autoswitch = true;
+    changed.autoreplace.enabled = false;
+    running.configure(changed.clone(), &config_path);
+    token += 1;
+    // Keep Writer's independent sentence-capitalization outside the undo
+    // comparison; the program should undo only the word it converted.
+    prepare("first", "prefix ", false, token);
+    session.desktop.clone().set(LayoutId(0)).unwrap();
+    running.type_text("ghbdtn ");
+    expect("first", "prefix привет ");
+    running.chord(&[], PhysKey::Pause);
+    expect("first", "prefix ghbdtn ");
+    assert_eq!(session.desktop.current().unwrap(), LayoutId(0));
+    token += 1;
+    prepare("first", "", false, token);
+    changed.general.autoswitch = false;
+    running.configure(changed, &config_path);
+    session.desktop.clone().set(LayoutId(0)).unwrap();
+    running.type_text("ghbdtn");
+    running.chord(&[], PhysKey::Pause);
+    expect("first", "привет");
+    running.chord(&[], PhysKey::Pause);
+    expect("first", "ghbdtn");
+    eprintln!(
+        "Writer autoreplace all triggers/EN-RU/cursor, live config serialization, Escape and Pause accepted"
+    );
     drop(running);
     drop(writer);
 
