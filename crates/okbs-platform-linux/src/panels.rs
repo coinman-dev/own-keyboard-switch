@@ -40,6 +40,7 @@ pub struct PanelEvent {
 pub struct Panels {
     desktop: LinuxDesktop,
     native: RefCell<HashMap<String, gtk::Window>>,
+    styles: RefCell<HashMap<String, gtk::CssProvider>>,
     models: Rc<RefCell<HashMap<String, Panel>>>,
     events: Rc<RefCell<VecDeque<PanelEvent>>>,
 }
@@ -72,6 +73,7 @@ impl Panels {
         let panels = Rc::new(Self {
             desktop,
             native: RefCell::default(),
+            styles: RefCell::default(),
             models: Rc::default(),
             events: Rc::default(),
         });
@@ -131,6 +133,44 @@ impl Panels {
             window.set_skip_taskbar_hint(true);
             window.set_skip_pager_hint(true);
             window.set_type_hint(gtk::gdk::WindowTypeHint::Notification);
+            // GDK3 ignores toplevel opacity on Wayland. With a compositor,
+            // paint the whole panel with alpha into an RGBA surface instead.
+            if let Some(visual) = WidgetExt::screen(&window)
+                .filter(|screen| screen.is_composited())
+                .and_then(|screen| screen.rgba_visual())
+            {
+                window.set_visual(Some(&visual));
+                window.set_app_paintable(true);
+                let id = panel.id.clone();
+                let models = self.models.clone();
+                window.connect_draw(move |window, cr| {
+                    let opacity = models
+                        .borrow()
+                        .get(&id)
+                        .map_or(1.0, |model| model.opacity.clamp(0.1, 1.0));
+                    let (width, height) = (window.allocated_width(), window.allocated_height());
+                    cr.set_operator(gtk::cairo::Operator::Source);
+                    cr.set_source_rgba(0.0, 0.0, 0.0, 0.0);
+                    let _ = cr.paint();
+                    cr.set_operator(gtk::cairo::Operator::Over);
+                    cr.push_group();
+                    gtk::render_background(
+                        &window.style_context(),
+                        cr,
+                        0.0,
+                        0.0,
+                        f64::from(width),
+                        f64::from(height),
+                    );
+                    if let Some(child) = window.child() {
+                        window.propagate_draw(&child, cr);
+                    }
+                    if cr.pop_group_to_source().is_ok() {
+                        let _ = cr.paint_with_alpha(opacity);
+                    }
+                    gtk::glib::Propagation::Stop
+                });
+            }
             if crate::layer::supported() {
                 crate::layer::initialize(&window);
             }
@@ -237,21 +277,25 @@ impl Panels {
             window.remove(&child);
         }
         let content = gtk::Box::new(gtk::Orientation::Vertical, 4);
-        if matches!(panel.theme.as_str(), "light" | "dark") {
-            let css = gtk::CssProvider::new();
-            let colors = if panel.theme == "light" {
-                "#f5f5f5;color:#202020"
-            } else {
-                "#232323;color:#ffffff"
-            };
-            css.load_from_data(
-                format!("window {{background:{colors};}} label {{color:inherit;}}").as_bytes(),
-            )
-            .map_err(error)?;
-            window
-                .style_context()
-                .add_provider(&css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
-        }
+        // One provider per window: every show replaces its theme colors.
+        let css = self
+            .styles
+            .borrow_mut()
+            .entry(panel.id.clone())
+            .or_insert_with(|| {
+                let css = gtk::CssProvider::new();
+                window
+                    .style_context()
+                    .add_provider(&css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
+                css
+            })
+            .clone();
+        let colors = match panel.theme.as_str() {
+            "light" => "window {background:#f5f5f5;color:#202020;} label {color:inherit;}",
+            "dark" => "window {background:#232323;color:#ffffff;} label {color:inherit;}",
+            _ => "",
+        };
+        css.load_from_data(colors.as_bytes()).map_err(error)?;
         content.set_border_width(6);
         if !panel.icon.is_empty() {
             let loader = gtk::gdk_pixbuf::PixbufLoader::new();
@@ -288,7 +332,11 @@ impl Panels {
         window.add(&content);
         content.show_all();
         window.set_title(&panel.title);
-        window.set_opacity(panel.opacity.clamp(0.1, 1.0));
+        if window.is_app_paintable() {
+            window.queue_draw();
+        } else {
+            window.set_opacity(panel.opacity.clamp(0.1, 1.0));
+        }
         if crate::layer::is_layer(window) {
             let point = crate::layer::position(window, panel.position);
             if let Some(model) = self.models.borrow_mut().get_mut(&panel.id) {
@@ -361,6 +409,9 @@ impl Panels {
         if self.desktop.is_gnome() {
             let geometry = self.desktop.gnome_panel_geometry(id)?;
             let row = &geometry["rows"][index];
+            if row["visible"] == false {
+                return Ok(None);
+            }
             return Ok((|| {
                 let x = row["x"].as_f64()?;
                 let y = row["y"].as_f64()?;
@@ -379,6 +430,22 @@ impl Panels {
         while let Some(widget) = queue.pop_front() {
             if let Some(button) = widget.downcast_ref::<gtk::Button>() {
                 if row_index == index {
+                    // A row scrolled out of the list is not clickable.
+                    if let Some(scroller) = button.ancestor(gtk::ScrolledWindow::static_type()) {
+                        let visible = button
+                            .translate_coordinates(
+                                &scroller,
+                                button.allocated_width() / 2,
+                                button.allocated_height() / 2,
+                            )
+                            .is_some_and(|(x, y)| {
+                                (0..scroller.allocated_width()).contains(&x)
+                                    && (0..scroller.allocated_height()).contains(&y)
+                            });
+                        if !visible {
+                            return Ok(None);
+                        }
+                    }
                     let Some((x, y)) = button.translate_coordinates(
                         window,
                         button.allocated_width() / 2,
@@ -405,6 +472,42 @@ impl Panels {
             }
         }
         Ok(None)
+    }
+    /// Opacity of our own mapped panel as the compositor receives it: the
+    /// Shell actor in GNOME, otherwise the alpha GTK paints into the panel.
+    pub fn applied_opacity(&self, id: &str) -> Result<Option<f64>> {
+        if !self.visible(id) {
+            return Ok(None);
+        }
+        if self.desktop.is_gnome() {
+            return Ok(self.desktop.gnome_panel_geometry(id)?["opacity"].as_f64());
+        }
+        let windows = self.native.borrow();
+        let Some(window) = windows.get(id).filter(|window| window.is_mapped()) else {
+            return Ok(None);
+        };
+        if !window.is_app_paintable() {
+            // gdk_wayland_window_set_opacity is empty in GTK 3.24.
+            return Ok(Some(
+                if SessionInfo::detect().session_type == SessionType::X11 {
+                    window.opacity()
+                } else {
+                    1.0
+                },
+            ));
+        }
+        // The panel border is painted with the theme background only.
+        let mut surface =
+            gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, 4, 4).map_err(error)?;
+        {
+            let cr = gtk::cairo::Context::new(&surface).map_err(error)?;
+            window.draw(&cr);
+        }
+        surface.flush();
+        let data = surface.data().map_err(error)?;
+        // Cairo ARGB32 is native-endian: alpha is the high byte.
+        let pixel = u32::from_ne_bytes([data[0], data[1], data[2], data[3]]);
+        Ok(Some(f64::from(pixel >> 24) / 255.0))
     }
     pub fn poll(&self, id: &str) -> Option<PanelEvent> {
         if self.desktop.is_gnome() {

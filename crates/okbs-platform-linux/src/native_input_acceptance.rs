@@ -6,7 +6,10 @@ use crate::{
 use evdev::{AttributeSet, KeyCode, uinput::VirtualDevice};
 use okbs_core::{
     PhysKey,
-    config::{AutoReplaceItem, AutoReplaceTrigger, Config, HotkeyBinding},
+    config::{
+        AutoReplaceItem, AutoReplaceTrigger, Config, Exclusions, ExecutableExclusion,
+        FolderExclusion, HotkeyBinding, TitleExclusion,
+    },
 };
 use okbs_engine::{Backends, Command, EngineHandle, Event, Inputs, Processor};
 use okbs_platform::{Clipboard, FocusInfo, KeyboardSource, LayoutId, LayoutManager, StopGuard};
@@ -605,13 +608,212 @@ fn real_wayland_writer_and_terminal_correct_paste_and_submit() {
     token += 1;
     prepare("first", "", false, token);
     changed.general.autoswitch = false;
-    running.configure(changed, &config_path);
+    running.configure(changed.clone(), &config_path);
     session.desktop.clone().set(LayoutId(0)).unwrap();
     running.type_text("ghbdtn");
     running.chord(&[], PhysKey::Pause);
     expect("first", "привет");
     running.chord(&[], PhysKey::Pause);
     expect("first", "ghbdtn");
+    // Excluded programs, identified from the compositor's window PID the way
+    // the application does: /proc/<pid>/exe, its folder, title and app_id.
+    let writer_pid = page()["pid"].as_u64().expect("Writer fixture pid");
+    let executable = std::fs::read_link(format!("/proc/{writer_pid}/exe")).unwrap();
+    let app_id = session.desktop.cached().app_id;
+    eprintln!("Writer exclusions use {executable:?}, app_id {app_id:?}");
+    // A converted word passes through the typed text first: wait past the
+    // conversion before accepting the unchanged value.
+    let expect_stable = |document: &str, text: &str| {
+        expect(document, text);
+        std::thread::sleep(Duration::from_millis(800));
+        assert_eq!(
+            page()["values"][document],
+            text,
+            "{document} changed after it settled; scratch {}",
+            temp.display()
+        );
+    };
+    let excluded = |kind: &str| {
+        let mut exclusions = Exclusions::default();
+        let value = match kind {
+            "name" => executable
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            "path" => executable.to_string_lossy().into_owned(),
+            "app_id" => app_id.clone(),
+            "folder" => executable.parent().unwrap().to_string_lossy().into_owned(),
+            _ => "okbs-first".into(),
+        };
+        match kind {
+            "folder" => exclusions.folders.push(FolderExclusion { path: value }),
+            "title" => exclusions.titles.push(TitleExclusion { contains: value }),
+            _ => exclusions
+                .executables
+                .push(ExecutableExclusion { path: value }),
+        }
+        exclusions
+    };
+    changed.general.autoswitch = true;
+    let mut kinds = vec!["name", "path", "folder", "title"];
+    if !app_id.is_empty() && !app_id.contains('/') {
+        kinds.push("app_id");
+    }
+    for kind in kinds {
+        changed.exclusions = excluded(kind);
+        running.configure(changed.clone(), &config_path);
+        assert_eq!(running.config.exclusions, changed.exclusions);
+        token += 1;
+        prepare("first", "prefix ", false, token);
+        session.desktop.clone().set(LayoutId(0)).unwrap();
+        running.type_text("ghbdtn ");
+        expect_stable("first", "prefix ghbdtn ");
+        assert_eq!(
+            session.desktop.current().unwrap(),
+            LayoutId(0),
+            "layout switched in a program excluded by {kind}"
+        );
+    }
+    // A manual conversion still works in an excluded program, unless the
+    // program is to be left alone completely.
+    changed.exclusions = excluded("title");
+    for ignore in [false, true] {
+        changed.troubleshooting.ignore_excluded_apps_completely = ignore;
+        running.configure(changed.clone(), &config_path);
+        token += 1;
+        prepare("first", "", false, token);
+        session.desktop.clone().set(LayoutId(0)).unwrap();
+        running.type_text("ghbdtn");
+        running.chord(&[], PhysKey::Pause);
+        if ignore {
+            expect_stable("first", "ghbdtn");
+        } else {
+            expect("first", "привет");
+        }
+    }
+    // Removing the exclusion live restores automatic switching.
+    changed.exclusions = Exclusions::default();
+    changed.troubleshooting.ignore_excluded_apps_completely = false;
+    running.configure(changed.clone(), &config_path);
+    token += 1;
+    prepare("first", "prefix ", false, token);
+    session.desktop.clone().set(LayoutId(0)).unwrap();
+    running.type_text("ghbdtn ");
+    expect("first", "prefix привет ");
+    eprintln!("Writer exclusions by name/path/folder/title/app_id and manual-only mode accepted");
+    // Hotkey actions through the physical evdev chord, the input filter and
+    // the engine. Expected texts come from the shared text functions; this
+    // checks the Linux selection, clipboard and window paths, not the algorithms.
+    let wait_event = |running: &RunningEngine, wanted: &Event| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut seen = Vec::new();
+        loop {
+            if let Ok(event) = running
+                .engine
+                .events()
+                .recv_timeout(Duration::from_millis(100))
+            {
+                if &event == wanted {
+                    break;
+                }
+                seen.push(event);
+            }
+            assert!(
+                Instant::now() < deadline,
+                "missing {wanted:?}, got {seen:?}"
+            );
+        }
+    };
+    let wait_clipboard = |clipboard: &mut LinuxClipboard, text: &str| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while clipboard.text().unwrap().as_deref() != Some(text) {
+            assert!(Instant::now() < deadline, "clipboard is not {text:?}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    let bind = |chord: &str| HotkeyBinding::some(chord.parse().unwrap());
+    let ctrl_shift = [PhysKey::ControlLeft, PhysKey::ShiftLeft];
+    // Writer handles many Ctrl+Shift+F-key chords itself (F5 opens the
+    // Navigator), which matters while hotkeys rest: use Scroll Lock there.
+    changed.hotkeys.invert_selection_case = bind("Ctrl+Shift+ScrollLock");
+    changed.hotkeys.transliterate_selection = bind("Ctrl+Shift+F6");
+    changed.hotkeys.number_to_words = bind("Ctrl+Shift+F7");
+    changed.hotkeys.paste_plain = bind("Ctrl+Shift+F8");
+    changed.hotkeys.convert_clipboard_layout = bind("Ctrl+Shift+F9");
+    changed.hotkeys.transliterate_clipboard = bind("Ctrl+Shift+F10");
+    changed.hotkeys.toggle_autoswitch = bind("Ctrl+Shift+F11");
+    changed.general.hotkeys_off_when_autoswitch_off = true;
+    running.configure(changed.clone(), &config_path);
+    assert_eq!(running.config.hotkeys, changed.hotkeys);
+    for (key, text, expected) in [
+        (
+            PhysKey::ScrollLock,
+            "Linux Mint",
+            okbs_core::text::invert_case("Linux Mint"),
+        ),
+        (
+            PhysKey::F6,
+            "привет мир",
+            okbs_core::translit::transliterate("привет мир"),
+        ),
+        (
+            PhysKey::F7,
+            "123",
+            okbs_core::numwords::convert("123").expect("number in words"),
+        ),
+    ] {
+        assert_ne!(text, expected);
+        token += 1;
+        prepare("first", text, true, token);
+        running.chord(&ctrl_shift, key);
+        expect("first", &expected);
+        wait_clipboard(&mut clipboard, "synthetic preserved clipboard");
+    }
+    token += 1;
+    prepare("first", "prefix ", false, token);
+    clipboard.set_text("plain synthetic text").unwrap();
+    running.chord(&ctrl_shift, PhysKey::F8);
+    expect("first", "prefix plain synthetic text");
+    for (key, text, expected) in [
+        (
+            PhysKey::F9,
+            "ghbdtn",
+            okbs_core::layouts::switch_text_layout("ghbdtn"),
+        ),
+        (
+            PhysKey::F10,
+            "привет",
+            okbs_core::translit::transliterate("привет"),
+        ),
+    ] {
+        token += 1;
+        prepare("first", "unchanged ", false, token);
+        clipboard.set_text(text).unwrap();
+        running.chord(&ctrl_shift, key);
+        wait_clipboard(&mut clipboard, &expected);
+        expect_stable("first", "unchanged ");
+    }
+    // With autoswitch off, other hotkeys rest except the toggle itself.
+    running.chord(&ctrl_shift, PhysKey::F11);
+    wait_event(&running, &Event::AutoswitchChanged(false));
+    token += 1;
+    prepare("first", "prefix ", false, token);
+    session.desktop.clone().set(LayoutId(0)).unwrap();
+    running.type_text("ghbdtn ");
+    expect_stable("first", "prefix ghbdtn ");
+    token += 1;
+    prepare("first", "Linux", true, token);
+    running.chord(&ctrl_shift, PhysKey::ScrollLock);
+    expect_stable("first", "Linux");
+    running.chord(&ctrl_shift, PhysKey::F11);
+    wait_event(&running, &Event::AutoswitchChanged(true));
+    token += 1;
+    prepare("first", "prefix ", false, token);
+    session.desktop.clone().set(LayoutId(0)).unwrap();
+    running.type_text("ghbdtn ");
+    expect("first", "prefix привет ");
+    eprintln!("Writer hotkey selection/clipboard/paste/autoswitch actions accepted");
     eprintln!(
         "Writer autoreplace all triggers/EN-RU/cursor, live config serialization, Escape and Pause accepted"
     );
@@ -666,6 +868,61 @@ fn real_wayland_writer_and_terminal_correct_paste_and_submit() {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
+    // Window commands go to the compositor integration for the active
+    // window; foot opens with an ordinary, not screen-filling size.
+    let mut window_hotkeys = running.config.clone();
+    window_hotkeys.hotkeys.toggle_maximize_window = bind("Ctrl+Shift+Insert");
+    window_hotkeys.hotkeys.minimize_window = bind("Ctrl+Shift+Home");
+    running.configure(window_hotkeys, &config_path);
+    let terminal_window = session.desktop.refresh().unwrap();
+    running.chord(&ctrl_shift, PhysKey::Insert);
+    wait_event(
+        &running,
+        &Event::Ui(okbs_engine::UiRequest::ToggleMaximizeWindow),
+    );
+    okbs_platform::WindowControl::toggle_maximize_active(&session.desktop).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let maximized = loop {
+        let native = session.desktop.refresh().unwrap();
+        if native.window == terminal_window.window
+            && native.client[2] > terminal_window.client[2]
+            && native.client[3] > terminal_window.client[3]
+        {
+            break native;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "foot was not maximized from {terminal_window:?}: {native:?}"
+        );
+        std::thread::sleep(Duration::from_millis(30));
+    };
+    running.chord(&ctrl_shift, PhysKey::Insert);
+    wait_event(
+        &running,
+        &Event::Ui(okbs_engine::UiRequest::ToggleMaximizeWindow),
+    );
+    okbs_platform::WindowControl::toggle_maximize_active(&session.desktop).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let native = session.desktop.refresh().unwrap();
+        if native.window == terminal_window.window && native.client[2] < maximized.client[2] {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "foot was not restored: {native:?}"
+        );
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    running.chord(&ctrl_shift, PhysKey::Home);
+    wait_event(&running, &Event::Ui(okbs_engine::UiRequest::MinimizeWindow));
+    okbs_platform::WindowControl::minimize_active(&session.desktop).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while session.desktop.refresh().unwrap().window == terminal_window.window {
+        assert!(Instant::now() < deadline, "foot was not minimized");
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    eprintln!("foot maximize/restore/minimize hotkeys accepted");
     drop(running);
     drop(terminal);
     eprintln!(

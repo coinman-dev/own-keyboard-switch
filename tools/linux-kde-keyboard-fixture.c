@@ -57,7 +57,17 @@ int main(int argc, char **argv)
     unsigned code, state;
     char line[128];
     while (fgets(line, sizeof(line), stdin)) {
-        int x,y;
+        int x,y,steps;
+        if (sscanf(line, "s %d %d %d", &x, &y, &steps)==3) {
+            /* Vertical wheel over the point; 15 is one libinput wheel notch. */
+            alarm(5);
+            org_kde_kwin_fake_input_pointer_motion_absolute(keyboard,wl_fixed_from_int(x),wl_fixed_from_int(y));
+            for (int step = 0; step < abs(steps); step++)
+                org_kde_kwin_fake_input_axis(keyboard,0,wl_fixed_from_int(steps < 0 ? -15 : 15));
+            if (wl_display_roundtrip(display)<0) return 1;
+            alarm(0);
+            printf("s %d %d %d\n",x,y,steps); fflush(stdout); continue;
+        }
         if (sscanf(line, "p %d %d", &x, &y)==2) {
             alarm(5);
             org_kde_kwin_fake_input_pointer_motion_absolute(keyboard,wl_fixed_from_int(x),wl_fixed_from_int(y));

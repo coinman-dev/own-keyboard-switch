@@ -27,7 +27,7 @@ try:
                 # device's position. Promote it with a real motion first.
                 remote.call_sync("NotifyPointerMotionRelative",GLib.Variant("(dd)",(100.0,100.0)),0,3000,None)
                 integration=Gio.DBusProxy.new_sync(bus,0,None,"org.own_keyboard_switch.Gnome","/org/own_keyboard_switch/Gnome","org.own_keyboard_switch.Gnome",None)
-                x,y=action["click"]
+                x,y=action.get("click") or action["scroll"][:2]
                 for _ in range(8):
                     time.sleep(0.04)
                     position=json.loads(integration.call_sync("GetState",None,0,3000,None).unpack()[0])["cursor"]
@@ -39,7 +39,11 @@ try:
                 shell=Gio.DBusProxy.new_sync(bus,0,None,"org.gnome.Shell","/org/gnome/Shell","org.freedesktop.DBus.Properties",None)
                 shell.call_sync("Set",GLib.Variant("(ssv)",("org.gnome.Shell","OverviewActive",GLib.Variant("b",False))),0,3000,None)
                 time.sleep(0.3)
-                for pressed in (True,False): remote.call_sync("NotifyPointerButton",GLib.Variant("(ib)",(272,pressed)),0,3000,None)
+                if "scroll" in action:
+                    # Axis 0 is the vertical wheel; positive steps scroll down.
+                    remote.call_sync("NotifyPointerAxisDiscrete",GLib.Variant("(ui)",(0,action["scroll"][2])),0,3000,None)
+                else:
+                    for pressed in (True,False): remote.call_sync("NotifyPointerButton",GLib.Variant("(ib)",(272,pressed)),0,3000,None)
             command.unlink()
         time.sleep(0.01)
 finally:

@@ -9,8 +9,7 @@ use crossbeam_channel::{Receiver, unbounded};
 use okbs_core::config::Config;
 use okbs_engine::{Backends, EngineHandle, Inputs, Processor};
 use okbs_platform::{
-    Autostart, Clipboard, FocusInfo, InputEvent, KeyboardSource, LayoutInfo, LayoutManager,
-    StopGuard,
+    Clipboard, FocusInfo, InputEvent, KeyboardSource, LayoutInfo, LayoutManager, StopGuard,
 };
 use okbs_platform_linux::services::{
     LinuxAutostart, LinuxClipboard, LinuxFileDialogs, LinuxSound, LinuxSystemSettings,
@@ -122,7 +121,12 @@ pub fn run(
     let config = settings.config.clone();
     let panels = okbs_platform_linux::panels::Panels::new(desktop.clone())?;
     let autostart = LinuxAutostart::new()?;
-    autostart.set_enabled(config.general.autostart, &std::env::current_exe()?, false)?;
+    if let Err(err) = std::env::current_exe()
+        .map_err(okbs_platform::PlatformError::from)
+        .and_then(|exe| autostart.refresh(first_run, config.general.autostart, &exe))
+    {
+        tracing::warn!("cannot update the login autostart entry: {err}");
+    }
     let filter = source.filter.clone();
     let list_desktop = desktop.clone();
     let cursor_desktop = desktop.clone();

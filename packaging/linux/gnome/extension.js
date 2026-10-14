@@ -128,7 +128,10 @@ export default class OkbSwitchExtension extends Extension {
     MinimizeWindow(id) { this._window(id).minimize(); }
     ToggleMaximizeWindow(id) {
         const window = this._window(id);
-        if (window.get_maximized() === Meta.MaximizeFlags.BOTH)
+        // Newer Mutter (GNOME 50: Mutter 18) has no direction flags here.
+        if (window.is_maximized) {
+            if (window.is_maximized()) window.unmaximize(); else window.maximize();
+        } else if (window.get_maximized() === Meta.MaximizeFlags.BOTH)
             window.unmaximize(Meta.MaximizeFlags.BOTH);
         else window.maximize(Meta.MaximizeFlags.BOTH);
     }
@@ -206,12 +209,18 @@ export default class OkbSwitchExtension extends Extension {
     TakePanelEvents() { const events = this._events; this._events = []; return JSON.stringify(events); }
     GetPanelGeometry(id) {
         const panel = this._panels.get(id);
+        const [viewX, viewY] = panel?._scroll?.get_transformed_position() ?? [0, 0];
+        const [viewWidth, viewHeight] = panel?._scroll?.get_transformed_size() ?? [0, 0];
         const rows = (panel?._rowButtons ?? []).map(button => {
             const [x, y] = button.get_transformed_position();
             const [width, height] = button.get_transformed_size();
-            return {x, y, width, height};
+            // A row scrolled out of the list is not clickable.
+            const visible = x + width / 2 >= viewX && x + width / 2 < viewX + viewWidth &&
+                y + height / 2 >= viewY && y + height / 2 < viewY + viewHeight;
+            return {x, y, width, height, visible};
         });
         return JSON.stringify({panel:panel ? {x:panel.x,y:panel.y,width:panel.width,height:panel.height} : null, rows,
+            opacity:panel ? panel.opacity / 255 : null,
             monitors:Main.layoutManager.monitors.map((monitor, index) => ({x:monitor.x,y:monitor.y,
                 width:monitor.width,height:monitor.height,scale:global.display.get_monitor_scale(index)}))});
     }
@@ -248,6 +257,7 @@ export default class OkbSwitchExtension extends Extension {
             const scroll = new St.ScrollView({style:'max-height: 320px; min-width: 320px;'});
             if (scroll.set_child) scroll.set_child(rows); else scroll.add_actor(rows);
             panel.add_child(scroll);
+            panel._scroll = scroll;
         }
         if (model.id === 'indicator') {
             panel.connect('button-press-event', (_actor, event) => {

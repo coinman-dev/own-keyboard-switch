@@ -370,7 +370,7 @@ texts! {
     ColumnRuleCondition => "Условие", "Condition";
     ColumnRuleAction => "Действие", "Action";
     ExclusionDialogTitle => "Программа-исключение", "Excluded program";
-    ExclusionExePrompt => "Полный путь к файлу программы:", "Full path of the program file:";
+    ExclusionExePrompt => "Имя файла программы или полный путь к нему:", "Program file name or its full path:";
     ExclusionTitlePrompt => "Часть заголовка окна (с учётом регистра):", "Part of the window title (case-sensitive):";
     ExclusionFolderPrompt => "Папка с программами:", "Program folder:";
     ColumnWindowTitle => "Заголовок окна", "Window title";

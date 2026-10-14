@@ -216,37 +216,84 @@ pub struct LinuxAutostart {
 impl LinuxAutostart {
     pub fn new() -> Result<Self> {
         let home = std::env::var_os("HOME").ok_or_else(|| error("HOME is not set"))?;
+        // The base directory specification ignores relative values.
         let config = std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
             .unwrap_or_else(|| PathBuf::from(home).join(".config"));
-        Ok(Self {
-            path: config.join("autostart/okbswitch.desktop"),
-        })
+        Ok(Self::at(config.join("autostart/okbswitch.desktop")))
+    }
+    pub fn at(path: PathBuf) -> Self {
+        Self { path }
+    }
+    /// Startup reconciliation: a new profile gets the entry, as the Windows
+    /// installer does. Later starts keep what the user chose, including in the
+    /// desktop's own startup settings, and only refresh the program path of an
+    /// enabled entry: an AppImage may have been moved.
+    pub fn refresh(&self, new_profile: bool, wanted: bool, executable: &Path) -> Result<()> {
+        if (new_profile && wanted) || self.is_enabled()? {
+            self.set_enabled(true, executable, false)?;
+        }
+        Ok(())
     }
 }
 fn desktop_exec(path: &Path) -> String {
-    format!(
-        "\"{}\"",
-        path.to_string_lossy()
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('`', "\\`")
-            .replace('$', "\\$")
-            .replace('%', "%%")
-    )
+    // The quoting rule escapes `"`, `` ` ``, `$` and `\` inside a quoted
+    // argument; the string escape rule then doubles every backslash again.
+    let quoted = path
+        .to_string_lossy()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('`', "\\`")
+        .replace('$', "\\$");
+    format!("\"{}\"", quoted.replace('\\', "\\\\").replace('%', "%%"))
+}
+/// Whether a desktop entry starts at login: `Hidden=true` is the standard way
+/// to disable it and GNOME also honours `X-GNOME-Autostart-enabled=false`.
+fn starts_at_login(entry: &str) -> bool {
+    let mut main = false;
+    for line in entry.lines().map(str::trim) {
+        if line.starts_with('[') {
+            main = line == "[Desktop Entry]";
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if main
+            && matches!(
+                (key.trim(), value.trim()),
+                ("Hidden", "true") | ("X-GNOME-Autostart-enabled", "false")
+            )
+        {
+            return false;
+        }
+    }
+    true
 }
 impl Autostart for LinuxAutostart {
     fn is_enabled(&self) -> Result<bool> {
-        Ok(self.path.exists())
+        match std::fs::read_to_string(&self.path) {
+            Ok(entry) => Ok(starts_at_login(&entry)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(error(e)),
+        }
     }
     fn set_enabled(&self, enabled: bool, executable: &Path, _elevated: bool) -> Result<()> {
         let image = std::env::var_os("APPIMAGE").map(PathBuf::from);
         let executable = image.as_deref().unwrap_or(executable);
         if enabled {
+            let entry = format!(
+                "[Desktop Entry]\nType=Application\nName=Own Keyboard Switch\nExec={}\nIcon=okbswitch\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
+                desktop_exec(executable)
+            );
+            if std::fs::read_to_string(&self.path).is_ok_and(|current| current == entry) {
+                return Ok(());
+            }
             if let Some(parent) = self.path.parent() {
                 std::fs::create_dir_all(parent).map_err(error)?;
             }
-            std::fs::write(&self.path, format!("[Desktop Entry]\nType=Application\nName=Own Keyboard Switch\nExec={}\nIcon=okbswitch\nTerminal=false\nX-GNOME-Autostart-enabled=true\n", desktop_exec(executable))).map_err(error)
+            std::fs::write(&self.path, entry).map_err(error)
         } else {
             match std::fs::remove_file(&self.path) {
                 Ok(()) => Ok(()),
@@ -420,7 +467,61 @@ mod tests {
     fn autostart_quotes_paths_without_shell_execution() {
         assert_eq!(
             desktop_exec(Path::new("/home/user/A $B%/okbswitch")),
-            "\"/home/user/A \\$B%%/okbswitch\""
+            "\"/home/user/A \\\\$B%%/okbswitch\""
         );
+        // Read back the way GLib launches it: string unescape, `%%` field
+        // code, then the quoting rule.
+        let path = "/home/user/A $B%\\ \"q\" `c`/okbswitch";
+        let file = gtk::glib::KeyFile::new();
+        file.load_from_data(
+            &format!("[Desktop Entry]\nExec={}\n", desktop_exec(Path::new(path))),
+            gtk::glib::KeyFileFlags::NONE,
+        )
+        .unwrap();
+        let exec = file.string("Desktop Entry", "Exec").unwrap();
+        let argv = gtk::glib::shell_parse_argv(exec.replace("%%", "%")).unwrap();
+        assert_eq!(argv, [std::ffi::OsString::from(path)]);
+    }
+    #[test]
+    fn autostart_respects_entries_disabled_by_the_desktop() {
+        assert!(starts_at_login(
+            "[Desktop Entry]\nExec=okbswitch\nX-GNOME-Autostart-enabled=true\n"
+        ));
+        assert!(!starts_at_login("[Desktop Entry]\nHidden=true\n"));
+        assert!(!starts_at_login(
+            "[Desktop Entry]\nX-GNOME-Autostart-enabled = false\n"
+        ));
+        assert!(starts_at_login(
+            "[Desktop Entry]\nExec=okbswitch\n[Desktop Action x]\nHidden=true\n"
+        ));
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("autostart/okbswitch.desktop");
+        let autostart = LinuxAutostart::at(path.clone());
+        let old = Path::new("/old/okbswitch");
+        let new = Path::new("/new/okbswitch");
+        // An existing profile without an entry stays without one.
+        autostart.refresh(false, true, new).unwrap();
+        assert!(!path.exists());
+        // A new profile registers itself.
+        autostart.refresh(true, true, old).unwrap();
+        assert!(autostart.is_enabled().unwrap());
+        // A moved program updates its enabled entry.
+        autostart.refresh(false, true, new).unwrap();
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("Exec=\"/new/okbswitch\"")
+        );
+        // An entry disabled in the desktop settings is reported and kept.
+        let hidden = "[Desktop Entry]\nExec=\"/new/okbswitch\"\nHidden=true\n";
+        std::fs::write(&path, hidden).unwrap();
+        assert!(!autostart.is_enabled().unwrap());
+        autostart.refresh(false, true, new).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), hidden);
+        // Turning it on in the program rewrites it as enabled.
+        autostart.set_enabled(true, new, false).unwrap();
+        assert!(autostart.is_enabled().unwrap());
+        autostart.set_enabled(false, new, false).unwrap();
+        assert!(!path.exists());
     }
 }

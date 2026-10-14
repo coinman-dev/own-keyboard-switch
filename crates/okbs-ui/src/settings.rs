@@ -1631,7 +1631,7 @@ impl SettingsView {
                 value: values[i].clone(),
             });
         }
-        // The suggested names are Windows program files.
+        // Terminals and editors under their file names on this platform.
         if cfg!(any(windows, target_os = "linux"))
             && ui
                 .add(action_button(tr(Text::SuggestExclusionsButton, lang)))

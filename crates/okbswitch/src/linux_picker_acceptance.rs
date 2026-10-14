@@ -61,8 +61,16 @@ mod zbus_keyboard {
             )
         }
         pub fn click(&self, command: &std::path::Path, point: [i32; 2]) {
-            std::fs::write(command, serde_json::json!({"click":point}).to_string())
-                .expect("write private pointer action");
+            self.pointer(command, serde_json::json!({ "click": point }));
+        }
+        pub fn scroll(&self, command: &std::path::Path, point: [i32; 2], steps: i32) {
+            self.pointer(
+                command,
+                serde_json::json!({ "scroll": [point[0], point[1], steps] }),
+            );
+        }
+        fn pointer(&self, command: &std::path::Path, action: serde_json::Value) {
+            std::fs::write(command, action.to_string()).expect("write private pointer action");
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
             while command.exists() {
                 assert!(std::time::Instant::now() < deadline);
@@ -71,6 +79,8 @@ mod zbus_keyboard {
         }
     }
 }
+const LONG_LIST: usize = 40;
+const LIST_OPACITY: f32 = 0.45;
 fn tick(controller: &mut Controller, desktop: &LinuxDesktop) {
     desktop
         .refresh()
@@ -232,6 +242,15 @@ fn phase(workspace: &Path, directory: &Path, stage: &str) {
                 to: "<i></i>".into(),
                 cursor_pos: 3,
             });
+        // A list longer than the floating panel: its last rows need the wheel.
+        config.autoreplace.items.extend((2..LONG_LIST).map(|index| {
+            okbs_core::config::AutoReplaceItem {
+                from: format!("long{index}"),
+                to: format!("[{index}]"),
+                cursor_pos: -1,
+            }
+        }));
+        config.autoreplace.list_opacity = LIST_OPACITY;
         okbs_core::config::save(&path, &config).expect("private picker fixture operation failed");
     }
     let mut config = okbs_core::config::load_or_create(&path)
@@ -244,6 +263,8 @@ fn phase(workspace: &Path, directory: &Path, stage: &str) {
         assert!(!config.advanced.clipboard_history_persist);
     }
     assert_eq!(config.autoreplace.items[0].cursor_pos, 3);
+    assert_eq!(config.autoreplace.items.len(), LONG_LIST);
+    assert_eq!(config.autoreplace.list_opacity, LIST_OPACITY);
     if stage != "seed" {
         assert_eq!(
             config.hotkeys.show_clipboard_history.0,
@@ -443,6 +464,17 @@ fn phase(workspace: &Path, directory: &Path, stage: &str) {
             let mut reply = String::new();
             output.read_line(&mut reply).expect("pointer reply");
             assert_eq!(reply.trim(), format!("p {} {}", point[0], point[1]));
+        }
+    };
+    let scroll = |keyboard: &mut Keyboard, point: [i32; 2], steps: i32| match keyboard {
+        Keyboard::Gnome(remote) => remote.scroll(&keyboard_command, point, steps),
+        Keyboard::Kde { input, output, .. } => {
+            let command = format!("s {} {} {steps}", point[0], point[1]);
+            writeln!(input, "{command}").expect("send private wheel action");
+            input.flush().expect("flush wheel");
+            let mut reply = String::new();
+            output.read_line(&mut reply).expect("wheel reply");
+            assert_eq!(reply.trim(), command);
         }
     };
     let panels = okbs_platform_linux::panels::Panels::new(desktop.clone())
@@ -718,6 +750,14 @@ fn phase(workspace: &Path, directory: &Path, stage: &str) {
         Some(original),
         "passive list stole editor focus"
     );
+    let opacity = panels
+        .applied_opacity("list")
+        .expect("floating list opacity")
+        .expect("mapped floating list");
+    assert!(
+        (opacity - f64::from(LIST_OPACITY)).abs() < 0.02,
+        "floating list opacity {opacity}"
+    );
     let point = panels
         .row_center("list", 1)
         .expect("floating row geometry")
@@ -793,12 +833,62 @@ fn phase(workspace: &Path, directory: &Path, stage: &str) {
         },
     );
     wait_editor(&mut controller, &desktop, second_target);
+    // The last row starts outside the panel; only the real wheel reaches it.
+    let last = LONG_LIST - 1;
+    assert_eq!(
+        panels.row_center("list", last).expect("long list geometry"),
+        None,
+        "long list fits without scrolling"
+    );
+    let over_list = panels
+        .row_center("list", 0)
+        .expect("long list geometry")
+        .expect("first visible row");
+    let mut last_row = None;
+    for _ in 0..30 {
+        scroll(&mut keyboard, over_list, 3);
+        for _ in 0..5 {
+            tick(&mut controller, &desktop);
+        }
+        last_row = panels.row_center("list", last).expect("long list geometry");
+        if last_row.is_some() {
+            break;
+        }
+    }
+    assert_eq!(
+        desktop.target(),
+        Some(second_target),
+        "wheel over the passive list moved editor focus"
+    );
+    click(&mut keyboard, last_row.expect("wheel reached the last row"));
+    let expected_second = format!("<b>[{last}]</b>");
+    wait_inserted(
+        &mut controller,
+        &desktop,
+        "last long-list row inserted",
+        &test_gate,
+        &output_idle,
+        |_| {
+            std::fs::read(&state)
+                .ok()
+                .and_then(|s| serde_state(&s))
+                .is_some_and(|s| s.0 == expected_floating && s.1 == expected_second)
+        },
+    );
+    wait_editor(&mut controller, &desktop, second_target);
+    // Opacity changes apply to the open panel, together with disabling.
     let mut disabled_autoreplace = controller.settings.config.clone();
     disabled_autoreplace.autoreplace.enabled = false;
+    disabled_autoreplace.autoreplace.list_opacity = 0.8;
     controller.handle_window_event(SettingsEvent::Apply(Box::new(disabled_autoreplace)));
     for _ in 0..25 {
         tick(&mut controller, &desktop);
     }
+    let opacity = panels
+        .applied_opacity("list")
+        .expect("floating list opacity")
+        .expect("reconfigured floating list");
+    assert!((opacity - 0.8).abs() < 0.02, "live list opacity {opacity}");
     click(
         &mut keyboard,
         panels
@@ -811,11 +901,12 @@ fn phase(workspace: &Path, directory: &Path, stage: &str) {
     }
     assert_eq!(
         serde_state(&std::fs::read(&state).expect("fixture state")).expect("synthetic fields"),
-        (expected_floating.clone(), "<b></b>".into()),
+        (expected_floating.clone(), expected_second.clone()),
         "disabled floating panel inserted text"
     );
     let mut enabled = controller.settings.config.clone();
     enabled.autoreplace.enabled = true;
+    enabled.autoreplace.list_opacity = LIST_OPACITY;
     controller.handle_window_event(SettingsEvent::Apply(Box::new(enabled)));
     for _ in 0..25 {
         tick(&mut controller, &desktop);
@@ -836,7 +927,7 @@ fn phase(workspace: &Path, directory: &Path, stage: &str) {
     }
     assert_eq!(
         serde_state(&std::fs::read(&state).expect("fixture state")).expect("synthetic fields"),
-        (expected_floating.clone(), "<b></b>".into()),
+        (expected_floating.clone(), expected_second.clone()),
         "floating panel inserted in a password field"
     );
     physical_tap(
