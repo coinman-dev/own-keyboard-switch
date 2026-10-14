@@ -74,6 +74,10 @@ if [[ ${OKBS_TEST_APP:-} == picker ]]; then
     timeout 120s "$OKBS_TEST_BROWSER_BINARY" real_linux_pickers_and_process_restart_preserve_editor_and_history --ignored --nocapture
     exit
 fi
+if [[ ${OKBS_TEST_APP:-} == indicator ]]; then
+    timeout 60s "$OKBS_TEST_BROWSER_BINARY" real_floating_indicator_pointer_actions --ignored --nocapture
+    exit
+fi
 if [[ ${OKBS_TEST_APP:-} == layout ]]; then
     timeout 60s "$OKBS_TEST_BROWSER_BINARY" real_single_layout_follows_window_focus --ignored --nocapture
     exit

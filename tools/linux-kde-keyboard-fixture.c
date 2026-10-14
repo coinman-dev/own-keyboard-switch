@@ -1,6 +1,7 @@
 /* Test-only transport for the isolated KWin virtual compositor. Protocol
  * declarations are generated from the distribution's Plasma Wayland XML.
  * This helper is never linked into or shipped with Own Keyboard Switch. */
+#define _DEFAULT_SOURCE
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -57,7 +58,39 @@ int main(int argc, char **argv)
     unsigned code, state;
     char line[128];
     while (fgets(line, sizeof(line), stdin)) {
-        int x,y,steps;
+        int x,y,steps,x2,y2;
+        if (sscanf(line, "d %d %d", &x, &y)==2) {
+            /* Double click: two clicks well inside the double-click time. */
+            alarm(5);
+            org_kde_kwin_fake_input_pointer_motion_absolute(keyboard,wl_fixed_from_int(x),wl_fixed_from_int(y));
+            for (int click = 0; click < 2; click++) {
+                org_kde_kwin_fake_input_button(keyboard,272,1);
+                org_kde_kwin_fake_input_button(keyboard,272,0);
+                if (wl_display_roundtrip(display)<0) return 1;
+                usleep(50000);
+            }
+            alarm(0);
+            printf("d %d %d\n",x,y); fflush(stdout); continue;
+        }
+        if (sscanf(line, "g %d %d %d %d", &x, &y, &x2, &y2)==4) {
+            /* Drag with the left button through intermediate positions. */
+            alarm(5);
+            org_kde_kwin_fake_input_pointer_motion_absolute(keyboard,wl_fixed_from_int(x),wl_fixed_from_int(y));
+            if (wl_display_roundtrip(display)<0) return 1;
+            org_kde_kwin_fake_input_button(keyboard,272,1);
+            if (wl_display_roundtrip(display)<0) return 1;
+            for (int step = 1; step <= 10; step++) {
+                usleep(20000);
+                org_kde_kwin_fake_input_pointer_motion_absolute(keyboard,
+                    wl_fixed_from_int(x + (x2 - x) * step / 10),wl_fixed_from_int(y + (y2 - y) * step / 10));
+                if (wl_display_roundtrip(display)<0) return 1;
+            }
+            usleep(20000);
+            org_kde_kwin_fake_input_button(keyboard,272,0);
+            if (wl_display_roundtrip(display)<0) return 1;
+            alarm(0);
+            printf("g %d %d %d %d\n",x,y,x2,y2); fflush(stdout); continue;
+        }
         if (sscanf(line, "s %d %d %d", &x, &y, &steps)==3) {
             /* Vertical wheel over the point; 15 is one libinput wheel notch. */
             alarm(5);

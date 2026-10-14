@@ -38,23 +38,35 @@ struct Session {
     bus: zbus::blocking::Connection,
     remote: Option<zbus::zvariant::OwnedObjectPath>,
     _bridge: Option<crate::desktop::BridgeConnection>,
-    _keyboard: Option<Process>,
+    /// KDE fake-input helper: its stdin takes pointer commands.
+    keyboard: Option<(
+        Process,
+        std::process::ChildStdin,
+        std::io::BufReader<std::process::ChildStdout>,
+    )>,
 }
 impl Session {
     fn new() -> Self {
         let kde = crate::SessionInfo::detect().desktop == Desktop::Kde;
         let bridge = kde.then(|| crate::desktop::serve_kde_bridge().unwrap());
         let keyboard = kde.then(|| {
-            Process(
+            use std::io::BufRead;
+            let mut process = Process(
                 std::process::Command::new(
                     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                         .join("../../tmp/linux-kde-keyboard/keyboard-fixture"),
                 )
                 .stdin(Stdio::piped())
-                .stdout(Stdio::null())
+                .stdout(Stdio::piped())
                 .spawn()
                 .unwrap(),
-            )
+            );
+            let input = process.0.stdin.take().unwrap();
+            let mut output = std::io::BufReader::new(process.0.stdout.take().unwrap());
+            let mut ready = String::new();
+            output.read_line(&mut ready).unwrap();
+            assert_eq!(ready.trim(), "ready");
+            (process, input, output)
         });
         let bus = zbus::blocking::connection::Builder::session()
             .unwrap()
@@ -101,8 +113,112 @@ impl Session {
             bus,
             remote,
             _bridge: bridge,
-            _keyboard: keyboard,
+            keyboard,
         }
+    }
+}
+/// A real pointer action in the private compositor.
+#[derive(Debug, Clone, Copy)]
+enum Pointer {
+    DoubleClick([i32; 2]),
+    Drag([i32; 2], [i32; 2]),
+}
+impl Session {
+    fn pointer(&mut self, action: Pointer) {
+        if let Some((_, input, output)) = &mut self.keyboard {
+            use std::io::{BufRead, Write};
+            let command = match action {
+                Pointer::DoubleClick([x, y]) => format!("d {x} {y}"),
+                Pointer::Drag([x, y], [x2, y2]) => format!("g {x} {y} {x2} {y2}"),
+            };
+            writeln!(input, "{command}").unwrap();
+            input.flush().unwrap();
+            let mut reply = String::new();
+            output.read_line(&mut reply).unwrap();
+            assert_eq!(reply.trim(), command, "KDE pointer helper");
+            return;
+        }
+        let remote = self.remote.clone().expect("GNOME remote desktop session");
+        let proxy = zbus::blocking::Proxy::new(
+            &self.bus,
+            "org.gnome.Mutter.RemoteDesktop",
+            remote.as_str(),
+            "org.gnome.Mutter.RemoteDesktop.Session",
+        )
+        .unwrap();
+        let button = |pressed: bool| {
+            proxy
+                .call::<_, _, ()>("NotifyPointerButton", &(272i32, pressed))
+                .unwrap();
+        };
+        let start = match action {
+            Pointer::DoubleClick(point) | Pointer::Drag(point, _) => point,
+        };
+        self.gnome_move_to(&proxy, start);
+        match action {
+            Pointer::DoubleClick(_) => {
+                for _ in 0..2 {
+                    button(true);
+                    button(false);
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            }
+            Pointer::Drag(from, to) => {
+                button(true);
+                std::thread::sleep(Duration::from_millis(40));
+                for _ in 0..10 {
+                    proxy
+                        .call::<_, _, ()>(
+                            "NotifyPointerMotionRelative",
+                            &(
+                                f64::from(to[0] - from[0]) / 10.0,
+                                f64::from(to[1] - from[1]) / 10.0,
+                            ),
+                        )
+                        .unwrap();
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                button(false);
+            }
+        }
+    }
+    /// A new virtual pointer does not share the previous device's position:
+    /// move relatively until the Shell reports the requested position.
+    fn gnome_move_to(&self, proxy: &zbus::blocking::Proxy<'_>, point: [i32; 2]) {
+        let relative = |dx: f64, dy: f64| {
+            proxy
+                .call::<_, _, ()>("NotifyPointerMotionRelative", &(dx, dy))
+                .unwrap();
+        };
+        relative(100.0, 100.0);
+        let mut reached = false;
+        for _ in 0..12 {
+            std::thread::sleep(Duration::from_millis(40));
+            let [x, y] = self.desktop.refresh().unwrap().cursor;
+            if (x - point[0]).abs() < 2 && (y - point[1]).abs() < 2 {
+                reached = true;
+                break;
+            }
+            relative(f64::from(point[0] - x), f64::from(point[1] - y));
+        }
+        assert!(reached, "private Mutter pointer did not reach {point:?}");
+        // A corrective move can cross the headless Shell's hot corner.
+        let shell = zbus::blocking::Proxy::new(
+            &self.bus,
+            "org.gnome.Shell",
+            "/org/gnome/Shell",
+            "org.freedesktop.DBus.Properties",
+        )
+        .unwrap();
+        let _ = shell.call::<_, _, ()>(
+            "Set",
+            &(
+                "org.gnome.Shell",
+                "OverviewActive",
+                zbus::zvariant::Value::from(false),
+            ),
+        );
+        std::thread::sleep(Duration::from_millis(300));
     }
 }
 impl Drop for Session {
@@ -472,6 +588,11 @@ fn real_wayland_writer_and_terminal_correct_paste_and_submit() {
         crate::permissions::is_root(),
         "run only in an isolated development VM"
     );
+    // Engine decisions in the test log; typed text is never logged.
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_writer(std::io::stderr)
+        .try_init();
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let scratch = workspace.join("tmp/linux-native-input");
     std::fs::create_dir_all(&scratch).unwrap();
@@ -1214,4 +1335,124 @@ fn real_wayland_writer_and_terminal_correct_paste_and_submit() {
     eprintln!(
         "Native Wayland Writer selection/correction/history and foot correction-before-Enter/history accepted"
     );
+}
+
+#[test]
+#[ignore = "requires private GNOME/KDE Wayland with pointer fixtures; set OKBS_TEST_APP=indicator in the device test script"]
+fn real_floating_indicator_pointer_actions() {
+    use crate::panels::{LinuxIndicator, Panels};
+    use okbs_platform::{FloatingIndicator, IndicatorEvent, IndicatorLabels, IndicatorState};
+    let mut session = Session::new();
+    let panels = Panels::new(session.desktop.clone()).unwrap();
+    let mut state = IndicatorState {
+        visible: true,
+        autohide: false,
+        autohide_ms: 300,
+        position: Some([300, 300]),
+        locked: false,
+    };
+    let labels = IndicatorLabels {
+        title: "OKBS indicator acceptance".into(),
+        lock: "Lock".into(),
+        settings: "Settings".into(),
+        hide: "Hide".into(),
+    };
+    let mut indicator = LinuxIndicator::new(panels.clone(), &state, labels.clone()).unwrap();
+    let size = 32;
+    let icon: Vec<u8> = (0..size * size).flat_map(|_| [200, 40, 40, 255]).collect();
+    indicator.set_icon(&icon, size, false).unwrap();
+    // Events during `duration`; the GTK panels are pumped by `poll`.
+    let events = |indicator: &mut LinuxIndicator, duration: Duration| {
+        let deadline = Instant::now() + duration;
+        let mut events = Vec::new();
+        while Instant::now() < deadline {
+            if let Some(event) = indicator.poll() {
+                events.push(event);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        events
+    };
+    let geometry = |indicator: &mut LinuxIndicator| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut previous = None;
+        loop {
+            let _ = events(indicator, Duration::from_millis(100));
+            let current = panels.geometry("indicator").unwrap();
+            if let Some(stable) = current
+                && current == previous
+            {
+                break stable;
+            }
+            previous = current;
+            assert!(Instant::now() < deadline, "indicator was not mapped");
+        }
+    };
+    let center = |[x, y, width, height]: [i32; 4]| [x + width / 2, y + height / 2];
+    let start = geometry(&mut indicator);
+    // A double click asks for the settings window.
+    session.pointer(Pointer::DoubleClick(center(start)));
+    let seen = events(&mut indicator, Duration::from_secs(2));
+    assert!(
+        seen.contains(&IndicatorEvent::OpenSettings),
+        "double click: {seen:?}"
+    );
+    // Dragging reports the new position, which the program saves.
+    let delta = [120, 80];
+    let from = center(start);
+    session.pointer(Pointer::Drag(
+        from,
+        [from[0] + delta[0], from[1] + delta[1]],
+    ));
+    let seen = events(&mut indicator, Duration::from_secs(2));
+    let moved = seen
+        .iter()
+        .rev()
+        .find_map(|event| match event {
+            IndicatorEvent::Moved(position) => Some(*position),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("drag reported no position: {seen:?}"));
+    let expected = [start[0] + delta[0], start[1] + delta[1]];
+    assert!(
+        (moved[0] - expected[0]).abs() <= 4 && (moved[1] - expected[1]).abs() <= 4,
+        "dragged to {moved:?}, expected about {expected:?}"
+    );
+    let dragged = geometry(&mut indicator);
+    assert!(
+        (dragged[0] - expected[0]).abs() <= 4 && (dragged[1] - expected[1]).abs() <= 4,
+        "indicator at {dragged:?}, expected about {expected:?}"
+    );
+    // «Закрепить индикатор»: a drag no longer moves it.
+    state.position = Some(moved);
+    state.locked = true;
+    indicator.configure(&state, labels.clone()).unwrap();
+    let locked = geometry(&mut indicator);
+    let from = center(locked);
+    session.pointer(Pointer::Drag(from, [from[0] - 100, from[1] - 60]));
+    let seen = events(&mut indicator, Duration::from_secs(2));
+    assert!(
+        !seen
+            .iter()
+            .any(|event| matches!(event, IndicatorEvent::Moved(p) if *p != moved)),
+        "a locked indicator was moved: {seen:?}"
+    );
+    let after = geometry(&mut indicator);
+    assert!(
+        (after[0] - locked[0]).abs() <= 1 && (after[1] - locked[1]).abs() <= 1,
+        "locked indicator moved from {locked:?} to {after:?}"
+    );
+    // Autohide shows it only for a while after a layout change.
+    state.autohide = true;
+    indicator.configure(&state, labels).unwrap();
+    let _ = events(&mut indicator, Duration::from_millis(100));
+    assert!(!panels.visible("indicator"), "autohide keeps it hidden");
+    indicator.set_icon(&icon, size, true).unwrap();
+    assert!(panels.visible("indicator"), "shown after a layout change");
+    let _ = events(&mut indicator, Duration::from_millis(600));
+    assert!(
+        !panels.visible("indicator"),
+        "hidden again after autohide_ms"
+    );
+    eprintln!("floating indicator double click/drag/lock/autohide accepted");
 }

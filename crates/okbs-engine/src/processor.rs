@@ -2775,8 +2775,18 @@ impl Processor {
                 return Err(PlatformError::Unsupported("clipboard"));
             };
             match clipboard.text() {
-                Ok(Some(text)) if text != CLIPBOARD_MARKER => return Ok(Some((text, saved))),
+                Ok(Some(text)) if text != CLIPBOARD_MARKER => {
+                    tracing::debug!(
+                        elapsed_ms = started.elapsed().as_millis() as u64,
+                        "selection copied"
+                    );
+                    return Ok(Some((text, saved)));
+                }
                 _ if started.elapsed() >= self.timing.copy_timeout => {
+                    tracing::debug!(
+                        timeout_ms = self.timing.copy_timeout.as_millis() as u64,
+                        "no selection copied in time"
+                    );
                     self.restore_clipboard(saved, CLIPBOARD_MARKER);
                     return Ok(None);
                 }
@@ -2830,6 +2840,7 @@ impl Processor {
             self.backends
                 .injector
                 .tap(&[PhysKey::ControlLeft], PhysKey::KeyV)?;
+            tracing::debug!(?op, "converted selection pasted");
             Ok(())
         })();
         if let Err(err) = pasted {

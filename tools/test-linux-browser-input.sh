@@ -14,10 +14,12 @@ if [[ $OKBS_TEST_APP == native ]]; then
     "$OKBS_TEST_BROWSER_BINARY" --list | grep '^native_input_acceptance::real_wayland_writer_and_terminal_correct_paste_and_submit: test$' >/dev/null
 elif [[ $OKBS_TEST_APP == layout ]]; then
     "$OKBS_TEST_BROWSER_BINARY" --list | grep '^native_input_acceptance::real_single_layout_follows_window_focus: test$' >/dev/null
+elif [[ $OKBS_TEST_APP == indicator ]]; then
+    "$OKBS_TEST_BROWSER_BINARY" --list | grep '^native_input_acceptance::real_floating_indicator_pointer_actions: test$' >/dev/null
 elif [[ $OKBS_TEST_APP == browser ]]; then
     "$OKBS_TEST_BROWSER_BINARY" --list | grep '^browser_acceptance::real_firefox_engine_corrects_and_pastes_without_crossing_fields: test$' >/dev/null
 else
-    echo 'OKBS_TEST_APP must be browser, native or layout.' >&2; exit 1
+    echo 'OKBS_TEST_APP must be browser, native, layout or indicator.' >&2; exit 1
 fi
 case ${OKBS_TEST_DESKTOP:-gnome} in
     gnome) exec bash tools/test-linux-gnome.sh "$@" ;;

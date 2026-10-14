@@ -31,3 +31,5 @@ linux_wm_pid=$!
 finish() { kill "$linux_wm_pid" "$linux_test_pid" 2>/dev/null || true; }
 sleep 1
 cargo test -p okbs-platform-linux x11_window_commands_maximize_restore_and_minimize_through_the_window_manager --locked -- --ignored --nocapture
+# The tray needs only the private session bus of this script.
+cargo test -p okbs-ui real_status_notifier_tray_exposes_icon_menu_and_commands --locked -- --ignored --nocapture

@@ -2605,6 +2605,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tracing",
+ "tracing-subscriber",
  "wl-clipboard-rs",
  "x11rb",
  "xkbcommon-dl",

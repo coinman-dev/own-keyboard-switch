@@ -31,3 +31,4 @@ workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 okbs-engine.workspace = true
+tracing-subscriber.workspace = true

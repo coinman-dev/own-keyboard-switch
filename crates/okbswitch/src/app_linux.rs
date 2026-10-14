@@ -41,7 +41,8 @@ fn prepare_engine(
     let (clipboard_tx, clipboard_rx) = unbounded();
     let layout_watch = LayoutManager::subscribe(&mut desktop, layout_tx)?;
     let focus_watch = FocusInfo::subscribe(&mut desktop, focus_tx)?;
-    let mut clipboard = LinuxClipboard::new()?;
+    let mut clipboard =
+        LinuxClipboard::new()?.with_poll_interval(config.clipboard.poll_interval_ms);
     let clipboard_watch = clipboard.subscribe(clipboard_tx).ok();
     let layout = desktop
         .layouts()?

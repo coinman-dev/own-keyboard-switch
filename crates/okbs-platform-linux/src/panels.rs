@@ -220,7 +220,18 @@ impl Panels {
                     && !models.borrow().get(&id).is_some_and(|model| model.locked)
                 {
                     if crate::layer::is_layer(window) {
+                        // Wayland gives no global pointer position and the
+                        // surface moves only after a later commit; moving it
+                        // during the drag made pointer offsets add up twice.
+                        // Move once on release, by the offset from the press.
                         *drag.borrow_mut() = Some(event.position());
+                        if let Some(surface) = window.window() {
+                            let cursor = gtk::gdk::Cursor::for_display(
+                                &surface.display(),
+                                gtk::gdk::CursorType::Fleur,
+                            );
+                            surface.set_cursor(cursor.as_ref());
+                        }
                     } else {
                         let (x, y) = event.root();
                         window.begin_move_drag(1, x as i32, y as i32, event.time());
@@ -228,25 +239,23 @@ impl Panels {
                 }
                 gtk::glib::Propagation::Stop
             });
-            let drag = dragging.clone();
-            let id = panel.id.clone();
-            let models = self.models.clone();
-            window.connect_motion_notify_event(move |window, event| {
-                if let Some((start_x, start_y)) = *drag.borrow() {
-                    let (x, y) = event.position();
-                    if let Some(model) = models.borrow_mut().get_mut(&id) {
-                        model.position[0] = (model.position[0] + (x - start_x) as i32).max(0);
-                        model.position[1] = (model.position[1] + (y - start_y) as i32).max(0);
-                        model.position = crate::layer::position(window, model.position);
-                    }
-                }
-                gtk::glib::Propagation::Proceed
-            });
             let id = panel.id.clone();
             let queue = self.events.clone();
             let models = self.models.clone();
-            window.connect_button_release_event(move |window, _| {
-                *dragging.borrow_mut() = None;
+            window.connect_button_release_event(move |window, event| {
+                if let Some((start_x, start_y)) = dragging.borrow_mut().take() {
+                    let (x, y) = event.position();
+                    if let Some(model) = models.borrow_mut().get_mut(&id) {
+                        let moved = [
+                            model.position[0] + (x - start_x).round() as i32,
+                            model.position[1] + (y - start_y).round() as i32,
+                        ];
+                        model.position = crate::layer::position(window, moved);
+                    }
+                    if let Some(surface) = window.window() {
+                        surface.set_cursor(None);
+                    }
+                }
                 if id == "indicator" {
                     let (x, y) = window.position();
                     let position = if crate::layer::is_layer(window) {
@@ -472,6 +481,40 @@ impl Panels {
             }
         }
         Ok(None)
+    }
+    /// `[x, y, width, height]` of our own mapped panel, for diagnostics and
+    /// acceptance; positions are in the same coordinates as [`Panel::position`].
+    pub fn geometry(&self, id: &str) -> Result<Option<[i32; 4]>> {
+        if !self.visible(id) {
+            return Ok(None);
+        }
+        if self.desktop.is_gnome() {
+            let geometry = self.desktop.gnome_panel_geometry(id)?;
+            let panel = &geometry["panel"];
+            return Ok((|| {
+                let value = |key: &str| panel[key].as_f64().map(|v| v.round() as i32);
+                let [x, y, width, height] =
+                    [value("x")?, value("y")?, value("width")?, value("height")?];
+                (width > 0 && height > 0).then_some([x, y, width, height])
+            })());
+        }
+        let windows = self.native.borrow();
+        let Some(window) = windows.get(id).filter(|window| window.is_mapped()) else {
+            return Ok(None);
+        };
+        let origin = if crate::layer::is_layer(window) {
+            self.models
+                .borrow()
+                .get(id)
+                .map(|model| model.position)
+                .unwrap_or_default()
+        } else {
+            let (x, y) = window.position();
+            Self::source_point([x, y])
+        };
+        let (width, height) = window.size();
+        let size = Self::source_point([width, height]);
+        Ok(Some([origin[0], origin[1], size[0], size[1]]))
     }
     /// Opacity of our own mapped panel as the compositor receives it: the
     /// Shell actor in GNOME, otherwise the alpha GTK paints into the panel.

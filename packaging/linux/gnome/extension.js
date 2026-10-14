@@ -224,6 +224,20 @@ export default class OkbSwitchExtension extends Extension {
             monitors:Main.layoutManager.monitors.map((monitor, index) => ({x:monitor.x,y:monitor.y,
                 width:monitor.width,height:monitor.height,scale:global.display.get_monitor_scale(index)}))});
     }
+    // GNOME 50 (Mutter 18) removed Clutter.Event.get_click_count.
+    _clickCount(panel, event) {
+        if (event.get_click_count) return event.get_click_count();
+        if (event.get_button() !== 1) return 1;
+        const settings = Clutter.Settings.get_default();
+        const [x, y] = event.get_coords();
+        const time = event.get_time();
+        const last = panel._lastClick;
+        const double = last && time - last.time <= settings.double_click_time &&
+            Math.abs(x - last.x) <= settings.double_click_distance &&
+            Math.abs(y - last.y) <= settings.double_click_distance;
+        panel._lastClick = double ? null : {time, x, y};
+        return double ? 2 : 1;
+    }
     _positionPanel(panel) {
         const requested = panel._requestedPosition;
         const monitor = Main.layoutManager.monitors.find(m => requested[0] >= m.x && requested[0] < m.x + m.width &&
@@ -261,7 +275,7 @@ export default class OkbSwitchExtension extends Extension {
         }
         if (model.id === 'indicator') {
             panel.connect('button-press-event', (_actor, event) => {
-                if (event.get_click_count() >= 2) this._events.push({id:model.id, action:'settings'});
+                if (this._clickCount(panel, event) >= 2) this._events.push({id:model.id, action:'settings'});
                 if (event.get_button() === 3) {
                     for (const [label, action] of [[model.settings,'settings'], [model.lock,'lock'], [model.hide,'hide']]) {
                         const button = new St.Button({label, style_class:'popup-menu-item'});

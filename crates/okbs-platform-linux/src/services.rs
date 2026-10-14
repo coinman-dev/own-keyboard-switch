@@ -75,6 +75,9 @@ pub fn keymap(code: &str, variant: &str) -> Result<KeyMap> {
 pub struct LinuxClipboard {
     native: Option<arboard::Clipboard>,
     wayland: bool,
+    /// How often [`Clipboard::subscribe`] compares the clipboard: Linux
+    /// desktops give no portable change notification.
+    poll: Duration,
 }
 impl std::fmt::Debug for LinuxClipboard {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -94,7 +97,13 @@ impl LinuxClipboard {
                 Some(arboard::Clipboard::new().map_err(error)?)
             },
             wayland,
+            poll: Duration::from_millis(500),
         })
+    }
+    /// «clipboard.poll_interval_ms» for later subscriptions.
+    pub fn with_poll_interval(mut self, ms: u32) -> Self {
+        self.poll = Duration::from_millis(u64::from(ms.max(1)));
+        self
     }
 }
 impl Clipboard for LinuxClipboard {
@@ -186,6 +195,7 @@ impl Clipboard for LinuxClipboard {
         self.set_text("")
     }
     fn subscribe(&mut self, sink: crossbeam_channel::Sender<()>) -> Result<Box<dyn StopGuard>> {
+        let poll = self.poll;
         let mut clipboard = Self::new()?;
         let mut previous = clipboard_fingerprint(clipboard.text()?);
         Ok(Box::new(Watch::spawn(
@@ -199,7 +209,7 @@ impl Clipboard for LinuxClipboard {
                 }
                 true
             },
-            Duration::from_millis(250),
+            poll,
         )))
     }
 }
@@ -322,11 +332,7 @@ impl SoundPlayer for LinuxSound {
         Ok(())
     }
     fn beep(&self) -> Result<()> {
-        Command::new("canberra-gtk-play")
-            .args(["--id", "bell"])
-            .spawn()
-            .map(|_| ())
-            .map_err(error)
+        spawn_reaped(Command::new("canberra-gtk-play").args(["--id", "bell"])).map(|_| ())
     }
 }
 fn play_audio(path: &Path) -> Result<()> {
@@ -381,12 +387,18 @@ impl SystemSettings for LinuxSystemSettings {
         } else {
             ("gnome-control-center", vec!["keyboard"])
         };
-        Command::new(program)
-            .args(args)
-            .spawn()
-            .map(|_| ())
-            .map_err(error)
+        spawn_reaped(Command::new(program).args(args)).map(|_| ())
     }
+}
+/// Starts a program without waiting for it; a thread reaps it on exit, as an
+/// unwaited child would stay a zombie until this program ends.
+fn spawn_reaped(command: &mut Command) -> Result<u32> {
+    let mut child = command.spawn().map_err(error)?;
+    let pid = child.id();
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(pid)
 }
 
 pub fn password_field(pid: u32) -> Result<Option<bool>> {
@@ -481,6 +493,19 @@ mod tests {
         let exec = file.string("Desktop Entry", "Exec").unwrap();
         let argv = gtk::glib::shell_parse_argv(exec.replace("%%", "%")).unwrap();
         assert_eq!(argv, [std::ffi::OsString::from(path)]);
+    }
+    #[test]
+    fn detached_programs_do_not_stay_zombies() {
+        let pid = spawn_reaped(&mut Command::new("true")).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        // A zombie keeps its /proc entry until its parent waits for it.
+        while Path::new(&format!("/proc/{pid}")).exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "child {pid} was not reaped"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
     #[test]
     fn autostart_respects_entries_disabled_by_the_desktop() {
