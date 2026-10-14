@@ -1672,6 +1672,69 @@ fn two_initial_capitals_are_fixed() {
 }
 
 #[test]
+fn accidental_caps_lock_is_fixed_after_live_caps_options() {
+    use okbs_core::config::SwitchKey;
+    let mut config = config_with(|c| {
+        c.general.autoswitch = false;
+        c.advanced.fix_accidental_capslock = false;
+    });
+    let mut h = Harness::with_config(Lang::En, config.clone());
+    h.swallows = true;
+    h.processor.set_swallows_capslock(true);
+    h.tap(PhysKey::CapsLock);
+    h.type_as("abc", Lang::En);
+    h.tap(PhysKey::CapsLock);
+    config.advanced.disable_capslock = true;
+    h.processor.apply_config(config.clone());
+    h.tap(PhysKey::CapsLock);
+    config.advanced.disable_capslock = false;
+    config.switching.switch_key = SwitchKey::CapsLock;
+    h.processor.apply_config(config.clone());
+    h.tap(PhysKey::CapsLock);
+    h.tap(PhysKey::CapsLock);
+    config.switching.switch_key = SwitchKey::None;
+    config.advanced.scrolllock_as_capslock = true;
+    h.processor.apply_config(config.clone());
+    h.tap(PhysKey::ScrollLock);
+    h.tap(PhysKey::ScrollLock);
+    config.advanced.scrolllock_as_capslock = false;
+    config.switching.direct_keys.enabled = true;
+    h.processor.apply_config(config.clone());
+    h.tap(PhysKey::ShiftLeft);
+    h.tap(PhysKey::ShiftRight);
+    config.switching.direct_keys.enabled = false;
+    config.general.autoswitch = true;
+    config.advanced.fix_accidental_capslock = true;
+    h.processor.apply_config(config);
+    assert!(!h.desktop.lock().caps);
+    h.type_as(" ", Lang::En);
+    h.desktop.lock().text.clear();
+    h.tap(PhysKey::CapsLock);
+    h.type_as("Hello ", Lang::En);
+    assert_eq!(h.text(), "Hello ");
+    assert!(!h.desktop.lock().caps, "Caps Lock turned off");
+}
+
+#[test]
+fn manual_layout_choice_blocks_switching_but_not_case_fixes() {
+    let mut h = Harness::with_config(
+        Lang::En,
+        config_with(|c| c.switching.direct_keys.enabled = true),
+    );
+    h.tap(PhysKey::ShiftRight);
+    h.type_as("ghbdtn ", Lang::En);
+    assert_eq!(h.text(), "ghbdtn ", "the user chose English explicitly");
+    h.tap(PhysKey::ShiftRight);
+    h.type_as("HEllo ", Lang::En);
+    assert_eq!(h.text(), "ghbdtn Hello ");
+    h.tap(PhysKey::ShiftRight);
+    h.tap(PhysKey::CapsLock);
+    h.type_as("World ", Lang::En);
+    assert_eq!(h.text(), "ghbdtn Hello World ");
+    assert!(!h.desktop.lock().caps, "Caps Lock turned off");
+}
+
+#[test]
 fn accidental_caps_lock_is_fixed() {
     let mut h = Harness::new(Lang::Ru);
     h.tap(PhysKey::CapsLock);

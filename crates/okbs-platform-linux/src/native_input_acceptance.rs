@@ -14,7 +14,7 @@ use okbs_core::{
 use okbs_engine::{Backends, Command, EngineHandle, Event, Inputs, Processor};
 use okbs_platform::{Clipboard, FocusInfo, KeyboardSource, LayoutId, LayoutManager, StopGuard};
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, Stdio},
     time::{Duration, Instant},
 };
@@ -185,6 +185,11 @@ impl RunningEngine {
                 focus: Some(Box::new(session.desktop.clone())),
             },
         );
+        // The same Caps Lock setup as the application.
+        if let Some(caps) = source.caps_lock_on() {
+            processor.set_caps_lock(caps);
+        }
+        processor.set_swallows_capslock(true);
         processor.set_input_gate(source.filter.gate.clone());
         let engine = EngineHandle::spawn(
             processor,
@@ -253,7 +258,18 @@ impl RunningEngine {
                 .unwrap();
         }
     }
-    fn configure(&mut self, config: Config, path: &std::path::Path) {
+    /// A lone key held like a real key press, released in a later frame.
+    fn tap(&mut self, key: PhysKey) {
+        use evdev::{EventType, InputEvent};
+        self.hardware
+            .emit(&[InputEvent::new(EventType::KEY.0, key.evdev_code(), 1)])
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(40));
+        self.hardware
+            .emit(&[InputEvent::new(EventType::KEY.0, key.evdev_code(), 0)])
+            .unwrap();
+    }
+    fn configure(&mut self, config: Config, path: &Path) {
         // Exercise actual configuration serialization and the same live
         // source/engine update used by the application's settings controller.
         okbs_core::config::save(path, &config).unwrap();
@@ -281,6 +297,172 @@ impl RunningEngine {
         }
         self.config = restored;
     }
+}
+
+/// A GTK window with two fields from tools/linux-field-fixture.py.
+struct FieldWindow {
+    process: Process,
+    state: PathBuf,
+    command: PathBuf,
+    title: String,
+}
+impl FieldWindow {
+    fn open(session: &Session, workspace: &Path, directory: &Path, title: &str) -> Self {
+        let name: String = title
+            .chars()
+            .map(|c| if c.is_alphanumeric() { c } else { '-' })
+            .collect();
+        let state = directory.join(format!("{name}.json"));
+        let command = directory.join(format!("{name}.command"));
+        let log = std::fs::File::create(directory.join(format!("{name}.log"))).unwrap();
+        let process = Process(
+            std::process::Command::new("python3")
+                .arg(workspace.join("tools/linux-field-fixture.py"))
+                .args([&state, &command])
+                .arg("--no-select-on-focus")
+                .arg(format!("--title={title}"))
+                .stdout(log.try_clone().unwrap())
+                .stderr(log)
+                .spawn()
+                .unwrap(),
+        );
+        let window = Self {
+            process,
+            state,
+            command,
+            title: title.into(),
+        };
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while session
+            .desktop
+            .place_fixture_window(window.process.0.id(), title, [40, 40])
+            .is_err()
+        {
+            assert!(Instant::now() < deadline, "{title} was not mapped");
+            session.desktop.refresh().unwrap();
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        window
+    }
+    /// Gives the first field keyboard focus and waits until it is the target.
+    fn activate(&self, session: &Session) {
+        let pid = self.process.0.id();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let native = session.desktop.refresh().unwrap();
+            if native.pid == pid && native.control != 0 {
+                break;
+            }
+            if let Ok(Some(window)) = session.desktop.fixture_window(pid, &self.title)
+                && native.window != window.window
+            {
+                let _ = session.desktop.command("ActivateWindow", window.window);
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{} did not become the input target: {native:?}",
+                self.title
+            );
+            std::thread::sleep(Duration::from_millis(30));
+        }
+    }
+    fn first(&self) -> serde_json::Value {
+        std::fs::read(&self.state)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .map_or(serde_json::Value::Null, |value| value["first"].clone())
+    }
+    fn expect_first(&self, text: &str, scratch: &Path) {
+        let deadline = Instant::now() + Duration::from_secs(8);
+        while self.first() != text {
+            assert!(
+                Instant::now() < deadline,
+                "{}: expected {text:?}, got {:?}; scratch {}",
+                self.title,
+                self.first(),
+                scratch.display()
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    fn clear_first(&self) {
+        std::fs::write(&self.command, "clear-first").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while self.command.exists() || self.first() != "" {
+            assert!(Instant::now() < deadline, "{} was not cleared", self.title);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires root/uinput and private GNOME/KDE Wayland with per-window layouts; set OKBS_TEST_APP=layout in the device test script"]
+fn real_single_layout_follows_window_focus() {
+    assert!(
+        crate::permissions::is_root(),
+        "run only in an isolated development VM"
+    );
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let scratch = workspace.join("tmp/linux-native-input");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let temp = tempfile::TempDir::new_in(&scratch).unwrap().keep();
+    let session = Session::new();
+    let first = FieldWindow::open(&session, &workspace, &temp, "OKBS layout window A");
+    let second = FieldWindow::open(&session, &workspace, &temp, "OKBS layout window B");
+    let wait_layout = |layout: LayoutId, what: &str| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let current = session.desktop.current().unwrap();
+            if current == layout {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{what}: layout {current:?}, expected {layout:?}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    // Each window starts in English under the session's per-window policy.
+    second.activate(&session);
+    session.desktop.clone().set(LayoutId(0)).unwrap();
+    first.activate(&session);
+    session.desktop.clone().set(LayoutId(0)).unwrap();
+    let mut running = RunningEngine::new(&session);
+    let config_path = temp.join("layout-config.toml");
+    let mut options = running.config.clone();
+    options.general.autoswitch = false;
+    options.switching.switch_key = okbs_core::config::SwitchKey::RightCtrl;
+    running.configure(options.clone(), &config_path);
+    // RunningEngine leaves Russian active; start window A from English.
+    session.desktop.clone().set(LayoutId(0)).unwrap();
+    wait_layout(LayoutId(0), "window A in English");
+    // Without the option the session keeps a layout per window.
+    running.tap(PhysKey::ControlRight);
+    wait_layout(LayoutId(1), "switch key in window A");
+    second.activate(&session);
+    wait_layout(LayoutId(0), "per-window policy restores window B");
+    first.activate(&session);
+    wait_layout(LayoutId(1), "per-window policy restores window A");
+    // «Одна раскладка для всех окон»: the chosen layout follows focus.
+    options.switching.single_layout_for_all_windows = true;
+    running.configure(options.clone(), &config_path);
+    assert!(running.config.switching.single_layout_for_all_windows);
+    second.activate(&session);
+    wait_layout(LayoutId(1), "single layout applied to window B");
+    second.clear_first();
+    running.type_text("f");
+    second.expect_first("а", &temp);
+    running.tap(PhysKey::ControlRight);
+    wait_layout(LayoutId(0), "switch key in window B");
+    first.activate(&session);
+    wait_layout(LayoutId(0), "single layout applied to window A");
+    first.clear_first();
+    running.type_text("f");
+    first.expect_first("f", &temp);
+    drop(running);
+    drop((first, second));
+    eprintln!("single layout for all windows accepted over a per-window session policy");
 }
 
 #[test]
@@ -925,6 +1107,110 @@ fn real_wayland_writer_and_terminal_correct_paste_and_submit() {
     eprintln!("foot maximize/restore/minimize hotkeys accepted");
     drop(running);
     drop(terminal);
+
+    // Caps Lock and layout keys handled by the Linux input filter and the
+    // engine, in a plain GTK field without application autocorrection.
+    let editor = FieldWindow::open(&session, &workspace, &temp, "OKBS two-field acceptance");
+    editor.activate(&session);
+    let mut running = RunningEngine::new(&session);
+    let field = || editor.first();
+    let expect_field = |text: &str| editor.expect_first(text, &temp);
+    let expect_field_stable = |text: &str| {
+        expect_field(text);
+        std::thread::sleep(Duration::from_millis(800));
+        assert_eq!(field(), text, "GTK field changed after it settled");
+    };
+    let clear = || editor.clear_first();
+    let mut options = running.config.clone();
+    options.general.autoswitch = false;
+    options.advanced.fix_accidental_capslock = false;
+    running.configure(options.clone(), &config_path);
+    session.desktop.clone().set(LayoutId(0)).unwrap();
+    // Baseline: the private session itself applies Caps Lock.
+    clear();
+    running.tap(PhysKey::CapsLock);
+    running.type_text("abc");
+    expect_field("ABC");
+    running.tap(PhysKey::CapsLock);
+    running.type_text("d");
+    expect_field("ABCd");
+    // «Отключить Caps Lock»: the key never reaches the session.
+    options.advanced.disable_capslock = true;
+    running.configure(options.clone(), &config_path);
+    clear();
+    running.tap(PhysKey::CapsLock);
+    running.type_text("abc");
+    expect_field_stable("abc");
+    // Caps Lock as the layout switch key, without toggling capitals.
+    options.advanced.disable_capslock = false;
+    options.switching.switch_key = okbs_core::config::SwitchKey::CapsLock;
+    running.configure(options.clone(), &config_path);
+    clear();
+    running.tap(PhysKey::CapsLock);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while session.desktop.current().unwrap() != LayoutId(1) {
+        assert!(Instant::now() < deadline, "Caps Lock did not switch layout");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    running.type_text("f");
+    expect_field("а");
+    running.tap(PhysKey::CapsLock);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while session.desktop.current().unwrap() != LayoutId(0) {
+        assert!(
+            Instant::now() < deadline,
+            "Caps Lock did not switch layout back"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    running.type_text("f");
+    expect_field("аf");
+    // Scroll Lock works as Caps Lock.
+    options.switching.switch_key = okbs_core::config::SwitchKey::None;
+    options.advanced.scrolllock_as_capslock = true;
+    running.configure(options.clone(), &config_path);
+    clear();
+    running.tap(PhysKey::ScrollLock);
+    running.type_text("abc");
+    expect_field("ABC");
+    running.tap(PhysKey::ScrollLock);
+    running.type_text("d");
+    expect_field("ABCd");
+    // Direct layout keys: left Shift selects Russian, right Shift English.
+    options.advanced.scrolllock_as_capslock = false;
+    options.switching.direct_keys.enabled = true;
+    options.switching.direct_keys.ru = okbs_core::config::SwitchKey::LeftShift;
+    options.switching.direct_keys.en = okbs_core::config::SwitchKey::RightShift;
+    running.configure(options.clone(), &config_path);
+    for (key, layout) in [
+        (PhysKey::ShiftLeft, LayoutId(1)),
+        (PhysKey::ShiftLeft, LayoutId(1)),
+        (PhysKey::ShiftRight, LayoutId(0)),
+    ] {
+        running.tap(key);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while session.desktop.current().unwrap() != layout {
+            assert!(
+                Instant::now() < deadline,
+                "{key:?} did not select {layout:?}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    // An accidental Caps Lock word is fixed and Caps Lock is turned off.
+    options.switching.direct_keys.enabled = false;
+    options.general.autoswitch = true;
+    options.advanced.fix_accidental_capslock = true;
+    running.configure(options.clone(), &config_path);
+    clear();
+    running.tap(PhysKey::CapsLock);
+    running.type_text("Hello ");
+    expect_field("Hello ");
+    running.type_text("x");
+    expect_field("Hello x");
+    drop(running);
+    drop(editor);
+    eprintln!("GTK Caps Lock/switch key/Scroll Lock/direct keys/accidental Caps Lock accepted");
     eprintln!(
         "Native Wayland Writer selection/correction/history and foot correction-before-Enter/history accepted"
     );

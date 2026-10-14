@@ -310,6 +310,13 @@ fn phase(workspace: &Path, directory: &Path, stage: &str) {
         okbs_core::config::HotkeyBinding::some("Ctrl+F12".parse().expect("picker shortcut"));
     config.hotkeys.toggle_autoreplace_list =
         okbs_core::config::HotkeyBinding::some("Ctrl+F10".parse().expect("floating list shortcut"));
+    config.hotkeys.open_settings =
+        okbs_core::config::HotkeyBinding::some("Ctrl+F9".parse().expect("settings shortcut"));
+    config.hotkeys.open_autoreplace_settings = okbs_core::config::HotkeyBinding::some(
+        "Ctrl+F8".parse().expect("autoreplace settings shortcut"),
+    );
+    config.hotkeys.add_selection_to_autoreplace =
+        okbs_core::config::HotkeyBinding::some("Ctrl+F7".parse().expect("add selection shortcut"));
     let (mut source, injector) = LinuxSource::new(&config, desktop.clone())
         .expect("private picker fixture operation failed");
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -948,6 +955,95 @@ fn phase(workspace: &Path, directory: &Path, stage: &str) {
         "original editor restored",
         |_| desktop.target() == Some(original),
     );
+    if stage == "seed" {
+        // While a new combination is captured, the key bound to history is
+        // reported to the settings instead of opening the history window.
+        controller.handle_window_event(SettingsEvent::CaptureHotkey);
+        wait(&mut controller, &desktop, "hotkey capture armed", |_| {
+            test_gate.is_capturing()
+        });
+        physical_tap(
+            &mut hardware,
+            &[okbs_core::PhysKey::ControlLeft],
+            okbs_core::PhysKey::F11,
+        );
+        wait(&mut controller, &desktop, "hotkey captured", |_| {
+            !test_gate.is_capturing()
+        });
+        for _ in 0..25 {
+            tick(&mut controller, &desktop);
+        }
+        assert_eq!(
+            desktop.target(),
+            Some(original),
+            "a captured combination ran its bound action"
+        );
+        // Hotkeys that open the real settings window and its sections.
+        let view = |controller: &Controller| {
+            controller
+                .window
+                .as_ref()
+                .and_then(|window| window.view_state())
+        };
+        physical_tap(
+            &mut hardware,
+            &[okbs_core::PhysKey::ControlLeft],
+            okbs_core::PhysKey::F9,
+        );
+        wait(
+            &mut controller,
+            &desktop,
+            "settings opened by hotkey",
+            |c| view(c).is_some_and(|state| state.section == Section::General),
+        );
+        physical_tap(
+            &mut hardware,
+            &[okbs_core::PhysKey::ControlLeft],
+            okbs_core::PhysKey::F8,
+        );
+        wait(
+            &mut controller,
+            &desktop,
+            "autoreplace settings opened by hotkey",
+            |c| view(c).is_some_and(|state| state.section == Section::Autoreplace),
+        );
+        // The selected editor text becomes a new autoreplace entry draft.
+        desktop
+            .command("ActivateWindow", original.window)
+            .expect("return to the editor");
+        std::fs::write(&field_command, "select-first").expect("select fixture text");
+        wait(&mut controller, &desktop, "editor selection ready", |_| {
+            !field_command.exists() && desktop.target() == Some(original)
+        });
+        wait_editor(&mut controller, &desktop, original);
+        physical_tap(
+            &mut hardware,
+            &[okbs_core::PhysKey::ControlLeft],
+            okbs_core::PhysKey::F7,
+        );
+        let selected = format!("to: {expected_floating:?}");
+        wait(
+            &mut controller,
+            &desktop,
+            "selection offered as an autoreplace entry",
+            |c| {
+                view(c).is_some_and(|state| {
+                    state.section == Section::Autoreplace
+                        && state.dialog.is_some_and(|dialog| {
+                            dialog.starts_with("AutoReplace") && dialog.contains(&selected)
+                        })
+                })
+            },
+        );
+        assert_eq!(
+            serde_state(&std::fs::read(&state).expect("fixture state"))
+                .expect("synthetic fields")
+                .0,
+            expected_floating,
+            "adding the selection changed the editor"
+        );
+        eprintln!("hotkey capture and settings/autoreplace/add-selection hotkeys accepted");
+    }
     if stage == "restore" {
         assert!(
             controller

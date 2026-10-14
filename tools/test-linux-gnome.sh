@@ -29,6 +29,8 @@ if [[ ${OKBS_TEST_OLD_EXTENSION:-0} == 1 ]]; then
     sed -i 's/"version": 5/"version": 4/' "$linux_extension/metadata.json"
 fi
 gsettings set org.gnome.desktop.input-sources sources "[('xkb', 'us'), ('xkb', 'ru')]"
+# The single-layout option is visible only over a per-window session policy.
+gsettings set org.gnome.desktop.input-sources per-window "$([[ ${OKBS_TEST_APP:-} == layout ]] && echo true || echo false)"
 gsettings set org.gnome.shell enabled-extensions "['okbswitch@own-keyboard-switch']"
 gsettings set org.gnome.shell disable-user-extensions false
 gsettings set org.gnome.mutter experimental-features "['scale-monitor-framebuffer']"
@@ -87,6 +89,10 @@ if [[ ${OKBS_TEST_APP:-} == picker ]]; then
         gdbus call --session --dest org.own_keyboard_switch.Gnome --object-path /org/own_keyboard_switch/Gnome --method org.own_keyboard_switch.Gnome.SetPanel "{\"id\":\"$linux_panel\",\"visible\":false}"
     done
     timeout 120s "$OKBS_TEST_BROWSER_BINARY" real_linux_pickers_and_process_restart_preserve_editor_and_history --ignored --nocapture
+    exit
+fi
+if [[ ${OKBS_TEST_APP:-} == layout ]]; then
+    timeout 60s "$OKBS_TEST_BROWSER_BINARY" real_single_layout_follows_window_focus --ignored --nocapture
     exit
 fi
 if [[ ${OKBS_TEST_APP:-} == native ]]; then

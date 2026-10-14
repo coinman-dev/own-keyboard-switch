@@ -401,6 +401,14 @@ pub enum WindowAction {
     Close,
 }
 
+/// Read-only summary of an open settings window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ViewState {
+    pub section: Section,
+    /// The open dialog, as its debug description.
+    pub dialog: Option<String>,
+}
+
 /// State of the settings window.
 #[derive(Debug, Clone)]
 pub struct SettingsView {
@@ -653,6 +661,14 @@ impl SettingsView {
     /// Navigate without replacing an unsaved draft.
     pub fn open_section(&mut self, section: Section) {
         self.section = section;
+    }
+
+    /// What the window shows, for diagnostics and acceptance tests.
+    pub fn state(&self) -> ViewState {
+        ViewState {
+            section: self.section,
+            dialog: self.dialog.as_ref().map(|dialog| format!("{dialog:?}")),
+        }
     }
 
     /// The edited configuration.

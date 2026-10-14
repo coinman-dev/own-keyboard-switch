@@ -6,7 +6,8 @@ use crate::autoreplace_list::{AutoreplaceListWindow, ListRequest, ListView};
 use crate::clipboard_history::{ClipboardHistoryWindow, HistoryRequest, HistoryView};
 use crate::i18n::{Text, tr};
 use crate::settings::{
-    LayoutEntry, Section, SettingsEvent, SettingsInput, SettingsView, WINDOW_SIZE, WindowAction,
+    LayoutEntry, Section, SettingsEvent, SettingsInput, SettingsView, ViewState, WINDOW_SIZE,
+    WindowAction,
 };
 use crate::text_result::{SpellingAction, TextResult};
 use crossbeam_channel::{Receiver, Sender, unbounded};
@@ -49,6 +50,7 @@ pub(crate) enum Root {
 pub(crate) struct Shared {
     context: Mutex<Option<egui::Context>>,
     dictionary_states: Mutex<std::collections::BTreeMap<String, SettingsInput>>,
+    view_state: Mutex<Option<ViewState>>,
     open: AtomicBool,
     shutdown: AtomicBool,
     failed: AtomicBool,
@@ -174,6 +176,9 @@ impl App {
 
     fn close_settings(&mut self, ctx: &egui::Context) {
         self.shared.open.store(false, Ordering::SeqCst);
+        if let Ok(mut state) = self.shared.view_state.lock() {
+            *state = None;
+        }
         self.settings_visible = false;
         self.text_result = None;
         ctx.send_viewport_cmd_to(self.settings_id(), egui::ViewportCommand::Visible(false));
@@ -491,6 +496,9 @@ impl App {
         } else {
             WindowAction::Stay
         };
+        if let Ok(mut state) = self.shared.view_state.lock() {
+            *state = self.settings_visible.then(|| self.view.state());
+        }
         if let Some(result) = &mut self.text_result {
             if self.settings_visible {
                 let mut open = true;
@@ -653,6 +661,15 @@ impl SettingsWindow {
     /// Whether the window is currently shown.
     pub fn is_open(&self) -> bool {
         self.shared.open.load(Ordering::SeqCst)
+    }
+
+    /// Section and dialog of the shown settings, as of its last frame.
+    pub fn view_state(&self) -> Option<ViewState> {
+        self.shared
+            .view_state
+            .lock()
+            .ok()
+            .and_then(|state| state.clone())
     }
 
     /// Opens the window (or brings it to the front) on `section`.

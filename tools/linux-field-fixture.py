@@ -10,7 +10,8 @@ from gi.repository import Gtk, GLib
 state, command = map(Path,sys.argv[1:3])
 if "--no-select-on-focus" in sys.argv[3:]:
     Gtk.Settings.get_default().set_property("gtk-entry-select-on-focus", False)
-window=Gtk.Window(title="OKBS two-field acceptance")
+title=next((a.removeprefix("--title=") for a in sys.argv[3:] if a.startswith("--title=")),"OKBS two-field acceptance")
+window=Gtk.Window(title=title)
 box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=4)
 first,second=Gtk.Entry(),Gtk.Entry()
 box.add(first);box.add(second);window.add(box)
@@ -51,6 +52,8 @@ def poll():
             first.grab_focus()
             if "--no-select-on-focus" in sys.argv[3:]: first.set_position(-1)
         if action=="password": second.set_visibility(False);second.grab_focus()
+        if action=="select-first": first.grab_focus();first.select_region(0,-1)
+        if action=="clear-first": first.set_text("");first.grab_focus()
         if action.startswith("menu-"): set_menu(action.removeprefix("menu-"))
     return True
 first.connect("changed",snapshot);second.connect("changed",snapshot)

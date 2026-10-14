@@ -1342,6 +1342,94 @@ mod tests {
         conn.flush().unwrap();
     }
     #[test]
+    #[ignore = "requires isolated X11 with an EWMH window manager (openbox in tools/test-linux-x11.sh)"]
+    fn x11_window_commands_maximize_restore_and_minimize_through_the_window_manager() {
+        use okbs_platform::WindowControl;
+        use x11rb::wrapper::ConnectionExt as _;
+        let (conn, screen) = x11rb::connect(None).unwrap();
+        let root = conn.setup().roots[screen].root;
+        let client = conn.generate_id().unwrap();
+        conn.create_window(
+            x11rb::COPY_DEPTH_FROM_PARENT,
+            client,
+            root,
+            100,
+            100,
+            300,
+            200,
+            0,
+            xproto::WindowClass::INPUT_OUTPUT,
+            0,
+            &xproto::CreateWindowAux::new(),
+        )
+        .unwrap();
+        conn.change_property8(
+            xproto::PropMode::REPLACE,
+            client,
+            xproto::AtomEnum::WM_NAME,
+            xproto::AtomEnum::STRING,
+            b"OKBS X11 window commands",
+        )
+        .unwrap();
+        conn.map_window(client).unwrap();
+        conn.flush().unwrap();
+        let desktop = LinuxDesktop::connect().unwrap();
+        let wait = |what: &str, condition: &dyn Fn() -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !condition() {
+                assert!(Instant::now() < deadline, "{what}");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        };
+        wait("the window manager did not activate the window", &|| {
+            desktop
+                .refresh()
+                .is_ok_and(|state| state.window == u64::from(client))
+        });
+        let states = || -> Vec<u32> {
+            conn.get_property(
+                false,
+                client,
+                atom(&conn, "_NET_WM_STATE").unwrap(),
+                xproto::AtomEnum::ATOM,
+                0,
+                16,
+            )
+            .unwrap()
+            .reply()
+            .unwrap()
+            .value32()
+            .map(Iterator::collect)
+            .unwrap_or_default()
+        };
+        let maximized = || {
+            let states = states();
+            [
+                "_NET_WM_STATE_MAXIMIZED_VERT",
+                "_NET_WM_STATE_MAXIMIZED_HORZ",
+            ]
+            .iter()
+            .all(|name| states.contains(&atom(&conn, name).unwrap()))
+        };
+        desktop.toggle_maximize_active().unwrap();
+        wait("the window was not maximized", &|| maximized());
+        desktop.toggle_maximize_active().unwrap();
+        wait("the window was not restored", &|| !maximized());
+        desktop.minimize_active().unwrap();
+        wait("the window was not iconified", &|| {
+            let wm_state = atom(&conn, "WM_STATE").unwrap();
+            conn.get_property(false, client, wm_state, wm_state, 0, 2)
+                .unwrap()
+                .reply()
+                .unwrap()
+                .value32()
+                .and_then(|mut values| values.next())
+                == Some(3)
+        });
+        conn.destroy_window(client).unwrap();
+        conn.flush().unwrap();
+    }
+    #[test]
     fn popup_fallback_uses_the_input_window_instead_of_another_monitor() {
         let client = [1304, 129, 420, 300];
         assert_eq!(

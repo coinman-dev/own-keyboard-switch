@@ -55,6 +55,8 @@ Use=true
 LayoutList=us,ru
 Model=pc105
 CONFIG
+# The single-layout option is visible only over a per-window session policy.
+if [[ ${OKBS_TEST_APP:-} == layout ]]; then echo 'SwitchMode=Window' >>"$XDG_CONFIG_HOME/kxkbrc"; fi
 kwin_wayland --virtual --output-count 2 --socket okbs-kde-test --width 1024 --height 768 --no-lockscreen --no-kactivities >tmp/linux-kde/kwin.log 2>&1 &
 linux_test_pid=$!
 finish() { kill "$linux_test_pid" 2>/dev/null || true; }
@@ -70,6 +72,10 @@ if [[ ${OKBS_TEST_APP:-} == capture ]]; then
 fi
 if [[ ${OKBS_TEST_APP:-} == picker ]]; then
     timeout 120s "$OKBS_TEST_BROWSER_BINARY" real_linux_pickers_and_process_restart_preserve_editor_and_history --ignored --nocapture
+    exit
+fi
+if [[ ${OKBS_TEST_APP:-} == layout ]]; then
+    timeout 60s "$OKBS_TEST_BROWSER_BINARY" real_single_layout_follows_window_focus --ignored --nocapture
     exit
 fi
 if [[ ${OKBS_TEST_APP:-} == native ]]; then

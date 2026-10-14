@@ -331,6 +331,9 @@ pub struct Processor {
     word: Vec<KeyPress>,
     word_lang: Option<Lang>,
     word_blocked: bool,
+    /// The user chose the layout manually before this word («Не переключать
+    /// после ручной смены раскладки»): no automatic switch, case fixes stay.
+    word_layout_chosen: bool,
     /// The word directly follows English `plan` with only spaces between.
     word_after_plan: bool,
     /// The word follows the previous one without a space (`site.com`,
@@ -339,6 +342,7 @@ pub struct Processor {
     /// Text glued before the current word by symbols (see [`LastWord::prefix`]).
     word_prefix: Vec<ShownKey>,
     block_next_word: bool,
+    layout_chosen_for_next_word: bool,
     last: Option<LastWord>,
     pending_spelling: Option<PendingSpelling>,
     spelling_undo: Option<SpellingUndo>,
@@ -412,10 +416,12 @@ impl Processor {
             word: Vec::new(),
             word_lang: None,
             word_blocked: false,
+            word_layout_chosen: false,
             word_after_plan: false,
             word_glued: false,
             word_prefix: Vec::new(),
             block_next_word: false,
+            layout_chosen_for_next_word: false,
             last: None,
             pending_spelling: None,
             spelling_undo: None,
@@ -568,6 +574,7 @@ impl Processor {
         self.word_prefix.clear();
         self.word_lang = None;
         self.word_blocked = false;
+        self.word_layout_chosen = false;
         self.word_after_plan = false;
     }
 
@@ -679,6 +686,7 @@ impl Processor {
         self.remember_target();
         self.reset_all();
         self.block_next_word = false;
+        self.layout_chosen_for_next_word = false;
         self.excluded_cache = None;
         if matches!(event, FocusEvent::WindowChanged(_))
             && self.config.switching.single_layout_for_all_windows
@@ -703,7 +711,7 @@ impl Processor {
             if self.config.rules_options.improve_switching {
                 self.previous_word = None;
             }
-            self.block_next_word |= self
+            self.layout_chosen_for_next_word |= self
                 .config
                 .troubleshooting
                 .no_switch_after
@@ -802,6 +810,7 @@ impl Processor {
             InputEvent::MouseButton { .. } => {
                 self.reset_all();
                 self.block_next_word = false;
+                self.layout_chosen_for_next_word = false;
             }
             InputEvent::UnknownKey { pressed, .. } => {
                 if pressed {
@@ -1568,6 +1577,7 @@ impl Processor {
             self.last = None;
             self.word_lang = self.current_lang();
             self.word_blocked = std::mem::take(&mut self.block_next_word);
+            self.word_layout_chosen = std::mem::take(&mut self.layout_chosen_for_next_word);
         }
         self.word.push(press);
     }
@@ -1591,7 +1601,9 @@ impl Processor {
         let Some(lang) = self.word_lang else {
             return false;
         };
-        if !manual && (self.current_lang() != Some(lang) || self.word_blocked) {
+        if !manual
+            && (self.current_lang() != Some(lang) || self.word_blocked || self.word_layout_chosen)
+        {
             return false;
         }
         let typed = layouts::render(&self.word, self.detector.keymap(lang));
@@ -1702,6 +1714,7 @@ impl Processor {
         let check = separator.key == PhysKey::Space
             && !self.word.is_empty()
             && !self.word_blocked
+            && !self.word_layout_chosen
             && !self.word_glued
             && self.current_lang() == self.word_lang
             && self.config.spellcheck.check_typed_words;
@@ -1770,6 +1783,7 @@ impl Processor {
         let after_plan = std::mem::take(&mut self.word_after_plan);
         let typed_in = self.word_lang.take();
         let blocked = std::mem::take(&mut self.word_blocked);
+        let layout_chosen = std::mem::take(&mut self.word_layout_chosen);
         let Some(typed_in) = typed_in else {
             self.last = None;
             if improve {
@@ -1836,12 +1850,15 @@ impl Processor {
             suspicious = analysis.decision == Decision::Suspicious,
             "word finished"
         );
-        if analysis
-            .current
-            .score
-            .letters
-            .max(analysis.other.score.letters)
-            >= 2
+        // A manually chosen layout keeps the word out of the switching
+        // context, as before; only its case can still be fixed below.
+        if !layout_chosen
+            && analysis
+                .current
+                .score
+                .letters
+                .max(analysis.other.score.letters)
+                >= 2
         {
             match &analysis.decision {
                 Decision::Switch { to, .. } => self.context = Some(*to),
@@ -1854,7 +1871,7 @@ impl Processor {
         }
         let autoswitch = self.config.general.autoswitch;
         let target = match &analysis.decision {
-            Decision::Switch { to, .. } if autoswitch => Some(*to),
+            Decision::Switch { to, .. } if autoswitch && !layout_chosen => Some(*to),
             _ => None,
         };
         if improve {
@@ -1871,13 +1888,13 @@ impl Processor {
                     || shown.rank.is_some()
                     || shown.known_lenient
                     || shown.score.letters == 1);
-            self.previous_word =
-                (separator.key == PhysKey::Space && recognised).then_some(shown.lang);
+            self.previous_word = (separator.key == PhysKey::Space && recognised && !layout_chosen)
+                .then_some(shown.lang);
         }
         let final_lang = target.unwrap_or(typed_in);
         let fix = self.case_fix(&keys_of(&self.last), final_lang);
         if target.is_none() && fix.is_none() {
-            if autoswitch && analysis.decision == Decision::Suspicious {
+            if autoswitch && !layout_chosen && analysis.decision == Decision::Suspicious {
                 out.push(Event::Suspicious);
                 self.play(Sound::Suspicious);
             }
@@ -2072,7 +2089,7 @@ impl Processor {
             return self.fail("cannot switch the layout", &err, out);
         }
         self.chosen_lang = Some(lang);
-        self.block_next_word |= self
+        self.layout_chosen_for_next_word |= self
             .config
             .troubleshooting
             .no_switch_after
@@ -2106,7 +2123,7 @@ impl Processor {
                     self.own_layout_change = Some((lang, Instant::now()));
                     self.chosen_lang = Some(lang);
                 }
-                self.block_next_word |= self
+                self.layout_chosen_for_next_word |= self
                     .config
                     .troubleshooting
                     .no_switch_after

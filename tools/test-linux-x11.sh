@@ -24,3 +24,10 @@ cargo test -p okbs-platform-linux passive_panels_preserve_focus_report_choices_a
 GDK_SCALE=2 cargo test -p okbs-platform-linux x11_panel_maps_physical_coordinates_to_gtk_scale_two --locked -- --ignored --nocapture
 cargo test -p okbs-platform-linux real_accessibility_distinguishes_fields_password_and_caret_without_reading_text -- --ignored --nocapture
 cargo test -p okbs-platform-linux logind_properties_are_read_and_missing_service_fails_closed -- --ignored --nocapture
+# Window commands need an EWMH window manager; start it last so the tests
+# above keep seeing unmanaged windows.
+openbox --sm-disable >tmp/linux-x11/openbox.log 2>&1 &
+linux_wm_pid=$!
+finish() { kill "$linux_wm_pid" "$linux_test_pid" 2>/dev/null || true; }
+sleep 1
+cargo test -p okbs-platform-linux x11_window_commands_maximize_restore_and_minimize_through_the_window_manager --locked -- --ignored --nocapture

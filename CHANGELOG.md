@@ -13,6 +13,11 @@
   Exact known names can use mixed case; user rules, password-field protection
   and ambiguous Russian words retain their priority.
 
+- After a manual layout change (“Do not switch the layout if these were pressed
+  before typing: You changed the layout”) the next word is still not switched,
+  but an accidental Caps Lock (`hELLO` → `Hello`) and two initial capitals
+  (`HEllo` → `Hello`) in it are now fixed.
+
 ## 0.3.0-beta — 2026-10-01
 
 ### Added
