@@ -18,6 +18,9 @@
   but an accidental Caps Lock (`hELLO` → `Hello`) and two initial capitals
   (`HEllo` → `Hello`) in it are now fixed.
 
+- “Comma by double Space”: when typing fast, the letters after the second
+  Space no longer get ahead of the comma (`hello  how` gave `hellow, ho`).
+
 ## 0.3.0-beta — 2026-10-01
 
 ### Added

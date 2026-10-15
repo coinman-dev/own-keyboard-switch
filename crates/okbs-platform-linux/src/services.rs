@@ -315,34 +315,71 @@ impl Autostart for LinuxAutostart {
 }
 #[derive(Debug)]
 pub struct LinuxSound;
+const BELL: &str = "/usr/share/sounds/freedesktop/stereo/bell.oga";
 impl SoundPlayer for LinuxSound {
     fn play_wav(&self, data: &'static [u8]) -> Result<()> {
         let mut file = tempfile::NamedTempFile::new().map_err(error)?;
         file.write_all(data).map_err(error)?;
-        std::thread::spawn(move || {
-            let _ = play_audio(file.path());
-        });
+        std::thread::spawn(move || report_playback(play_audio(file.path(), true)));
         Ok(())
     }
     fn play_file(&self, path: &Path) -> Result<()> {
         let path = path.to_owned();
-        std::thread::spawn(move || {
-            let _ = play_audio(&path);
-        });
+        std::thread::spawn(move || report_playback(play_audio(&path, true)));
         Ok(())
     }
     fn beep(&self) -> Result<()> {
-        spawn_reaped(Command::new("canberra-gtk-play").args(["--id", "bell"])).map(|_| ())
+        if spawn_reaped(
+            Command::new("canberra-gtk-play")
+                .args(["--id", "bell"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+        )
+        .is_ok()
+        {
+            return Ok(());
+        }
+        // Without libcanberra play the bell of the freedesktop sound theme.
+        let bell = Path::new(BELL);
+        if !bell.is_file() {
+            return Err(error(
+                "neither canberra-gtk-play nor a bell sound is installed",
+            ));
+        }
+        std::thread::spawn(move || report_playback(play_audio(bell, false)));
+        Ok(())
     }
 }
-fn play_audio(path: &Path) -> Result<()> {
-    for program in ["pw-play", "paplay", "aplay"] {
-        match Command::new(program).arg(path).status() {
-            Ok(s) if s.success() => return Ok(()),
-            _ => {}
+/// Plays a sound file and waits for its end. `aplay` understands only WAV.
+fn play_audio(path: &Path, wav: bool) -> Result<()> {
+    let players: &[&str] = if wav {
+        &["pw-play", "paplay", "aplay"]
+    } else {
+        &["pw-play", "paplay"]
+    };
+    for program in players {
+        let status = Command::new(program)
+            .arg(path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        if status.is_ok_and(|status| status.success()) {
+            return Ok(());
         }
     }
-    Err(error("no supported WAV player is installed"))
+    Err(error(format!(
+        "no player could play {}; install pipewire, pulseaudio-utils or alsa-utils",
+        path.display()
+    )))
+}
+fn report_playback(result: Result<()>) {
+    static REPORTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if let Err(err) = result
+        && !REPORTED.swap(true, std::sync::atomic::Ordering::Relaxed)
+    {
+        tracing::warn!("cannot play sound: {err}");
+    }
 }
 #[derive(Debug)]
 pub struct LinuxFileDialogs;
@@ -556,6 +593,112 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+    /// PCM 16-bit mono WAV of a sine tone.
+    fn tone(frequency: f32, ms: u32) -> Vec<u8> {
+        const RATE: u32 = 48_000;
+        let samples: Vec<i16> = (0..RATE * ms / 1000)
+            .map(|i| {
+                let t = i as f32 / RATE as f32;
+                ((t * frequency * std::f32::consts::TAU).sin() * 0.5 * f32::from(i16::MAX)) as i16
+            })
+            .collect();
+        let size = (samples.len() * 2) as u32;
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + size).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        for value in [16u32, 1 | 1 << 16, RATE, RATE * 2, 2 | 16 << 16] {
+            wav.extend_from_slice(&value.to_le_bytes());
+        }
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&size.to_le_bytes());
+        wav.extend(samples.iter().flat_map(|sample| sample.to_le_bytes()));
+        wav
+    }
+    /// Sounds of a recording as `(start ms, length ms, Hz)`.
+    fn bursts(recording: &[u8]) -> Vec<(usize, usize, usize)> {
+        const WINDOW: usize = 480;
+        let data = recording
+            .windows(4)
+            .position(|chunk| chunk == b"data")
+            .map_or(recording, |at| &recording[at + 8..]);
+        let samples: Vec<i32> = data
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| i32::from(i16::from_le_bytes(*pair)))
+            .collect();
+        let loud: Vec<bool> = samples
+            .chunks(WINDOW)
+            .map(|window| window.iter().map(|s| s.abs()).max().unwrap_or(0) > 1000)
+            .collect();
+        let mut found = Vec::new();
+        let mut index = 0;
+        while index < loud.len() {
+            if !loud[index] {
+                index += 1;
+                continue;
+            }
+            let start = index;
+            // Up to 100 ms of silence belongs to the same sound (the error tone has gaps).
+            let mut end = index;
+            while index < loud.len() && index - end <= 10 {
+                if loud[index] {
+                    end = index;
+                }
+                index += 1;
+            }
+            let part = &samples[start * WINDOW..((end + 1) * WINDOW).min(samples.len())];
+            let crossings = part
+                .windows(2)
+                .filter(|pair| (pair[0] < 0) != (pair[1] < 0))
+                .count();
+            let ms = (end + 1 - start) * 10;
+            found.push((start * 10, ms, crossings * 1000 / 2 / ms));
+        }
+        found
+    }
+    #[test]
+    #[ignore = "needs tools/test-linux-sound.sh: a private PipeWire with a virtual sink"]
+    fn real_sounds_reach_the_default_audio_output() {
+        let sink = std::env::var("OKBS_TEST_SOUND_SINK").unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let recording = directory.path().join("monitor.wav");
+        let mut recorder = Command::new("pw-record")
+            .args(["--target", &sink, "-P", "{ stream.capture.sink = true }"])
+            .args(["--rate", "48000", "--channels", "1", "--format", "s16"])
+            .arg(&recording)
+            .spawn()
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(700));
+        let player = LinuxSound;
+        player
+            .play_wav(Box::leak(tone(880.0, 150).into_boxed_slice()))
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(800));
+        let custom = directory.path().join("custom sound.wav");
+        std::fs::write(&custom, tone(440.0, 150)).unwrap();
+        player.play_file(&custom).unwrap();
+        std::thread::sleep(Duration::from_millis(800));
+        let canberra = Command::new("canberra-gtk-play")
+            .arg("--version")
+            .output()
+            .is_ok();
+        player.beep().unwrap();
+        std::thread::sleep(Duration::from_millis(1500));
+        // SAFETY: SIGINT lets pw-record finish the WAV header of its own child process.
+        assert_eq!(unsafe { libc::kill(recorder.id() as i32, libc::SIGINT) }, 0);
+        recorder.wait().unwrap();
+        let found = bursts(&std::fs::read(&recording).unwrap());
+        eprintln!("bursts (start ms, length ms, Hz): {found:?}; canberra: {canberra}");
+        assert_eq!(found.len(), 3, "built-in, custom file and beep");
+        for ((_, ms, hz), expected) in found.iter().zip([880, 440]) {
+            assert!((120..=260).contains(ms), "{found:?}");
+            // Windows around a sound stretch it a little and lower the measured pitch.
+            assert!(hz.abs_diff(expected) < expected / 7, "{found:?}");
+        }
+        assert!(found[1].0 > found[0].0 + 600 && found[2].0 > found[1].0 + 600);
     }
     #[test]
     fn autostart_respects_entries_disabled_by_the_desktop() {

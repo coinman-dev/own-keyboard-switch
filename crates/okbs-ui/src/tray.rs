@@ -18,7 +18,7 @@ pub enum TrayCommand {
     AutoreplaceMenu,
     AutoreplaceList,
     InsertAutoreplace(usize),
-    /// «Настройки...» or a double click on the icon.
+    /// «Настройки...» or a double click on the icon (a single one in Plasma).
     OpenSettings,
     /// «Автопереключение».
     ToggleAutoswitch,
@@ -335,6 +335,20 @@ impl Tray {
                 }
             ) {
                 self.left_click.double_click(Instant::now());
+                return Some(TrayCommand::OpenSettings);
+            }
+            // A StatusNotifierItem gets only Activate, the host's primary click:
+            // GNOME sends it for a double click (a single one opens the menu),
+            // Plasma for a single click.
+            if cfg!(not(windows))
+                && matches!(
+                    event,
+                    TrayIconEvent::Click {
+                        button: tray_icon::MouseButton::Left,
+                        ..
+                    }
+                )
+            {
                 return Some(TrayCommand::OpenSettings);
             }
             if self.left_opens_autoreplace

@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 /// The buffer is dropped after this much inactivity.
 const IDLE_RESET: Duration = Duration::from_secs(30);
 /// Two spaces within this interval become «, » («Запятая по двойному нажатию клавиши Пробел»).
-const DOUBLE_SPACE: Duration = Duration::from_millis(400);
+use okbs_platform::autoreplace_gate::DOUBLE_SPACE;
 /// A layout change within this time after our own switch is ours.
 const OWN_LAYOUT_CHANGE: Duration = Duration::from_secs(2);
 /// Focus-dependent checks (exclusions) are cached this long without focus events.
@@ -998,6 +998,22 @@ impl Processor {
                     }
                 }
             }
+            // A replayed Space would still be down on the Linux output device
+            // and swallow the Space of the comma, so it is replaced, not sent.
+            if !consume
+                && let InputEvent::Key {
+                    key: PhysKey::Space,
+                    pressed: true,
+                    repeat: false,
+                    time,
+                    ..
+                } = raw
+                && !self.capturing
+                && self.double_space_comma(time, false)
+            {
+                consume = true;
+                self.consumed_keys.insert(PhysKey::Space);
+            }
             if !consume
                 && let InputEvent::Key {
                     key,
@@ -1498,7 +1514,7 @@ impl Processor {
                 {
                     return;
                 }
-                if self.double_space_comma(time) {
+                if self.double_space_comma(time, true) {
                     return;
                 }
                 self.last_space = Some(time);
@@ -2032,8 +2048,9 @@ impl Processor {
         }
     }
 
-    /// «Запятая по двойному нажатию клавиши Пробел».
-    fn double_space_comma(&mut self, time: Instant) -> bool {
+    /// «Запятая по двойному нажатию клавиши Пробел». `delivered`: the second
+    /// Space has reached the application; a captured one is replaced instead.
+    fn double_space_comma(&mut self, time: Instant, delivered: bool) -> bool {
         let previous = self.last_space.take();
         if !self.config.advanced.double_space_comma || !self.word.is_empty() {
             return false;
@@ -2054,7 +2071,8 @@ impl Processor {
             return false;
         };
         comma.push(KeyPress::plain(PhysKey::Space));
-        let result = self.backends.injector.backspace(2).and_then(|()| {
+        let erase = if delivered { 2 } else { 1 };
+        let result = self.backends.injector.backspace(erase).and_then(|()| {
             self.backends
                 .injector
                 .send(&Self::strokes(comma.iter().copied()))

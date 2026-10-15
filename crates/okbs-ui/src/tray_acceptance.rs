@@ -216,6 +216,14 @@ fn real_status_notifier_tray_exposes_icon_menu_and_commands() {
     assert_eq!(find("Russian").2, Some(1), "the active layout is checked");
     assert_eq!(find(tr(Text::MenuSounds, Lang::En)).2, Some(0));
     assert_eq!(find(tr(Text::MenuAutoswitch, Lang::En)).2, Some(1));
+    // Activate is the host's primary click on the icon.
+    let _: () = properties.call("Activate", &(0i32, 0i32)).unwrap();
+    let mut received = None;
+    wait("Activate did not reach the tray", || {
+        received = tray.poll();
+        received.is_some()
+    });
+    assert_eq!(received, Some(TrayCommand::OpenSettings));
     for (label, command) in [
         (
             tr(Text::MenuSettings, Lang::En).to_string(),
@@ -243,4 +251,248 @@ fn real_status_notifier_tray_exposes_icon_menu_and_commands() {
         );
         assert_eq!(received, Some(command), "{label}");
     }
+}
+
+/// `org.gnome.Shell.Eval` of a JavaScript expression (the private test Shell
+/// enables it with tools/linux-gnome-eval-fixture.js).
+fn shell_eval(bus: &zbus::blocking::Connection, code: &str) -> serde_json::Value {
+    let shell = zbus::blocking::Proxy::new(
+        bus,
+        "org.gnome.Shell",
+        "/org/gnome/Shell",
+        "org.gnome.Shell",
+    )
+    .unwrap();
+    let (ok, result): (bool, String) = shell.call("Eval", &(code,)).unwrap();
+    assert!(ok, "Shell.Eval failed: {result}");
+    serde_json::from_str(&result).unwrap_or(serde_json::Value::Null)
+}
+
+/// The panel button of the tray item and its menu, as the Shell shows them.
+const PANEL_ITEM: &str = r#"(() => {
+    const entry = Object.entries(Main.panel.statusArea)
+        .find(([key, item]) => key.startsWith('appindicator-') && item?._indicator?.id === 'okbswitch');
+    if (!entry)
+        return {keys: Object.keys(Main.panel.statusArea)};
+    const button = entry[1];
+    const box = actor => {
+        const [x, y] = actor.get_transformed_position();
+        const [width, height] = actor.get_transformed_size();
+        return {x, y, width, height, mapped: actor.mapped};
+    };
+    const items = button.menu._getMenuItems().map(item => ({
+        label: item.label?.text ?? null,
+        ornament: item._ornament ?? null,
+        box: box(item),
+    }));
+    // A pixmap without an overlay becomes the content of the icon actor.
+    const content = button._icon?.content ?? null;
+    const icon = content ? content.get_preferred_size().slice(1) : null;
+    const changed = content !== globalThis.okbsTrayContent;
+    globalThis.okbsTrayContent = content;
+    return {button: box(button), icon, changed, open: button.menu.isOpen, items};
+})()"#;
+
+/// A real pointer of a Mutter RemoteDesktop session.
+struct GnomePointer<'a> {
+    bus: &'a zbus::blocking::Connection,
+    session: zbus::blocking::Proxy<'a>,
+}
+impl<'a> GnomePointer<'a> {
+    fn new(bus: &'a zbus::blocking::Connection) -> Self {
+        let manager = zbus::blocking::Proxy::new(
+            bus,
+            "org.gnome.Mutter.RemoteDesktop",
+            "/org/gnome/Mutter/RemoteDesktop",
+            "org.gnome.Mutter.RemoteDesktop",
+        )
+        .unwrap();
+        let path: zbus::zvariant::OwnedObjectPath = manager.call("CreateSession", &()).unwrap();
+        let session = zbus::blocking::Proxy::new(
+            bus,
+            "org.gnome.Mutter.RemoteDesktop",
+            path,
+            "org.gnome.Mutter.RemoteDesktop.Session",
+        )
+        .unwrap();
+        let _: () = session.call("Start", &()).unwrap();
+        Self { bus, session }
+    }
+    /// Relative moves corrected by the position the Shell reports.
+    fn move_to(&self, point: [f64; 2]) {
+        for _ in 0..12 {
+            let at = shell_eval(self.bus, "global.get_pointer().slice(0, 2)");
+            let [x, y] = [at[0].as_f64().unwrap(), at[1].as_f64().unwrap()];
+            if (x - point[0]).abs() < 2.0 && (y - point[1]).abs() < 2.0 {
+                return;
+            }
+            let _: () = self
+                .session
+                .call("NotifyPointerMotionRelative", &(point[0] - x, point[1] - y))
+                .unwrap();
+            std::thread::sleep(Duration::from_millis(40));
+        }
+        panic!("the pointer did not reach {point:?}");
+    }
+    fn click(&self, point: [f64; 2], button: i32, count: usize) {
+        self.move_to(point);
+        for _ in 0..count {
+            for pressed in [true, false] {
+                let _: () = self
+                    .session
+                    .call("NotifyPointerButton", &(button, pressed))
+                    .unwrap();
+            }
+            std::thread::sleep(Duration::from_millis(60));
+        }
+    }
+}
+impl Drop for GnomePointer<'_> {
+    fn drop(&mut self) {
+        let _ = self.session.call::<_, _, ()>("Stop", &());
+    }
+}
+
+fn center(value: &serde_json::Value) -> [f64; 2] {
+    let number = |key: &str| value[key].as_f64().unwrap();
+    [
+        number("x") + number("width") / 2.0,
+        number("y") + number("height") / 2.0,
+    ]
+}
+
+#[test]
+#[ignore = "requires the private GNOME Shell with Ubuntu AppIndicators; see tools/test-linux-gnome.sh"]
+fn real_gnome_panel_tray_shows_icon_menu_and_commands() {
+    const LEFT: i32 = 272;
+    const RIGHT: i32 = 273;
+    let bus = zbus::blocking::Connection::session().unwrap();
+    let general = General::default();
+    let layouts = [
+        TrayLayout {
+            name: "English (US)".into(),
+            flag: None,
+        },
+        TrayLayout {
+            name: "Russian".into(),
+            flag: None,
+        },
+    ];
+    let state = TrayState {
+        icon: IconState::for_layout(&general, Some("en-US"), Some(Lang::En), true, false),
+        sounds: true,
+        layout: Some(0),
+    };
+    let mut tray = Tray::new(state, Lang::En, &AutoReplace::default(), &layouts).unwrap();
+    let mut item = serde_json::Value::Null;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    // The Shell loads the pixmap and the menu asynchronously.
+    while item["icon"].is_null() || item["items"].as_array().is_none_or(Vec::is_empty) {
+        assert!(
+            Instant::now() < deadline,
+            "no okbswitch tray item in the panel: {item}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+        item = shell_eval(&bus, PANEL_ITEM);
+    }
+    eprintln!("panel item: {item}");
+    assert_eq!(item["button"]["mapped"], true, "{item}");
+    assert_eq!(
+        item["icon"],
+        serde_json::json!([ICON_SIZE, ICON_SIZE]),
+        "our pixmap"
+    );
+    // «Сделать значок в виде флагов стран»: the panel picks up the new pixmap.
+    let flags = General {
+        tray_flags: true,
+        ..General::default()
+    };
+    tray.update(TrayState {
+        icon: IconState::for_layout(&flags, Some("ru-RU"), Some(Lang::Ru), true, false),
+        layout: Some(1),
+        ..state
+    })
+    .unwrap();
+    wait("the panel kept the old icon", || {
+        shell_eval(&bus, PANEL_ITEM)["changed"] == true
+    });
+    let pointer = GnomePointer::new(&bus);
+    let button = center(&item["button"]);
+    let opened = |want: bool| {
+        let mut item = serde_json::Value::Null;
+        wait(
+            &format!("the panel menu did not become open={want}"),
+            || {
+                item = shell_eval(&bus, PANEL_ITEM);
+                item["open"] == want
+            },
+        );
+        item
+    };
+    let entry = |item: &serde_json::Value, label: &str| {
+        item["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["label"] == label)
+            .unwrap_or_else(|| panic!("no menu entry {label:?} in {item}"))
+            .clone()
+    };
+    let sounds = tr(Text::MenuSounds, Lang::En);
+    // A right click opens the host's menu built from our dbusmenu.
+    pointer.click(button, RIGHT, 1);
+    let item = opened(true);
+    let checked = entry(&item, sounds)["ornament"].clone();
+    pointer.click(center(&entry(&item, sounds)["box"]), LEFT, 1);
+    let mut received = None;
+    wait("the panel menu entry did not reach the tray", || {
+        received = tray.poll();
+        received.is_some()
+    });
+    assert_eq!(received, Some(TrayCommand::ToggleSounds));
+    opened(false);
+    // The application applies the command; the Shell shows the new check mark.
+    tray.update(TrayState {
+        sounds: false,
+        ..state
+    })
+    .unwrap();
+    pointer.click(button, RIGHT, 1);
+    let mut item = opened(true);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while entry(&item, sounds)["ornament"] == checked {
+        assert!(
+            Instant::now() < deadline,
+            "the panel kept the old check mark: {item}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+        item = shell_eval(&bus, PANEL_ITEM);
+    }
+    eprintln!("after the update: {item}");
+    pointer.click(
+        center(&entry(&item, tr(Text::MenuSettings, Lang::En))["box"]),
+        LEFT,
+        1,
+    );
+    let mut received = None;
+    wait("Settings did not reach the tray", || {
+        received = tray.poll();
+        received.is_some()
+    });
+    assert_eq!(received, Some(TrayCommand::OpenSettings));
+    opened(false);
+    // A double click activates the item: the settings, as on Windows.
+    pointer.click(button, LEFT, 2);
+    let mut received = None;
+    wait("a double click did not reach the tray", || {
+        received = tray.poll();
+        received.is_some()
+    });
+    assert_eq!(received, Some(TrayCommand::OpenSettings));
+    std::thread::sleep(Duration::from_millis(800));
+    assert_eq!(
+        shell_eval(&bus, PANEL_ITEM)["open"],
+        false,
+        "no menu after a double click"
+    );
 }

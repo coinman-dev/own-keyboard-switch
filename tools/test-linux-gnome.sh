@@ -31,7 +31,16 @@ fi
 gsettings set org.gnome.desktop.input-sources sources "[('xkb', 'us'), ('xkb', 'ru')]"
 # The single-layout option is visible only over a per-window session policy.
 gsettings set org.gnome.desktop.input-sources per-window "$([[ ${OKBS_TEST_APP:-} == layout ]] && echo true || echo false)"
-gsettings set org.gnome.shell enabled-extensions "['okbswitch@own-keyboard-switch']"
+linux_extensions="'okbswitch@own-keyboard-switch'"
+if [[ ${OKBS_TEST_APP:-} == tray ]]; then
+    # The Ubuntu panel tray host, and Shell.Eval to read what the panel shows.
+    linux_eval="$XDG_DATA_HOME/gnome-shell/extensions/okbs-eval-fixture@own-keyboard-switch"
+    mkdir -p "$linux_eval"
+    cp tools/linux-gnome-eval-fixture.js "$linux_eval/extension.js"
+    echo '{"uuid": "okbs-eval-fixture@own-keyboard-switch", "name": "OKBS test: Shell.Eval", "description": "Private test sessions only", "shell-version": ["45", "46", "47", "48", "49", "50"]}' >"$linux_eval/metadata.json"
+    linux_extensions+=", 'ubuntu-appindicators@ubuntu.com', 'okbs-eval-fixture@own-keyboard-switch'"
+fi
+gsettings set org.gnome.shell enabled-extensions "[$linux_extensions]"
 gsettings set org.gnome.shell disable-user-extensions false
 gsettings set org.gnome.mutter experimental-features "['scale-monitor-framebuffer']"
 gnome-shell --headless --wayland --no-x11 --wayland-display okbs-gnome-test --virtual-monitor 1920x1080 --virtual-monitor 1200x900 >tmp/linux-gnome/shell.log 2>&1 &
@@ -89,6 +98,22 @@ if [[ ${OKBS_TEST_APP:-} == picker ]]; then
         gdbus call --session --dest org.own_keyboard_switch.Gnome --object-path /org/own_keyboard_switch/Gnome --method org.own_keyboard_switch.Gnome.SetPanel "{\"id\":\"$linux_panel\",\"visible\":false}"
     done
     timeout 120s "$OKBS_TEST_BROWSER_BINARY" real_linux_pickers_and_process_restart_preserve_editor_and_history --ignored --nocapture
+    exit
+fi
+if [[ ${OKBS_TEST_APP:-} == tray ]]; then
+    timeout 90s cargo test -p okbs-ui real_gnome_panel_tray_shows_icon_menu_and_commands --locked -- --ignored --nocapture
+    exit
+fi
+if [[ ${OKBS_TEST_APP:-} == kwrite ]]; then
+    timeout 90s "$OKBS_TEST_BROWSER_BINARY" real_kwrite_corrects_converts_and_pastes --ignored --nocapture
+    exit
+fi
+if [[ ${OKBS_TEST_APP:-} == stress ]]; then
+    timeout 600s "$OKBS_TEST_BROWSER_BINARY" real_fast_typing_across_conversions_loses_no_word --ignored --nocapture
+    exit
+fi
+if [[ ${OKBS_TEST_APP:-} == settings ]]; then
+    timeout 180s "$OKBS_TEST_BROWSER_BINARY" real_engine_settings_follow_live_configuration --ignored --nocapture
     exit
 fi
 if [[ ${OKBS_TEST_APP:-} == indicator ]]; then

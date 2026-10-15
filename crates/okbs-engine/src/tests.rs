@@ -114,6 +114,8 @@ struct Desktop {
     submitted_lines: Vec<String>,
     tab_count: usize,
     f12_count: usize,
+    /// Sounds the engine asked to play, by built-in name, `file:` path or `beep`.
+    sounds: Vec<String>,
 }
 
 impl Desktop {
@@ -148,6 +150,7 @@ impl Desktop {
             submitted_lines: Vec::new(),
             tab_count: 0,
             f12_count: 0,
+            sounds: Vec::new(),
         }
     }
 
@@ -248,6 +251,42 @@ struct Shared(Arc<Mutex<Desktop>>);
 impl Shared {
     fn lock(&self) -> MutexGuard<'_, Desktop> {
         self.0.lock().expect("desktop lock")
+    }
+}
+
+struct FakeSound(Shared);
+impl okbs_platform::SoundPlayer for FakeSound {
+    fn play_wav(&self, data: &'static [u8]) -> Result<()> {
+        use crate::sounds::{Sound, wav};
+        let name = [
+            Sound::Autoswitch,
+            Sound::ManualConvert,
+            Sound::LayoutChanged,
+            Sound::Cancel,
+            Sound::Suspicious,
+            Sound::Autoreplace,
+            Sound::CaseFixed,
+            Sound::ClipboardConvert,
+            Sound::Error,
+            Sound::SpellingError,
+            Sound::SpellingCorrected,
+        ]
+        .into_iter()
+        .find(|&sound| std::ptr::eq(wav(sound), data))
+        .map_or_else(|| "unknown".to_string(), |sound| format!("{sound:?}"));
+        self.0.lock().sounds.push(name);
+        Ok(())
+    }
+    fn play_file(&self, path: &std::path::Path) -> Result<()> {
+        self.0
+            .lock()
+            .sounds
+            .push(format!("file:{}", path.display()));
+        Ok(())
+    }
+    fn beep(&self) -> Result<()> {
+        self.0.lock().sounds.push("beep".into());
+        Ok(())
     }
 }
 
@@ -404,7 +443,7 @@ impl Harness {
             injector: Box::new(FakeInjector(desktop.clone())),
             layouts: Box::new(FakeLayouts(desktop.clone())),
             clipboard: Some(Box::new(FakeClipboard(desktop.clone()))),
-            sound: None,
+            sound: Some(Box::new(FakeSound(desktop.clone()))),
             focus: Some(Box::new(FakeFocus(desktop.clone()))),
         };
         let mut processor = Processor::new(config, backends);
@@ -1767,12 +1806,46 @@ fn case_fixes_can_be_disabled() {
 
 #[test]
 fn double_space_becomes_comma() {
-    let mut h = Harness::with_config(
-        Lang::Ru,
-        config_with(|c| c.advanced.double_space_comma = true),
-    );
-    h.type_as("привет  как дела", Lang::Ru);
-    assert_eq!(h.text(), "привет, как дела");
+    for gate in [false, true] {
+        let mut h = Harness::with_config(
+            Lang::Ru,
+            config_with(|c| c.advanced.double_space_comma = true),
+        );
+        if gate {
+            h.enable_gate();
+        }
+        h.type_as("привет  как дела", Lang::Ru);
+        assert_eq!(h.text(), "привет, как дела", "gate: {gate}");
+    }
+    // The second Space waits for the engine: keys typed right after it
+    // cannot reach the application before the comma.
+    let config = config_with(|c| c.advanced.double_space_comma = true);
+    let gate = okbs_platform::autoreplace_gate::AutoReplaceGate::new(&config);
+    let space = |time| InputEvent::Key {
+        key: PhysKey::Space,
+        pressed: true,
+        repeat: false,
+        time,
+        injected: false,
+    };
+    let field = Some(InputTarget {
+        window: 1,
+        control: 1,
+    });
+    let at = Instant::now();
+    assert!(!gate.capture(space(at), Some(Lang::Ru), field));
+    assert!(gate.capture(
+        space(at + Duration::from_millis(100)),
+        Some(Lang::Ru),
+        field
+    ));
+    let gate = okbs_platform::autoreplace_gate::AutoReplaceGate::new(&Config::default());
+    assert!(!gate.capture(space(at), Some(Lang::Ru), field));
+    assert!(!gate.capture(
+        space(at + Duration::from_millis(100)),
+        Some(Lang::Ru),
+        field
+    ));
     let mut h = Harness::with_config(
         Lang::En,
         config_with(|c| c.advanced.double_space_comma = true),
@@ -3972,4 +4045,97 @@ fn break_after_a_dot_typed_after_the_space_converts_only_the_dot() {
         h.tap(PhysKey::Pause);
         assert_eq!(h.text(), text.replace('.', "/"), "{text}");
     }
+}
+
+impl Harness {
+    fn take_sounds(&self) -> Vec<String> {
+        std::mem::take(&mut self.desktop.lock().sounds)
+    }
+}
+
+#[test]
+fn engine_events_play_their_configured_sounds() {
+    use okbs_core::config::{SoundMode, SwitchKey};
+    let mut h = Harness::new(Lang::En);
+    h.type_as("ghbdtn ", Lang::En);
+    assert_eq!(h.text(), "привет ");
+    assert_eq!(h.take_sounds(), ["Autoswitch"]);
+    h.tap(PhysKey::Pause);
+    assert_eq!(h.text(), "ghbdtn ");
+    assert_eq!(h.take_sounds(), ["Cancel"]);
+    let mut h = Harness::new(Lang::En);
+    h.type_as("plan c ", Lang::En);
+    assert!(h.take_sounds().is_empty());
+    h.tap(PhysKey::Pause);
+    assert_eq!(h.text(), "plan с ");
+    assert_eq!(h.take_sounds(), ["ManualConvert"]);
+    h.desktop.lock().clipboard = Some("ghbdtn".into());
+    h.processor.clipboard_op(TextOp::Layout);
+    assert_eq!(h.take_sounds(), ["ClipboardConvert"]);
+
+    let mut h = Harness::new(Lang::Ru);
+    h.tap(PhysKey::CapsLock);
+    h.type_as("Привет ", Lang::Ru);
+    assert_eq!(h.text(), "Привет ");
+    assert_eq!(h.take_sounds(), ["CaseFixed"]);
+
+    let mut h = Harness::with_config(Lang::En, autoreplace_config());
+    h.type_as("снп ", Lang::Ru);
+    assert_eq!(h.take_sounds(), ["Autoreplace"]);
+
+    let mut h = Harness::new(Lang::En);
+    h.desktop.lock().fail_layout = true;
+    h.type_as("ghbdtn ", Lang::En);
+    assert_eq!(h.take_sounds(), ["Error"]);
+
+    // Layout switches by the user are silent by default.
+    let switching = |change: fn(&mut Config)| {
+        config_with(|c| {
+            c.switching.switch_key = SwitchKey::RightCtrl;
+            change(c);
+        })
+    };
+    let mut h = Harness::with_config(Lang::En, switching(|_| {}));
+    h.tap(PhysKey::ControlRight);
+    assert_eq!(h.layout(), Lang::Ru);
+    assert!(h.take_sounds().is_empty());
+    let mut h = Harness::with_config(
+        Lang::En,
+        switching(|c| c.sounds.events.layout_changed.enabled = true),
+    );
+    h.tap(PhysKey::ControlRight);
+    assert_eq!(h.take_sounds(), ["LayoutChanged"]);
+
+    let mut h = Harness::with_config(
+        Lang::En,
+        config_with(|c| c.sounds.events.autoswitch.file = "/sounds/switch.wav".into()),
+    );
+    h.type_as("ghbdtn ", Lang::En);
+    h.tap(PhysKey::Pause);
+    assert_eq!(h.take_sounds(), ["file:/sounds/switch.wav", "Cancel"]);
+
+    let mut h = Harness::with_config(
+        Lang::En,
+        config_with(|c| {
+            c.sounds.mode = SoundMode::Beep;
+            c.sounds.events.autoswitch.file = "/sounds/switch.wav".into();
+        }),
+    );
+    h.type_as("ghbdtn ", Lang::En);
+    assert_eq!(h.take_sounds(), ["beep"], "beep mode ignores custom files");
+
+    let mut h = Harness::with_config(
+        Lang::En,
+        config_with(|c| c.sounds.events.autoswitch.enabled = false),
+    );
+    h.type_as("ghbdtn ", Lang::En);
+    h.tap(PhysKey::Pause);
+    assert_eq!(h.take_sounds(), ["Cancel"], "only the switch is muted");
+
+    let mut h = Harness::with_config(Lang::En, config_with(|c| c.sounds.enabled = false));
+    h.type_as("ghbdtn ", Lang::En);
+    h.tap(PhysKey::Pause);
+    h.processor.clipboard_op(TextOp::Layout);
+    assert_eq!(h.text(), "ghbdtn ");
+    assert!(h.take_sounds().is_empty(), "sound effects are off");
 }

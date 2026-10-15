@@ -74,6 +74,18 @@ if [[ ${OKBS_TEST_APP:-} == picker ]]; then
     timeout 120s "$OKBS_TEST_BROWSER_BINARY" real_linux_pickers_and_process_restart_preserve_editor_and_history --ignored --nocapture
     exit
 fi
+if [[ ${OKBS_TEST_APP:-} == kwrite ]]; then
+    timeout 90s "$OKBS_TEST_BROWSER_BINARY" real_kwrite_corrects_converts_and_pastes --ignored --nocapture
+    exit
+fi
+if [[ ${OKBS_TEST_APP:-} == stress ]]; then
+    timeout 600s "$OKBS_TEST_BROWSER_BINARY" real_fast_typing_across_conversions_loses_no_word --ignored --nocapture
+    exit
+fi
+if [[ ${OKBS_TEST_APP:-} == settings ]]; then
+    timeout 180s "$OKBS_TEST_BROWSER_BINARY" real_engine_settings_follow_live_configuration --ignored --nocapture
+    exit
+fi
 if [[ ${OKBS_TEST_APP:-} == indicator ]]; then
     timeout 60s "$OKBS_TEST_BROWSER_BINARY" real_floating_indicator_pointer_actions --ignored --nocapture
     exit

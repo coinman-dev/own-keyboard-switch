@@ -270,6 +270,7 @@ struct RunningEngine {
     engine: EngineHandle,
     _capture: Box<dyn StopGuard>,
     _focus: Box<dyn StopGuard>,
+    _layout: Option<Box<dyn StopGuard>>,
     driver: KeyboardDriver,
     hardware: VirtualDevice,
     filter: crate::input::InputFilter,
@@ -277,6 +278,11 @@ struct RunningEngine {
 }
 impl RunningEngine {
     fn new(session: &Session) -> Self {
+        Self::with_layout_events(session, false)
+    }
+    /// `layout_events`: the engine hears layout changes made outside it, as
+    /// in the application.
+    fn with_layout_events(session: &Session, layout_events: bool) -> Self {
         let mut keys = AttributeSet::new();
         for &key in PhysKey::ALL {
             keys.insert(KeyCode(key.evdev_code()));
@@ -322,6 +328,9 @@ impl RunningEngine {
         let (sink, input) = crossbeam_channel::unbounded();
         let (focus_sink, focus_input) = crossbeam_channel::unbounded();
         let focus = FocusInfo::subscribe(&mut session.desktop.clone(), focus_sink).unwrap();
+        let (layout_sink, layout_input) = crossbeam_channel::unbounded();
+        let layout = layout_events
+            .then(|| LayoutManager::subscribe(&mut session.desktop.clone(), layout_sink).unwrap());
         let mut processor = Processor::new(
             config.clone(),
             Backends {
@@ -342,7 +351,7 @@ impl RunningEngine {
             processor,
             Inputs {
                 input,
-                layout: None,
+                layout: layout.is_some().then_some(layout_input),
                 focus: Some(focus_input),
                 clipboard: None,
             },
@@ -377,6 +386,7 @@ impl RunningEngine {
             engine,
             _capture: capture,
             _focus: focus,
+            _layout: layout,
             driver,
             hardware,
             filter: source.filter.clone(),
@@ -412,6 +422,16 @@ impl RunningEngine {
             .emit(&[InputEvent::new(EventType::KEY.0, key.evdev_code(), 1)])
             .unwrap();
         std::thread::sleep(Duration::from_millis(40));
+        self.hardware
+            .emit(&[InputEvent::new(EventType::KEY.0, key.evdev_code(), 0)])
+            .unwrap();
+    }
+    fn hold(&mut self, key: PhysKey, duration: Duration) {
+        use evdev::{EventType, InputEvent};
+        self.hardware
+            .emit(&[InputEvent::new(EventType::KEY.0, key.evdev_code(), 1)])
+            .unwrap();
+        std::thread::sleep(duration);
         self.hardware
             .emit(&[InputEvent::new(EventType::KEY.0, key.evdev_code(), 0)])
             .unwrap();
@@ -513,11 +533,26 @@ impl FieldWindow {
             std::thread::sleep(Duration::from_millis(30));
         }
     }
-    fn first(&self) -> serde_json::Value {
+    fn field(&self, name: &str) -> serde_json::Value {
         std::fs::read(&self.state)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-            .map_or(serde_json::Value::Null, |value| value["first"].clone())
+            .map_or(serde_json::Value::Null, |value| value[name].clone())
+    }
+    fn first(&self) -> serde_json::Value {
+        self.field("first")
+    }
+    fn second(&self) -> serde_json::Value {
+        self.field("second")
+    }
+    /// A command of tools/linux-field-fixture.py, once it is taken.
+    fn send(&self, action: &str) {
+        std::fs::write(&self.command, action).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while self.command.exists() {
+            assert!(Instant::now() < deadline, "{} ignored {action}", self.title);
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
     fn expect_first(&self, text: &str, scratch: &Path) {
         let deadline = Instant::now() + Duration::from_secs(8);
@@ -1371,6 +1406,512 @@ fn real_wayland_writer_and_terminal_correct_paste_and_submit() {
     eprintln!(
         "Native Wayland Writer selection/correction/history and foot correction-before-Enter/history accepted"
     );
+}
+
+#[test]
+#[ignore = "requires root/uinput, private GNOME/KDE Wayland and KWrite; set OKBS_TEST_APP=kwrite in the device test script"]
+fn real_kwrite_corrects_converts_and_pastes() {
+    assert!(
+        crate::permissions::is_root(),
+        "run only in an isolated development VM"
+    );
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_writer(std::io::stderr)
+        .try_init();
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let scratch = workspace.join("tmp/linux-native-input");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let temp = tempfile::TempDir::new_in(&scratch).unwrap().keep();
+    let document = temp.join("okbs-kwrite.txt");
+    std::fs::write(&document, "").unwrap();
+    // Saving must not edit the document: KTextEditor strips trailing spaces by default.
+    let config = temp.join("config");
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(
+        config.join("kwriterc"),
+        "[KTextEditor Document]\nRemove Spaces=0\nNewline at End of File=false\n",
+    )
+    .unwrap();
+    let session = Session::new();
+    let kwrite = Process(
+        std::process::Command::new("kwrite")
+            .arg(&document)
+            .env("XDG_CONFIG_HOME", &config)
+            .env("QT_QPA_PLATFORM", "wayland")
+            .env("LANGUAGE", "en")
+            .stdout(Stdio::null())
+            .stderr(std::fs::File::create(temp.join("kwrite.log")).unwrap())
+            .spawn()
+            .unwrap(),
+    );
+    let pid = kwrite.0.id();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let native = session.desktop.refresh().unwrap();
+        if native.pid == pid && native.control != 0 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "KWrite did not become the input target: {native:?}"
+        );
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    let mut running = RunningEngine::new(&session);
+    // KWrite saves through its own D-Bus action, whatever the keyboard layout.
+    let save = || {
+        let _ = std::process::Command::new("gdbus")
+            .args(["call", "--session", "--dest"])
+            .arg(format!("org.kde.kwrite-{pid}"))
+            .args([
+                "--object-path",
+                "/kwrite/MainWindow_1/actions/file_save_all",
+                "--method",
+                "org.qtproject.Qt.QAction.trigger",
+            ])
+            .output();
+    };
+    let expect = |text: &str| {
+        let deadline = Instant::now() + Duration::from_secs(8);
+        loop {
+            save();
+            std::thread::sleep(Duration::from_millis(100));
+            let saved = std::fs::read_to_string(&document).unwrap_or_default();
+            if saved.trim_end_matches('\n') == text {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "KWrite: expected {text:?}, saved {saved:?}, focused {:?}; scratch {}",
+                session.desktop.refresh().map(|native| (
+                    native.title,
+                    native.app_id,
+                    native.control
+                )),
+                temp.display()
+            );
+        }
+    };
+    let mut clipboard = LinuxClipboard::new().unwrap();
+    clipboard.set_text("synthetic preserved clipboard").unwrap();
+    running.type_text("Github b linux windows plan b ");
+    expect("Github и linux windows plan b ");
+    running.type_text("plan c");
+    running.tap(PhysKey::Pause);
+    expect("Github и linux windows plan b plan с");
+    // Typing over a selection, then converting the selection.
+    running.chord(&[PhysKey::ControlLeft], PhysKey::KeyA);
+    running.type_text("ghbdtn ");
+    expect("привет ");
+    running.chord(&[PhysKey::ControlLeft], PhysKey::KeyA);
+    running.chord(&[PhysKey::ShiftLeft], PhysKey::Pause);
+    expect("ghbdtn ");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while clipboard.text().unwrap().as_deref() != Some("synthetic preserved clipboard") {
+        assert!(
+            Instant::now() < deadline,
+            "KWrite selection did not restore the clipboard"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // A picker paste (clipboard history, autoreplace list) over a selection.
+    // The command bypasses the keyboard path: let Ctrl+A arrive first, as a
+    // user's choice in a picker always does.
+    running.chord(&[PhysKey::ControlLeft], PhysKey::KeyA);
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(running.engine.send(Command::InsertText {
+        text: "история буфера\nsecond synthetic line".into(),
+        target: session.desktop.input_target().unwrap()
+    }));
+    expect("история буфера\nsecond synthetic line");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while clipboard.text().unwrap().as_deref() != Some("synthetic preserved clipboard") {
+        assert!(
+            Instant::now() < deadline,
+            "KWrite paste did not restore the clipboard"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    drop(running);
+    drop(kwrite);
+}
+
+#[test]
+#[ignore = "requires root/uinput and private GNOME/KDE Wayland; set OKBS_TEST_APP=stress in the device test script"]
+fn real_fast_typing_across_conversions_loses_no_word() {
+    assert!(
+        crate::permissions::is_root(),
+        "run only in an isolated development VM"
+    );
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_writer(std::io::stderr)
+        .try_init();
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let scratch = workspace.join("tmp/linux-native-input");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let temp = tempfile::TempDir::new_in(&scratch).unwrap().keep();
+    let session = Session::new();
+    let editor = FieldWindow::open(&session, &workspace, &temp, "OKBS stress field");
+    editor.activate(&session);
+    let mut running = RunningEngine::new(&session);
+    let rounds: usize = std::env::var("OKBS_TEST_ROUNDS")
+        .ok()
+        .and_then(|rounds| rounds.parse().ok())
+        .unwrap_or(40);
+    // Every word is typed while the previous one is being converted. The last
+    // word leaves the Russian layout the round starts with.
+    let typed = "Github b linux windows plan b ghbdtn ";
+    let wanted = "Github и linux windows plan b привет ";
+    let mut failures = Vec::new();
+    for round in 1..=rounds {
+        editor.clear_first();
+        tracing::info!(round, "stress round");
+        running.type_text(typed);
+        let deadline = Instant::now() + Duration::from_secs(6);
+        while editor.first() != wanted && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        // Late corrections would change a settled field.
+        std::thread::sleep(Duration::from_millis(300));
+        let got = editor.first();
+        if got != wanted {
+            tracing::warn!(round, "stress round failed");
+            failures.push((round, got));
+            // Start the next round from the Russian layout again.
+            running.type_text("ghbdtn ");
+            std::thread::sleep(Duration::from_millis(500));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of {rounds} rounds lost a correction: {failures:?}; scratch {}",
+        failures.len(),
+        temp.display()
+    );
+}
+
+#[test]
+#[ignore = "requires root/uinput and private GNOME/KDE Wayland; set OKBS_TEST_APP=settings in the device test script"]
+fn real_engine_settings_follow_live_configuration() {
+    use okbs_core::config::{MatchKind, Rule, RuleAction, SwitchKey};
+    assert!(
+        crate::permissions::is_root(),
+        "run only in an isolated development VM"
+    );
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_writer(std::io::stderr)
+        .try_init();
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let scratch = workspace.join("tmp/linux-native-input");
+    std::fs::create_dir_all(&scratch).unwrap();
+    let temp = tempfile::TempDir::new_in(&scratch).unwrap().keep();
+    let config_path = temp.join("settings.toml");
+    let session = Session::new();
+    let editor = FieldWindow::open(&session, &workspace, &temp, "OKBS settings field");
+    editor.activate(&session);
+    let mut running = RunningEngine::with_layout_events(&session, true);
+    // Rounds start from a layout set by the test, not by the user.
+    let mut base = running.config.clone();
+    base.troubleshooting.no_switch_after.manual_layout_change = false;
+    let set_layout = |layout: LayoutId| {
+        session.desktop.clone().set(layout).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while session.desktop.current().unwrap() != layout {
+            assert!(Instant::now() < deadline, "layout {layout:?} not set");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        // Let the engine see the change before the first key.
+        std::thread::sleep(Duration::from_millis(200));
+    };
+    let settled = |what: &str, field: &dyn Fn() -> serde_json::Value, wanted: &str| {
+        let deadline = Instant::now() + Duration::from_secs(6);
+        while field() != wanted && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(field(), wanted, "{what}; scratch {}", temp.display());
+    };
+    /// What, the change of the base configuration, the starting layout, the
+    /// typing and the field text it must leave.
+    type Case = (
+        &'static str,
+        fn(&mut Config),
+        LayoutId,
+        fn(&mut RunningEngine),
+        &'static str,
+    );
+    let cases: Vec<Case> = vec![
+        (
+            "two capitals fixed",
+            |_| {},
+            LayoutId(1),
+            |r| r.type_text("GHbdtn "),
+            "Привет ",
+        ),
+        (
+            "two capitals kept",
+            |c| c.advanced.fix_two_capitals = false,
+            LayoutId(1),
+            |r| r.type_text("GHbdtn "),
+            "ПРивет ",
+        ),
+        (
+            "abbreviation converted",
+            |_| {},
+            LayoutId(0),
+            |r| r.type_text("YLC "),
+            "НДС ",
+        ),
+        (
+            "abbreviation kept",
+            |c| c.advanced.fix_abbreviations = false,
+            LayoutId(0),
+            |r| r.type_text("YLC "),
+            "YLC ",
+        ),
+        (
+            "double space comma",
+            |c| c.advanced.double_space_comma = true,
+            LayoutId(1),
+            |r| r.type_text("ghbdtn  rfr"),
+            "привет, как",
+        ),
+        (
+            "Backspace blocks the word",
+            |_| {},
+            LayoutId(0),
+            |r| {
+                r.type_text("ghbdtx");
+                r.tap(PhysKey::Backspace);
+                r.type_text("n ");
+            },
+            "ghbdtn ",
+        ),
+        (
+            "Backspace allowed",
+            |c| c.troubleshooting.no_switch_after.backspace = false,
+            LayoutId(0),
+            |r| {
+                r.type_text("ghbdtx");
+                r.tap(PhysKey::Backspace);
+                r.type_text("n ");
+            },
+            "привет ",
+        ),
+        (
+            "Left arrow allowed",
+            |_| {},
+            LayoutId(0),
+            |r| {
+                r.tap(PhysKey::ArrowLeft);
+                r.type_text("ghbdtn ");
+            },
+            "привет ",
+        ),
+        (
+            "Left arrow blocks the word",
+            |c| c.troubleshooting.no_switch_after.arrow_left = true,
+            LayoutId(0),
+            |r| {
+                r.tap(PhysKey::ArrowLeft);
+                r.type_text("ghbdtn ");
+            },
+            "ghbdtn ",
+        ),
+        (
+            "Delete blocks the word",
+            |c| c.troubleshooting.no_switch_after.delete = true,
+            LayoutId(0),
+            |r| {
+                r.tap(PhysKey::Delete);
+                r.type_text("ghbdtn ");
+            },
+            "ghbdtn ",
+        ),
+        (
+            "rule keeps a word",
+            |c| {
+                c.rules = vec![Rule {
+                    pattern: "ghbdtn".into(),
+                    match_kind: MatchKind::Equals,
+                    comment: "acceptance".into(),
+                    ..Rule::default()
+                }];
+            },
+            LayoutId(0),
+            |r| r.type_text("ghbdtn "),
+            "ghbdtn ",
+        ),
+        (
+            "rule switches a word",
+            |c| {
+                c.rules = vec![Rule {
+                    pattern: "PLA".into(),
+                    match_kind: MatchKind::StartsWith,
+                    case_sensitive: true,
+                    action: RuleAction::Switch,
+                    ..Rule::default()
+                }];
+            },
+            LayoutId(0),
+            |r| r.type_text("plan PLAN "),
+            "plan ЗДФТ ",
+        ),
+        (
+            "minimal word length",
+            |c| c.troubleshooting.detector.min_word_len = 7,
+            LayoutId(0),
+            |r| r.type_text("ghbdtn "),
+            "ghbdtn ",
+        ),
+        (
+            "Enter converts",
+            |_| {},
+            LayoutId(0),
+            |r| {
+                r.type_text("ghbdtn");
+                r.tap(PhysKey::Enter);
+            },
+            "привет",
+        ),
+        (
+            "Enter does not convert",
+            |c| c.troubleshooting.no_switch_on_tab_enter = true,
+            LayoutId(0),
+            |r| {
+                r.type_text("ghbdtn");
+                r.tap(PhysKey::Enter);
+            },
+            "ghbdtn",
+        ),
+        (
+            "no injection pauses",
+            |c| {
+                c.switching.inject_key_delay_ms = 0;
+                c.switching.layout_switch_delay_ms = 0;
+            },
+            LayoutId(1),
+            |r| r.type_text("Github b linux windows plan b "),
+            "Github и linux windows plan b ",
+        ),
+        (
+            "long injection pauses",
+            |c| {
+                c.switching.inject_key_delay_ms = 15;
+                c.switching.layout_switch_delay_ms = 250;
+            },
+            LayoutId(1),
+            |r| r.type_text("Github b linux windows plan b "),
+            "Github и linux windows plan b ",
+        ),
+    ];
+    for (what, change, layout, input, wanted) in cases {
+        let mut config = base.clone();
+        change(&mut config);
+        if running.config != config {
+            running.configure(config, &config_path);
+        }
+        editor.clear_first();
+        set_layout(layout);
+        tracing::info!(what, "settings case");
+        input(&mut running);
+        settled(what, &|| editor.first(), wanted);
+    }
+
+    // «Вы сменили раскладку»: a layout chosen outside the program keeps only
+    // the next word.
+    let mut config = base.clone();
+    config.troubleshooting.no_switch_after.manual_layout_change = true;
+    running.configure(config, &config_path);
+    editor.clear_first();
+    set_layout(LayoutId(1));
+    set_layout(LayoutId(0));
+    running.type_text("ghbdtn ghbdtn ");
+    settled(
+        "manual layout change blocks the next word",
+        &|| editor.first(),
+        "ghbdtn привет ",
+    );
+
+    // «Переключать по:» right Ctrl: a press longer than switch_key_max_hold_ms
+    // is a held modifier, not a switch. (Caps Lock switches on the press.)
+    let mut config = base.clone();
+    config.switching.switch_key = SwitchKey::RightCtrl;
+    config.switching.switch_key_max_hold_ms = 200;
+    running.configure(config, &config_path);
+    set_layout(LayoutId(0));
+    running.tap(PhysKey::ControlRight);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while session.desktop.current().unwrap() != LayoutId(1) {
+        assert!(
+            Instant::now() < deadline,
+            "a short right Ctrl did not switch"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    running.hold(PhysKey::ControlRight, Duration::from_millis(450));
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(
+        session.desktop.current().unwrap(),
+        LayoutId(1),
+        "a press longer than switch_key_max_hold_ms switched"
+    );
+
+    // «Распознавать пароли и набирать их по-английски»: a real GTK password
+    // field recognised over AT-SPI gets the English layout.
+    let mut config = base.clone();
+    config.general.passwords_to_english = true;
+    running.configure(config, &config_path);
+    set_layout(LayoutId(1));
+    editor.send("password");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while session.desktop.is_password_field().unwrap() != Some(true) {
+        assert!(
+            Instant::now() < deadline,
+            "the password field was not recognised"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    running.type_text("BigVova#$");
+    settled(
+        "password typed in English",
+        &|| editor.second(),
+        "BigVova#$",
+    );
+    assert_eq!(session.desktop.current().unwrap(), LayoutId(0));
+
+    // «Предлагать добавить правило после N отмен подряд».
+    editor.clear_first();
+    let mut config = base.clone();
+    config.rules_options.suggest_rule_after_cancels = 2;
+    running.configure(config, &config_path);
+    while running.engine.events().try_recv().is_ok() {}
+    for _ in 0..2 {
+        set_layout(LayoutId(0));
+        running.type_text("ghbdtn ");
+        settled("converted before the cancel", &|| editor.first(), "привет ");
+        running.tap(PhysKey::Pause);
+        settled("cancelled", &|| editor.first(), "ghbdtn ");
+        running.type_text(" ");
+        editor.clear_first();
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let suggested = loop {
+        match running
+            .engine
+            .events()
+            .recv_timeout(Duration::from_millis(100))
+        {
+            Ok(Event::SuggestRule(rule)) => break rule,
+            Ok(_) => {}
+            Err(_) => assert!(Instant::now() < deadline, "no rule was suggested"),
+        }
+    };
+    assert_eq!(suggested.pattern, "ghbdtn");
+    assert_eq!(suggested.action, RuleAction::Stay);
 }
 
 #[test]

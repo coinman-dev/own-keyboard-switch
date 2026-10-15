@@ -10,6 +10,9 @@ use std::collections::HashSet;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+/// «Запятая по двойному нажатию клавиши Пробел»: the longest pause between the spaces.
+pub const DOUBLE_SPACE: Duration = Duration::from_millis(400);
+
 struct State {
     epoch: u64,
     replacer: AutoReplacer,
@@ -21,6 +24,10 @@ struct State {
     /// engine, so a password is corrected before a form is submitted.
     passwords: bool,
     no_switch_on_tab_enter: bool,
+    /// «Запятая по двойному пробелу»: a second Space waits for the engine, so
+    /// the keys typed after it cannot land before the comma.
+    double_space_comma: bool,
+    last_space: Option<Instant>,
     capturing: bool,
     mods: ModState,
     keys: Vec<KeyPress>,
@@ -162,6 +169,8 @@ impl AutoReplaceGate {
             autoswitch: config.general.autoswitch,
             passwords: config.general.passwords_to_english,
             no_switch_on_tab_enter: config.troubleshooting.no_switch_on_tab_enter,
+            double_space_comma: config.advanced.double_space_comma,
+            last_space: None,
             capturing: false,
             mods: ModState::default(),
             keys: Vec::new(),
@@ -199,6 +208,7 @@ impl AutoReplaceGate {
             s.autoswitch = config.general.autoswitch;
             s.passwords = config.general.passwords_to_english;
             s.no_switch_on_tab_enter = config.troubleshooting.no_switch_on_tab_enter;
+            s.double_space_comma = config.advanced.double_space_comma;
             s.max_len = config
                 .autoreplace
                 .items
@@ -245,6 +255,16 @@ impl AutoReplaceGate {
             _ => return false,
         };
         let reserved = key.is_some_and(|key| s.reserved.contains(&key));
+        let mut double_space = false;
+        if pressed && !key.is_some_and(PhysKey::is_modifier) {
+            let previous = s.last_space.take();
+            if key == Some(PhysKey::Space) && !repeat {
+                double_space = s.double_space_comma
+                    && previous
+                        .is_some_and(|at| time.saturating_duration_since(at) <= DOUBLE_SPACE);
+                s.last_space = Some(time);
+            }
+        }
         let mut intercept = s.active || reserved;
         if !intercept {
             s.prepare(target, lang, time);
@@ -284,6 +304,7 @@ impl AutoReplaceGate {
                     || (s.mods.is_empty()
                         && (boundary
                             || password_boundary
+                            || double_space
                             || (s.matches() && accepts(s.trigger, key))));
             }
         }
