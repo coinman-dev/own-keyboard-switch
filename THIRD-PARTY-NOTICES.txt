@@ -7065,13 +7065,13 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ------------------------------------------------------------------------
 PolyForm Noncommercial License 1.0.0
-- okbs-core 0.3.0-beta
-- okbs-engine 0.3.0-beta
-- okbs-platform 0.3.0-beta
-- okbs-platform-linux 0.3.0-beta
-- okbs-platform-windows 0.3.0-beta
-- okbs-ui 0.3.0-beta
-- okbswitch 0.3.0-beta
+- okbs-core 0.4.0-beta
+- okbs-engine 0.4.0-beta
+- okbs-platform 0.4.0-beta
+- okbs-platform-linux 0.4.0-beta
+- okbs-platform-windows 0.4.0-beta
+- okbs-ui 0.4.0-beta
+- okbswitch 0.4.0-beta
 
 # PolyForm Noncommercial License 1.0.0
 
