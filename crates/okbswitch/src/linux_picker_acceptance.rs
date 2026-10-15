@@ -317,6 +317,9 @@ fn phase(workspace: &Path, directory: &Path, stage: &str) {
     );
     config.hotkeys.add_selection_to_autoreplace =
         okbs_core::config::HotkeyBinding::some("Ctrl+F7".parse().expect("add selection shortcut"));
+    config.hotkeys.spellcheck_clipboard =
+        okbs_core::config::HotkeyBinding::some("Ctrl+F6".parse().expect("spell check shortcut"));
+    config.spellcheck.prefer_selection = false;
     let (mut source, injector) = LinuxSource::new(&config, desktop.clone())
         .expect("private picker fixture operation failed");
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -574,6 +577,31 @@ fn phase(workspace: &Path, directory: &Path, stage: &str) {
     } else {
         assert!(controller.history_entries.entries().is_empty());
         assert!(!history_file.exists());
+        // Clipboard history is not persisted in this last stage, so the
+        // synthetic text cannot leak into the restored history.
+        let view = |controller: &Controller| {
+            controller
+                .window
+                .as_ref()
+                .and_then(|window| window.view_state())
+        };
+        // «Проверить орфографию в буфере обмена» shows its result window.
+        clipboard
+            .set_text("Превет мир")
+            .expect("synthetic clipboard text");
+        physical_tap(
+            &mut hardware,
+            &[okbs_core::PhysKey::ControlLeft],
+            okbs_core::PhysKey::F6,
+        );
+        let spell_check = tr(Text::SpellcheckTitle, okbs_core::Lang::En);
+        wait(
+            &mut controller,
+            &desktop,
+            "clipboard spell check result shown",
+            |c| view(c).is_some_and(|state| state.text_result.as_deref() == Some(spell_check)),
+        );
+        eprintln!("clipboard spell check hotkey accepted");
         controller.shutdown();
         drop(capture);
         drop(clipboard_watch);

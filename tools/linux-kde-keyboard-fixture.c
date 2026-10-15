@@ -59,6 +59,16 @@ int main(int argc, char **argv)
     char line[128];
     while (fgets(line, sizeof(line), stdin)) {
         int x,y,steps,x2,y2;
+        if (sscanf(line, "r %d %d", &x, &y)==2) {
+            /* Right click (BTN_RIGHT). */
+            alarm(5);
+            org_kde_kwin_fake_input_pointer_motion_absolute(keyboard,wl_fixed_from_int(x),wl_fixed_from_int(y));
+            org_kde_kwin_fake_input_button(keyboard,273,1);
+            org_kde_kwin_fake_input_button(keyboard,273,0);
+            if (wl_display_roundtrip(display)<0) return 1;
+            alarm(0);
+            printf("r %d %d\n",x,y); fflush(stdout); continue;
+        }
         if (sscanf(line, "d %d %d", &x, &y)==2) {
             /* Double click: two clicks well inside the double-click time. */
             alarm(5);

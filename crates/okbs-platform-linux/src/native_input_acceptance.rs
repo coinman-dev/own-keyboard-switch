@@ -120,6 +120,8 @@ impl Session {
 /// A real pointer action in the private compositor.
 #[derive(Debug, Clone, Copy)]
 enum Pointer {
+    Click([i32; 2]),
+    RightClick([i32; 2]),
     DoubleClick([i32; 2]),
     Drag([i32; 2], [i32; 2]),
 }
@@ -128,6 +130,8 @@ impl Session {
         if let Some((_, input, output)) = &mut self.keyboard {
             use std::io::{BufRead, Write};
             let command = match action {
+                Pointer::Click([x, y]) => format!("p {x} {y}"),
+                Pointer::RightClick([x, y]) => format!("r {x} {y}"),
                 Pointer::DoubleClick([x, y]) => format!("d {x} {y}"),
                 Pointer::Drag([x, y], [x2, y2]) => format!("g {x} {y} {x2} {y2}"),
             };
@@ -152,10 +156,24 @@ impl Session {
                 .unwrap();
         };
         let start = match action {
-            Pointer::DoubleClick(point) | Pointer::Drag(point, _) => point,
+            Pointer::Click(point)
+            | Pointer::RightClick(point)
+            | Pointer::DoubleClick(point)
+            | Pointer::Drag(point, _) => point,
         };
         self.gnome_move_to(&proxy, start);
         match action {
+            Pointer::Click(_) => {
+                button(true);
+                button(false);
+            }
+            Pointer::RightClick(_) => {
+                for pressed in [true, false] {
+                    proxy
+                        .call::<_, _, ()>("NotifyPointerButton", &(273i32, pressed))
+                        .unwrap();
+                }
+            }
             Pointer::DoubleClick(_) => {
                 for _ in 0..2 {
                     button(true);
@@ -180,6 +198,19 @@ impl Session {
                 }
                 button(false);
             }
+        }
+    }
+    /// A key through the KDE fake-input helper (a GTK popup has the keyboard).
+    fn kde_key(&mut self, key: PhysKey) {
+        use std::io::{BufRead, Write};
+        let (_, input, output) = self.keyboard.as_mut().expect("KDE fake-input helper");
+        for state in [1, 0] {
+            let command = format!("{} {state}", key.evdev_code());
+            writeln!(input, "{command}").unwrap();
+            input.flush().unwrap();
+            let mut reply = String::new();
+            output.read_line(&mut reply).unwrap();
+            assert_eq!(reply.trim(), command, "KDE key helper");
         }
     }
     /// A new virtual pointer does not share the previous device's position:
@@ -702,7 +733,12 @@ fn real_wayland_writer_and_terminal_correct_paste_and_submit() {
             }
             assert!(
                 Instant::now() < deadline,
-                "Writer {document}: expected {text:?}, state {value:?}; scratch {}",
+                "Writer {document}: expected {text:?}, state {value:?}, focused {:?}; scratch {}",
+                session.desktop.refresh().map(|native| (
+                    native.title,
+                    native.app_id,
+                    native.control
+                )),
                 temp.display()
             );
             std::thread::sleep(Duration::from_millis(30));
@@ -1442,6 +1478,47 @@ fn real_floating_indicator_pointer_actions() {
         (after[0] - locked[0]).abs() <= 1 && (after[1] - locked[1]).abs() <= 1,
         "locked indicator moved from {locked:?} to {after:?}"
     );
+    // The context menu: «Закрепить индикатор» toggles the lock, «Скрыть» hides.
+    let choose = |session: &mut Session, indicator: &mut LinuxIndicator, action: &str| {
+        let point = center(geometry(indicator));
+        session.pointer(Pointer::RightClick(point));
+        if panels.geometry("indicator").unwrap().is_some() && session.remote.is_some() {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let item = loop {
+                let _ = events(indicator, Duration::from_millis(50));
+                if let Some(item) = panels.menu_item_center("indicator", action).unwrap() {
+                    break item;
+                }
+                assert!(Instant::now() < deadline, "menu item {action} not shown");
+            };
+            session.pointer(Pointer::Click(item));
+        } else {
+            // GTK menu order: settings, lock, hide.
+            let _ = events(indicator, Duration::from_millis(500));
+            let steps = match action {
+                "settings" => 1,
+                "lock" => 2,
+                _ => 3,
+            };
+            for _ in 0..steps {
+                session.kde_key(PhysKey::ArrowDown);
+            }
+            session.kde_key(PhysKey::Enter);
+        }
+        events(indicator, Duration::from_secs(2))
+    };
+    let seen = choose(&mut session, &mut indicator, "lock");
+    assert!(
+        seen.contains(&IndicatorEvent::Locked(false)),
+        "menu lock toggle: {seen:?}"
+    );
+    let seen = choose(&mut session, &mut indicator, "hide");
+    assert!(
+        seen.contains(&IndicatorEvent::Hidden),
+        "menu hide: {seen:?}"
+    );
+    assert!(!panels.visible("indicator"), "hidden from its menu");
+    state.locked = false;
     // Autohide shows it only for a while after a layout change.
     state.autohide = true;
     indicator.configure(&state, labels).unwrap();

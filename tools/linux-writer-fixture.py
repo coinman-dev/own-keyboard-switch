@@ -10,6 +10,7 @@ import time
 import uno
 from com.sun.star.beans import PropertyValue
 from com.sun.star.connection import NoConnectException
+from com.sun.star.uno import RuntimeException as UnoRuntimeException
 
 state, command = map(Path, sys.argv[1:3])
 scratch = state.parent
@@ -99,14 +100,20 @@ try:
             document.CurrentController.Frame.activate()
             document.CurrentController.Frame.ContainerWindow.setFocus()
             acknowledgement = action["token"]
-        positions = {}
-        for name, document in documents.items():
-            prefix = document.Text.createTextCursorByRange(document.CurrentController.ViewCursor.Start)
-            prefix.gotoStart(True)
-            positions[name] = len(prefix.String)
-        value = {"pid": native_pid, "active": active, "acknowledgement": acknowledgement, "cursor": positions,
-                 "titles": {name: document.CurrentController.Frame.Title for name, document in documents.items()},
-                 "values": {name: document.Text.String for name, document in documents.items()}}
+        # Writer may be changing the text (a paste in progress) while UNO
+        # reads it; skip such a snapshot instead of ending the fixture.
+        try:
+            positions = {}
+            for name, document in documents.items():
+                prefix = document.Text.createTextCursorByRange(document.CurrentController.ViewCursor.Start)
+                prefix.gotoStart(True)
+                positions[name] = len(prefix.String)
+            value = {"pid": native_pid, "active": active, "acknowledgement": acknowledgement, "cursor": positions,
+                     "titles": {name: document.CurrentController.Frame.Title for name, document in documents.items()},
+                     "values": {name: document.Text.String for name, document in documents.items()}}
+        except UnoRuntimeException:
+            time.sleep(0.05)
+            continue
         temporary = state.with_suffix(".new")
         temporary.write_text(json.dumps(value))
         temporary.replace(state)

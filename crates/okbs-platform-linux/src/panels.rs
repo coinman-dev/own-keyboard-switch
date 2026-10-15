@@ -482,6 +482,27 @@ impl Panels {
         }
         Ok(None)
     }
+    /// Centre of an item of our own panel menu in GNOME, where the menu is part
+    /// of the Shell panel. Elsewhere it is a GTK popup driven by its keyboard.
+    pub fn menu_item_center(&self, id: &str, action: &str) -> Result<Option<[i32; 2]>> {
+        if !self.visible(id) || !self.desktop.is_gnome() {
+            return Ok(None);
+        }
+        let geometry = self.desktop.gnome_panel_geometry(id)?;
+        let Some(items) = geometry["menu"].as_array() else {
+            return Ok(None);
+        };
+        Ok(items
+            .iter()
+            .find(|item| item["action"] == action)
+            .and_then(|item| {
+                let value = |key: &str| item[key].as_f64();
+                let [x, y, width, height] =
+                    [value("x")?, value("y")?, value("width")?, value("height")?];
+                (width > 0.0 && height > 0.0)
+                    .then_some([(x + width / 2.0) as i32, (y + height / 2.0) as i32])
+            }))
+    }
     /// `[x, y, width, height]` of our own mapped panel, for diagnostics and
     /// acceptance; positions are in the same coordinates as [`Panel::position`].
     pub fn geometry(&self, id: &str) -> Result<Option<[i32; 4]>> {

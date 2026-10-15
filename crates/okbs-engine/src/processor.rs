@@ -684,6 +684,11 @@ impl Processor {
             self.spelling_undo = None;
         }
         self.remember_target();
+        tracing::debug!(
+            window_changed = matches!(event, FocusEvent::WindowChanged(_)),
+            letters = self.word.len(),
+            "focus event resets the current word"
+        );
         self.reset_all();
         self.block_next_word = false;
         self.layout_chosen_for_next_word = false;
@@ -918,6 +923,11 @@ impl Processor {
         self.operation_target = target;
         self.operation_epoch = Some(epoch);
         if !self.target_matches(target) || !self.epoch_matches(Some(epoch)) {
+            tracing::debug!(
+                target_matches = self.target_matches(target),
+                epoch,
+                "captured input for another control or epoch dropped"
+            );
             if let Some(gate) = &gate {
                 gate.reset_word();
             }
@@ -1785,6 +1795,12 @@ impl Processor {
         let blocked = std::mem::take(&mut self.word_blocked);
         let layout_chosen = std::mem::take(&mut self.word_layout_chosen);
         let Some(typed_in) = typed_in else {
+            if !keys.is_empty() {
+                tracing::debug!(
+                    letters = keys.len(),
+                    "word skipped: its layout language was unknown when it started"
+                );
+            }
             self.last = None;
             if improve {
                 self.previous_word = None;
@@ -2778,6 +2794,8 @@ impl Processor {
                 Ok(Some(text)) if text != CLIPBOARD_MARKER => {
                     tracing::debug!(
                         elapsed_ms = started.elapsed().as_millis() as u64,
+                        chars = text.chars().count(),
+                        same_as_before = saved.as_deref() == Some(text.as_str()),
                         "selection copied"
                     );
                     return Ok(Some((text, saved)));

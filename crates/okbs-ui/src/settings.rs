@@ -407,6 +407,9 @@ pub struct ViewState {
     pub section: Section,
     /// The open dialog, as its debug description.
     pub dialog: Option<String>,
+    /// Title of a text result shown in the same window (clipboard result,
+    /// spell check), if any.
+    pub text_result: Option<String>,
 }
 
 /// State of the settings window.
@@ -668,6 +671,7 @@ impl SettingsView {
         ViewState {
             section: self.section,
             dialog: self.dialog.as_ref().map(|dialog| format!("{dialog:?}")),
+            text_result: None,
         }
     }
 

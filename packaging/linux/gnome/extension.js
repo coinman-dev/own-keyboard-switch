@@ -219,7 +219,12 @@ export default class OkbSwitchExtension extends Extension {
                 y + height / 2 >= viewY && y + height / 2 < viewY + viewHeight;
             return {x, y, width, height, visible};
         });
-        return JSON.stringify({panel:panel ? {x:panel.x,y:panel.y,width:panel.width,height:panel.height} : null, rows,
+        const menu = (panel?._menuButtons ?? []).map(button => {
+            const [x, y] = button.get_transformed_position();
+            const [width, height] = button.get_transformed_size();
+            return {x, y, width, height, action:button._action};
+        });
+        return JSON.stringify({panel:panel ? {x:panel.x,y:panel.y,width:panel.width,height:panel.height} : null, rows, menu,
             opacity:panel ? panel.opacity / 255 : null,
             monitors:Main.layoutManager.monitors.map((monitor, index) => ({x:monitor.x,y:monitor.y,
                 width:monitor.width,height:monitor.height,scale:global.display.get_monitor_scale(index)}))});
@@ -275,12 +280,27 @@ export default class OkbSwitchExtension extends Extension {
         }
         if (model.id === 'indicator') {
             panel.connect('button-press-event', (_actor, event) => {
+                // A press on a menu item is that button's own click; starting
+                // a drag here would capture its release.
+                const source = global.stage.get_event_actor?.(event) ?? event.get_source?.();
+                if (panel._menuButtons?.some(button => button === source || button.contains(source)))
+                    return Clutter.EVENT_PROPAGATE;
                 if (this._clickCount(panel, event) >= 2) this._events.push({id:model.id, action:'settings'});
                 if (event.get_button() === 3) {
+                    // A second right click closes the menu instead of adding
+                    // another copy of its items.
+                    if (panel._menuButtons) {
+                        for (const button of panel._menuButtons) button.destroy();
+                        panel._menuButtons = null;
+                        return Clutter.EVENT_STOP;
+                    }
+                    panel._menuButtons = [];
                     for (const [label, action] of [[model.settings,'settings'], [model.lock,'lock'], [model.hide,'hide']]) {
                         const button = new St.Button({label, style_class:'popup-menu-item'});
+                        button._action = action;
                         button.connect('clicked', () => this._events.push({id:model.id, action}));
                         panel.add_child(button);
+                        panel._menuButtons.push(button);
                     }
                     return Clutter.EVENT_STOP;
                 }

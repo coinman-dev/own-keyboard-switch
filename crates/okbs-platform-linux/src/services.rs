@@ -495,6 +495,56 @@ mod tests {
         assert_eq!(argv, [std::ffi::OsString::from(path)]);
     }
     #[test]
+    fn systemd_login_autostart_accepts_the_entry_and_its_off_state() {
+        // Plasma 6 and GNOME start XDG autostart entries through this generator.
+        let generator =
+            Path::new("/usr/lib/systemd/user-generators/systemd-xdg-autostart-generator");
+        if !generator.exists() {
+            eprintln!("systemd XDG autostart generator not installed; skipped");
+            return;
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let config = directory.path().join("config");
+        let autostart = LinuxAutostart::at(config.join("autostart/okbswitch.desktop"));
+        let program = directory.path().join("Own Keyboard Switch $1/okbswitch");
+        let units = |name: &str| {
+            let output = directory.path().join(name);
+            for unit in ["normal", "early", "late"] {
+                std::fs::create_dir_all(output.join(unit)).unwrap();
+            }
+            let status = Command::new(generator)
+                .args(["normal", "early", "late"].map(|unit| output.join(unit)))
+                .env("XDG_CONFIG_HOME", &config)
+                .env("XDG_CONFIG_DIRS", directory.path().join("none"))
+                .status()
+                .unwrap();
+            assert!(status.success());
+            // The generator writes login units into its "late" directory.
+            std::fs::read_to_string(output.join("late/app-okbswitch@autostart.service")).ok()
+        };
+        // It skips entries whose program does not exist.
+        std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+        std::fs::write(&program, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(
+            &program,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+        autostart.set_enabled(true, &program, false).unwrap();
+        let unit = units("on").expect("no login unit for the enabled entry");
+        let exec = unit
+            .lines()
+            .find(|line| line.starts_with("ExecStart="))
+            .expect("ExecStart");
+        assert!(exec.contains("okbswitch"), "{exec}");
+        // systemd escapes `$` in ExecStart; the path itself was restored.
+        assert!(exec.contains(r"Own Keyboard Switch \$1"), "{exec}");
+        let hidden = std::fs::read_to_string(config.join("autostart/okbswitch.desktop")).unwrap()
+            + "Hidden=true\n";
+        std::fs::write(config.join("autostart/okbswitch.desktop"), hidden).unwrap();
+        assert_eq!(units("hidden"), None, "a Hidden entry must not start");
+    }
+    #[test]
     fn detached_programs_do_not_stay_zombies() {
         let pid = spawn_reaped(&mut Command::new("true")).unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(3);

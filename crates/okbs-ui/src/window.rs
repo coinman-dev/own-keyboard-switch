@@ -497,7 +497,14 @@ impl App {
             WindowAction::Stay
         };
         if let Ok(mut state) = self.shared.view_state.lock() {
-            *state = self.settings_visible.then(|| self.view.state());
+            *state = (self.settings_visible || self.text_result.is_some()).then(|| {
+                let mut view = self.view.state();
+                view.text_result = self
+                    .text_result
+                    .as_ref()
+                    .map(|result| result.title(self.lang).to_string());
+                view
+            });
         }
         if let Some(result) = &mut self.text_result {
             if self.settings_visible {
