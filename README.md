@@ -5,11 +5,12 @@
 </p>
 
 <h1 align="center">Own Keyboard Switch</h1>
-<p align="center">Automatic Russian ↔ English keyboard layout switching for Windows.</p>
+<p align="center">Automatic Russian ↔ English keyboard layout switching for Windows and Linux.</p>
 
 [![Release](https://img.shields.io/badge/release-0.4.0--beta-orange)](https://github.com/coinman-dev/own-keyboard-switch/releases/tag/v0.4.0-beta)
 [![Build](https://github.com/coinman-dev/own-keyboard-switch/actions/workflows/release.yml/badge.svg)](https://github.com/coinman-dev/own-keyboard-switch/actions/workflows/release.yml)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-blue)](#download)
+[![Linux](https://img.shields.io/badge/Linux-X11%20%7C%20GNOME%20%7C%20KDE-blue)](#linux)
 [![Rust](https://img.shields.io/badge/Rust-1.95%2B-orange)](#building)
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](LICENSE)
 
@@ -40,8 +41,8 @@ dictionary in Settings. No advertising, no update checks.
 
 ## Quick start
 
-1. Run the portable file or complete the installer.
-2. Double-click the tray icon to open Settings.
+1. Run the portable file or complete the installer. On Linux see [Linux](#linux).
+2. Double-click the tray icon to open Settings (a single click in KDE Plasma).
 3. Keep automatic switching enabled and type a word followed by Space or Enter.
 4. Press **Break** to undo an automatic correction or convert the current word.
 
@@ -76,9 +77,71 @@ Clipboard operations preserve **plain text**; preservation of images and rich te
 is not implemented. Saving clipboard history between runs is off by default; when
 enabled, copied sensitive text can also be stored in that history.
 
+## Linux
+
+The Linux version is a first prerelease. It works on x86_64 in these sessions:
+
+| Session | How the layout is switched | Notes |
+|---|---|---|
+| X11 (any desktop) | XKB | Nothing to install. |
+| GNOME 45–50 on Wayland | Bundled GNOME Shell extension | Installed by the program; sign out and back in once after the first start. |
+| KDE Plasma 6 on Wayland | KDE layout service and a bundled KWin script | Installed and loaded by the program in the running session. |
+
+Other Wayland compositors (Sway, Hyprland and others) are not supported yet.
+Add the Russian and English layouts in the system keyboard settings first.
+
+**Install.** On Ubuntu 24.04 or newer install the package:
+
+```sh
+sudo apt install ./okbswitch_0.4.0-beta_amd64.deb
+```
+
+It adds the program to the application menu and installs a udev rule
+(`/usr/lib/udev/rules.d/70-okbswitch.rules`) that gives the user of the active
+local session access to keyboards and to `/dev/uinput`. Membership in the
+`input` group or root is not needed. The AppImage needs no installation:
+
+```sh
+chmod +x okbswitch-0.4.0-beta-x86_64.AppImage
+./okbswitch-0.4.0-beta-x86_64.AppImage
+```
+
+**First start.** A setup window checks the keyboard access, the desktop
+connection and the layouts. Without access to the keyboards it offers
+**Set up keyboard access**: the system asks for the administrator password
+(pkexec) for a small setup helper, which installs the same udev rule and loads
+the `evdev` and `uinput` modules. The program itself always runs as a regular
+user. **Set up desktop integration** installs the GNOME extension or the KWin
+script for your user; on GNOME sign out and back in, then press **Check again**.
+Keys are not captured until setup is complete.
+
+**How it works.** The program reads the keyboards through evdev and passes
+everything you type on through a virtual uinput keyboard, so it works in all
+applications, including terminals and Wayland windows. Note that, as with any
+layout switcher on Wayland, the access granted by the udev rule lets programs
+of your user read keyboard events. In the **Linux** tab of Settings you can
+choose the switching method and limit the program to particular keyboards.
+
+**Data.** The installed program keeps its files in the XDG folders of your user;
+the AppImage and `okbswitch --portable` keep them next to the program, like the
+Windows portable edition:
+
+| File | Installed (`.deb`) | AppImage, `--portable` |
+|---|---|---|
+| Settings | `~/.config/okbswitch/config.toml` | `data/config.toml` |
+| Clipboard history, if saved | `~/.local/state/okbswitch/` | `data/` |
+| Logs | `~/.local/state/okbswitch/Logs/` | `Logs/` |
+
+Autostart is a desktop file in `~/.config/autostart/`. Remove the package with
+`sudo apt remove okbswitch`; your settings stay in the folders above.
+
+**Linux commands.** `okbswitch --diagnose` reports the session, the layouts and
+the device access; `okbswitch --setup-linux-input` and
+`okbswitch --install-linux-integration` repeat the two setup steps.
+
 ## Settings and data
 
-All runtime files are stored **inside the program directory**:
+On Windows all runtime files are stored **inside the program directory**:
 
 | File | Relative path |
 |---|---|
