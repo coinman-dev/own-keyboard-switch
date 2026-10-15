@@ -130,4 +130,6 @@ pub enum FocusEvent {
     ControlChanged,
     /// A menu bar the user opened with Alt was closed again.
     MenuClosed,
+    /// Closing a particular Alt invocation, identified by the input timestamp.
+    MenuClosedFor(Instant),
 }

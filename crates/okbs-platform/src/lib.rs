@@ -56,6 +56,9 @@ pub trait AutoreplaceUi {
     fn hint(&mut self, index: Option<usize>) -> Result<()>;
     fn show_list(&mut self, toggle: bool, target: Option<InputTarget>) -> Result<()>;
     fn poll(&mut self) -> Option<AutoreplaceInsertion>;
+    fn poll_cancelled(&mut self) -> Option<InputTarget> {
+        None
+    }
 }
 
 /// Result type of platform operations.
@@ -149,6 +152,11 @@ pub trait FocusInfo: Send {
     fn input_target(&self) -> Result<Option<InputTarget>> {
         Ok(None)
     }
+    /// Capture an editor before opening an explicit picker. Backends may wait
+    /// briefly for fresh focus metadata; failure must not use a remembered field.
+    fn capture_input_target(&self) -> Result<Option<InputTarget>> {
+        self.input_target()
+    }
     /// Restore a previously selected application for an explicit insertion.
     fn activate_target(&self, _target: InputTarget) -> Result<()> {
         Err(PlatformError::Unsupported("restore insertion target"))
@@ -169,6 +177,13 @@ pub trait FocusInfo: Send {
     /// клавиши»). `None` when the window has no menu the platform can read.
     fn menu_access_language(&self) -> Result<Option<okbs_core::Lang>> {
         Ok(None)
+    }
+    /// Associate an asynchronous menu closure with this Alt input event.
+    fn menu_access_language_for(
+        &self,
+        _time: std::time::Instant,
+    ) -> Result<Option<okbs_core::Lang>> {
+        self.menu_access_language()
     }
 
     /// Reports focus changes.

@@ -1,7 +1,7 @@
 # Own Keyboard Switch (okbswitch): access to input devices for the logged-in user.
 #
-# The program reads keyboard events passively (without grabbing the device) and
-# retypes words through a uinput virtual keyboard. The `uaccess` tag lets
+# The program forwards grabbed keyboards through a uinput virtual keyboard,
+# retaining word boundaries until corrections finish. The `uaccess` tag lets
 # systemd-logind grant access only to the user of the active local session,
 # so neither root nor membership in the `input` group is required.
 #

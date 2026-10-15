@@ -23,10 +23,46 @@ pub struct AppPaths {
 
 impl AppPaths {
     /// Pure path resolution, so --paths does not create or migrate any files.
+    #[cfg(not(target_os = "linux"))]
     pub fn resolve(config_override: Option<PathBuf>) -> Result<Self> {
         let exe = std::env::current_exe().context("cannot locate the program")?;
         let directory = exe.parent().context("the program has no directory")?;
         Self::in_directory(directory, config_override)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn resolve_linux(config_override: Option<PathBuf>, portable: bool) -> Result<Self> {
+        if let Some(image) = std::env::var_os("APPIMAGE") {
+            let image = PathBuf::from(image);
+            let directory = image.parent().context("AppImage has no directory")?;
+            return Self::in_directory(directory, config_override);
+        }
+        if portable {
+            let exe = std::env::current_exe().context("cannot locate the program")?;
+            return Self::in_directory(
+                exe.parent().context("program has no directory")?,
+                config_override,
+            );
+        }
+        let base = BaseDirs::new().context("cannot locate Linux user directories")?;
+        let state_dir = base
+            .state_dir()
+            .unwrap_or_else(|| base.data_local_dir())
+            .join(APP_ID);
+        let config_file = config_override
+            .clone()
+            .unwrap_or_else(|| base.config_dir().join(APP_ID).join(CONFIG_FILE));
+        let runtime = base
+            .runtime_dir()
+            .map(|path| path.join(APP_ID))
+            .unwrap_or_else(|| state_dir.clone());
+        Ok(Self {
+            config_file,
+            log_dir: state_dir.join("Logs"),
+            lock_file: runtime.join(format!("{APP_ID}.lock")),
+            state_dir,
+            custom_config: config_override.is_some(),
+        })
     }
 
     fn in_directory(directory: &Path, config_override: Option<PathBuf>) -> Result<Self> {
@@ -71,6 +107,14 @@ impl AppPaths {
                 )
             })?;
         }
+        if let Some(parent) = self.lock_file.parent() {
+            fs::create_dir_all(parent)?;
+            #[cfg(target_os = "linux")]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+            }
+        }
         if let Some(parent) = self.config_file.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -80,6 +124,11 @@ impl AppPaths {
     /// Called only after the new installation's lock is held. A custom config
     /// or diagnostic request must never import/remove a user's profile files.
     pub fn adopt_user_profile_data(&self) -> Result<Vec<String>> {
+        // Installed Linux already uses XDG. Portable Linux must not relocate
+        // the installed user's profile into an AppImage folder on first start.
+        if cfg!(target_os = "linux") {
+            return Ok(Vec::new());
+        }
         if self.custom_config {
             return Ok(Vec::new());
         }

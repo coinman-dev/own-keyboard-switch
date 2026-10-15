@@ -35,6 +35,10 @@ pub enum Command {
     ApplyConfig(Box<Config>),
     /// Runs a text operation on the clipboard (tray menu «Буфер обмена»).
     ClipboardOp(TextOp),
+    /// Capture the editor before the controller opens clipboard history.
+    ShowClipboardHistory,
+    /// Return from a cancelled picker if its own window still owns focus.
+    RestoreInputTarget(InputTarget),
     /// Read the clipboard for spelling checks off the input thread (tray menu
     /// «Буфер обмена»: the selection belongs to the window left behind).
     SpellcheckClipboard,
@@ -283,6 +287,8 @@ fn handle_command(processor: &mut Processor, command: Command) -> Vec<Event> {
             }
         }
         Command::ApplyConfig(config) => {
+            let backend_changed =
+                config.linux.layout_backend != processor.config().linux.layout_backend;
             let mut events = Vec::new();
             if config.general.autoswitch != processor.config().general.autoswitch {
                 events.push(Event::AutoswitchChanged(config.general.autoswitch));
@@ -294,6 +300,9 @@ fn handle_command(processor: &mut Processor, command: Command) -> Vec<Event> {
             events.extend(processor.autoreplace_feedback());
             tracing::info!("configuration applied");
             events.push(Event::ConfigApplied);
+            if backend_changed {
+                events.push(Event::LayoutChanged(processor.current_layout_info()));
+            }
             events
         }
         Command::SelectLayout(id) => processor.select_layout(id),
@@ -302,6 +311,8 @@ fn handle_command(processor: &mut Processor, command: Command) -> Vec<Event> {
             Vec::new()
         }
         Command::ClipboardOp(op) => processor.clipboard_op(op),
+        Command::ShowClipboardHistory => processor.clipboard_history(),
+        Command::RestoreInputTarget(target) => processor.restore_input_target(target),
         Command::SpellcheckClipboard => processor.spellcheck_clipboard(),
         Command::CorrectClipboard {
             original,

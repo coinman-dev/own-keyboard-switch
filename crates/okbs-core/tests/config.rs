@@ -662,7 +662,7 @@ fn imported_rules_update_matching_patterns_instead_of_repeating_them() {
 fn suggested_exclusions_are_added_once() {
     let mut exclusions = config::Exclusions::default();
     exclusions.executables.push(config::ExecutableExclusion {
-        path: " CMD.EXE".into(),
+        path: format!(" {}", config::SUGGESTED_TERMINALS[0].to_ascii_uppercase()),
     });
     let added = config::add_executables(&mut exclusions, config::SUGGESTED_TERMINALS);
     assert_eq!(added, config::SUGGESTED_TERMINALS.len() - 1);
@@ -674,7 +674,8 @@ fn suggested_exclusions_are_added_once() {
         config::SUGGESTED_TERMINALS
             .iter()
             .chain(config::SUGGESTED_EDITORS)
-            .all(|name| name.ends_with(".exe") && !name.contains(['/', '\\']))
+            .all(|name| name.ends_with(".exe") != cfg!(target_os = "linux")
+                && !name.contains(['/', '\\']))
     );
 }
 

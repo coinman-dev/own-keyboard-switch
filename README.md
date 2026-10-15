@@ -7,7 +7,7 @@
 <h1 align="center">Own Keyboard Switch</h1>
 <p align="center">Automatic Russian ↔ English keyboard layout switching for Windows.</p>
 
-[![Release](https://img.shields.io/badge/release-0.3.0--beta-orange)](https://github.com/coinman-dev/own-keyboard-switch/releases/tag/v0.3.0-beta)
+[![Release](https://img.shields.io/badge/release-0.4.0--beta-orange)](https://github.com/coinman-dev/own-keyboard-switch/releases/tag/v0.4.0-beta)
 [![Build](https://github.com/coinman-dev/own-keyboard-switch/actions/workflows/release.yml/badge.svg)](https://github.com/coinman-dev/own-keyboard-switch/actions/workflows/release.yml)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-blue)](#download)
 [![Rust](https://img.shields.io/badge/Rust-1.95%2B-orange)](#building)
@@ -17,17 +17,22 @@
 `ghbdtn` → `привет`, `руддщ` → `hello`. It runs in the tray, supports custom rules
 and text expansions, and includes clipboard tools and a floating layout indicator.
 
-> **0.3.0-beta is a Windows prerelease.** Linux support is still in development;
-> no Linux binaries are published yet.
+> **0.4.0-beta is a prerelease for Windows and, for the first time, Linux**
+> (X11, GNOME and KDE Plasma 6 on Wayland). The Linux version is new: it was
+> tested in isolated sessions, not yet on many real computers.
 
 ## Download
 
 | Edition | Download | Usage |
 |---|---|---|
-| Portable | [okbswitch-portable.exe](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.3.0-beta/okbswitch-portable.exe) | Put the file in a writable folder and run it. No installation required. |
-| Installer | [okbswitch-install.exe](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.3.0-beta/okbswitch-install.exe) | Choose a current-user or all-users installation, shortcuts and startup options. |
+| Portable | [okbswitch-portable.exe](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.4.0-beta/okbswitch-portable.exe) | Put the file in a writable folder and run it. No installation required. |
+| Installer | [okbswitch-install.exe](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.4.0-beta/okbswitch-install.exe) | Choose a current-user or all-users installation, shortcuts and startup options. |
+| Linux package | [okbswitch_0.4.0-beta_amd64.deb](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.4.0-beta/okbswitch_0.4.0-beta_amd64.deb) | Ubuntu 24.04 or newer: `sudo apt install ./okbswitch_0.4.0-beta_amd64.deb`. |
+| Linux AppImage | [okbswitch-0.4.0-beta-x86_64.AppImage](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.4.0-beta/okbswitch-0.4.0-beta-x86_64.AppImage) | Make it executable and run it; settings are kept next to the file. |
 
-Windows 10/11, x64. Dictionaries and language models are built in. Typed text never
+Windows 10/11 x64; Linux x86_64 with X11, GNOME 45–50 or KDE Plasma 6. On Linux
+the first start asks for permission (pkexec) to give your session access to the
+keyboards. Dictionaries and language models are built in. Typed text never
 leaves the computer; the network is used only when you download an optional
 dictionary in Settings. No advertising, no update checks.
 [All releases](https://github.com/coinman-dev/own-keyboard-switch/releases) ·
@@ -48,8 +53,8 @@ You can change shortcuts and excluded applications in Settings.
 - RU/EN detection using built-in dictionaries, language models and additional rules.
 - Optional **Improve switching**: recognizes more lowercase two/three-letter English
   words after a Russian word or letter. Russian words and names remain protected.
-- Correction before Enter reaches PowerShell or a Windows terminal. WSL terminals
-  use the Windows application; the native Linux input backend is unfinished.
+- Correction before Enter reaches PowerShell, a Windows terminal or a Linux
+  terminal.
 - Single-key layout switching, case correction and manual conversion of selections.
 - **Break** converts the text since the last space, symbols included; without a
   remembered word it converts the word left of the caret.
@@ -126,8 +131,9 @@ cargo build --release --locked -p okbswitch --target x86_64-pc-windows-msvc
 
 See [tools/build-release.ps1](tools/build-release.ps1) for packaging. Linux/WSL
 developers can use `tools/cross-windows.sh` with llvm-mingw and
-`tools/build-installer.sh` with NSIS. This produces Windows executables;
-it does not imply a usable native Linux version.
+`tools/build-installer.sh` with NSIS for the Windows files. The Linux files are
+built in a clean Ubuntu 24.04 root by `tools/build-linux-baseline.sh` and packaged
+by `tools/package-linux.py` (`.deb` and AppImage).
 
 ## Automated releases
 
@@ -136,7 +142,8 @@ The tag must match the version in `Cargo.toml`. GitHub tests the project, builds
 Windows x64 binaries, packages the installer, computes SHA-256 checksums, and
 publishes the release only after the artifacts are ready. Prerelease versions
 are marked as prereleases automatically. The workflow can also be run manually
-for an existing version tag. Linux artifacts are intentionally not built yet.
+for an existing version tag. Linux files are built locally and attached to the
+release by hand.
 
 ## License
 

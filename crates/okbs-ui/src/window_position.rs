@@ -18,6 +18,26 @@ fn fit(bounds: [i32; 4], work: [i32; 4]) -> [i32; 4] {
 #[cfg(windows)]
 pub(crate) use native::{keep_visible, show_inactive};
 
+#[cfg(target_os = "linux")]
+pub(crate) use okbs_platform_linux::x11_windows::{keep_visible, show_inactive};
+
+// Wayland placement belongs to the compositor bridge. X11 placement is retried
+// after native window creation instead of treating root pixels as egui points.
+pub(crate) fn uses_native_position() -> bool {
+    #[cfg(windows)]
+    {
+        true
+    }
+    #[cfg(target_os = "linux")]
+    {
+        okbs_platform_linux::x11_windows::is_x11_session()
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        false
+    }
+}
+
 #[cfg(windows)]
 mod native {
     #![allow(unsafe_code)]

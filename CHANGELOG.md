@@ -2,6 +2,44 @@
 
 # Changelog
 
+## 0.4.0-beta — 2026-10-15
+
+### Added
+
+- **Linux, the first prerelease.** X11, GNOME on Wayland (GNOME Shell 45–50,
+  through a bundled Shell extension) and KDE Plasma 6 on Wayland (through a
+  bundled KWin script). Published as a `.deb` package for Ubuntu 24.04 and newer
+  and as a portable AppImage. Keyboards are read through evdev and the typed
+  input goes on through a virtual uinput keyboard; on the first start the
+  program asks (pkexec) to install a udev rule that gives the logged-in user
+  access to them, without the `input` group or root. Automatic switching,
+  Break, selection and clipboard tools, autoreplace with its floating list,
+  clipboard history, spell checking, the floating layout indicator, the tray
+  icon, sounds and autostart work as on Windows. Tested in isolated GNOME, KDE
+  and X11 sessions; reports from real computers and other distributions are
+  welcome.
+
+### Changed
+
+- Switch English `b` to Russian `и` after any word except immediately after
+  English `plan`: `Github b` becomes `Github и`, while `plan b` stays English.
+  The exception ends at a line break, another word or a change of input location.
+
+- Recognise 436 English programming terms and software names when switching
+  layouts, including `Github`, `GitHub`, `TypeScript`, `Kubernetes` and `npm`.
+  Exact known names can use mixed case; user rules, password-field protection
+  and ambiguous Russian words retain their priority.
+
+- After a manual layout change (“Do not switch the layout if these were pressed
+  before typing: You changed the layout”) the next word is still not switched,
+  but an accidental Caps Lock (`hELLO` → `Hello`) and two initial capitals
+  (`HEllo` → `Hello`) in it are now fixed.
+
+### Fixed
+
+- “Comma by double Space”: when typing fast, the letters after the second
+  Space no longer get ahead of the comma (`hello  how` gave `hellow, ho`).
+
 ## 0.3.0-beta — 2026-10-01
 
 ### Added

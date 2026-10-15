@@ -18,7 +18,7 @@ pub enum TrayCommand {
     AutoreplaceMenu,
     AutoreplaceList,
     InsertAutoreplace(usize),
-    /// «Настройки...» or a double click on the icon.
+    /// «Настройки...» or a double click on the icon (a single one in Plasma).
     OpenSettings,
     /// «Автопереключение».
     ToggleAutoswitch,
@@ -160,8 +160,11 @@ impl Tray {
         let clipboard_translit =
             MenuItem::new(tr(Text::MenuClipboardTransliterate, ui), true, None);
         let clipboard_spellcheck = MenuItem::new(tr(Text::MenuClipboardSpellcheck, ui), true, None);
-        let clipboard_history =
-            MenuItem::new(tr(Text::MenuClipboardHistory, ui), cfg!(windows), None);
+        let clipboard_history = MenuItem::new(
+            tr(Text::MenuClipboardHistory, ui),
+            cfg!(any(windows, target_os = "linux")),
+            None,
+        );
         let clipboard = Submenu::with_items(
             tr(Text::MenuClipboard, ui),
             true,
@@ -176,13 +179,16 @@ impl Tray {
         .map_err(err)?;
         let keyboard_settings = MenuItem::new(
             tr(Text::MenuSystemKeyboardSettings, ui),
-            cfg!(windows),
+            cfg!(any(windows, target_os = "linux")),
             None,
         );
         let about = MenuItem::new(tr(Text::MenuAbout, ui), true, None);
         let exit = MenuItem::new(tr(Text::MenuExit, ui), true, None);
-        let autoreplace_list =
-            MenuItem::new(tr(Text::MenuAutoreplaceList, ui), cfg!(windows), None);
+        let autoreplace_list = MenuItem::new(
+            tr(Text::MenuAutoreplaceList, ui),
+            cfg!(any(windows, target_os = "linux")),
+            None,
+        );
         let autoreplace_menu = Submenu::new(tr(Text::SectionAutoreplace, ui), true);
         autoreplace_menu.append(&autoreplace_list).map_err(err)?;
         let mut autoreplace_items = Vec::new();
@@ -198,7 +204,11 @@ impl Tray {
                     .map(|c| if c.is_control() { ' ' } else { c })
                     .collect();
                 let label = format!("{} — {text}", item.from).replace('&', "&&");
-                let entry = MenuItem::new(label, autoreplace.enabled && cfg!(windows), None);
+                let entry = MenuItem::new(
+                    label,
+                    autoreplace.enabled && cfg!(any(windows, target_os = "linux")),
+                    None,
+                );
                 autoreplace_menu.append(&entry).map_err(err)?;
                 autoreplace_items.push(entry);
             }
@@ -325,6 +335,20 @@ impl Tray {
                 }
             ) {
                 self.left_click.double_click(Instant::now());
+                return Some(TrayCommand::OpenSettings);
+            }
+            // A StatusNotifierItem gets only Activate, the host's primary click:
+            // GNOME sends it for a double click (a single one opens the menu),
+            // Plasma for a single click.
+            if cfg!(not(windows))
+                && matches!(
+                    event,
+                    TrayIconEvent::Click {
+                        button: tray_icon::MouseButton::Left,
+                        ..
+                    }
+                )
+            {
                 return Some(TrayCommand::OpenSettings);
             }
             if self.left_opens_autoreplace

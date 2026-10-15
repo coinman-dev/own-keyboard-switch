@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 /// The buffer is dropped after this much inactivity.
 const IDLE_RESET: Duration = Duration::from_secs(30);
 /// Two spaces within this interval become «, » («Запятая по двойному нажатию клавиши Пробел»).
-const DOUBLE_SPACE: Duration = Duration::from_millis(400);
+use okbs_platform::autoreplace_gate::DOUBLE_SPACE;
 /// A layout change within this time after our own switch is ours.
 const OWN_LAYOUT_CHANGE: Duration = Duration::from_secs(2);
 /// Focus-dependent checks (exclusions) are cached this long without focus events.
@@ -320,6 +320,7 @@ pub struct Processor {
     /// Layout to return to once the menu opened with Alt is closed
     /// («Исправлять раскладку при работе с меню, содержащим горячие клавиши»).
     layout_before_menu: Option<Lang>,
+    menu_started_at: Option<Instant>,
     hint: Option<usize>,
     config: Config,
     detector: Detector,
@@ -330,12 +331,18 @@ pub struct Processor {
     word: Vec<KeyPress>,
     word_lang: Option<Lang>,
     word_blocked: bool,
+    /// The user chose the layout manually before this word («Не переключать
+    /// после ручной смены раскладки»): no automatic switch, case fixes stay.
+    word_layout_chosen: bool,
+    /// The word directly follows English `plan` with only spaces between.
+    word_after_plan: bool,
     /// The word follows the previous one without a space (`site.com`,
     /// `C:\dir`, `user@mail`): part of an address, path or code.
     word_glued: bool,
     /// Text glued before the current word by symbols (see [`LastWord::prefix`]).
     word_prefix: Vec<ShownKey>,
     block_next_word: bool,
+    layout_chosen_for_next_word: bool,
     last: Option<LastWord>,
     pending_spelling: Option<PendingSpelling>,
     spelling_undo: Option<SpellingUndo>,
@@ -398,6 +405,7 @@ impl Processor {
             last_input_target: None,
             last_clipboard_text: None,
             layout_before_menu: None,
+            menu_started_at: None,
             hint: None,
             autoreplacer: AutoReplacer::new(&config.autoreplace),
             config,
@@ -408,9 +416,12 @@ impl Processor {
             word: Vec::new(),
             word_lang: None,
             word_blocked: false,
+            word_layout_chosen: false,
+            word_after_plan: false,
             word_glued: false,
             word_prefix: Vec::new(),
             block_next_word: false,
+            layout_chosen_for_next_word: false,
             last: None,
             pending_spelling: None,
             spelling_undo: None,
@@ -474,6 +485,7 @@ impl Processor {
 
     /// Replaces the configuration and rebuilds the detector.
     pub fn apply_config(&mut self, config: Config) {
+        self.refresh_layouts();
         if let Some(gate) = &self.input_gate {
             gate.configure(&config);
         }
@@ -562,6 +574,8 @@ impl Processor {
         self.word_prefix.clear();
         self.word_lang = None;
         self.word_blocked = false;
+        self.word_layout_chosen = false;
+        self.word_after_plan = false;
     }
 
     fn reset_all(&mut self) {
@@ -578,14 +592,14 @@ impl Processor {
     /// Handles a focus change: the caret moved to another place.
     /// Alt alone opens the menu bar: while it is open the layout has to match
     /// the underlined access keys, otherwise Alt+Ф never reaches «&File».
-    fn match_menu_layout(&mut self) {
-        if !self.config.advanced.fix_layout_in_menus || self.layout_before_menu.is_some() {
+    fn match_menu_layout(&mut self, time: Instant) {
+        if !self.config.advanced.fix_layout_in_menus {
             return;
         }
         let Some(focus) = self.backends.focus.as_ref() else {
             return;
         };
-        let menu = match focus.menu_access_language() {
+        let menu = match focus.menu_access_language_for(time) {
             Ok(Some(lang)) => lang,
             Ok(None) => return,
             Err(err) => {
@@ -599,12 +613,19 @@ impl Processor {
         let Some(current) = self.current_lang() else {
             return;
         };
-        if current == menu || self.foreground_excluded() {
+        if self.foreground_excluded() {
+            return;
+        }
+        if current == menu {
+            if self.layout_before_menu.is_some() {
+                self.menu_started_at = Some(time);
+            }
             return;
         }
         match self.set_lang(menu) {
             Ok(()) => {
-                self.layout_before_menu = Some(current);
+                self.layout_before_menu = self.layout_before_menu.or(Some(current));
+                self.menu_started_at = Some(time);
                 tracing::debug!(%menu, "layout matched to the menu access keys");
             }
             Err(err) => tracing::debug!("cannot match the menu layout: {err}"),
@@ -613,6 +634,7 @@ impl Processor {
 
     /// Puts back the layout that was active before the menu was opened.
     fn restore_layout_after_menu(&mut self) {
+        self.menu_started_at = None;
         let Some(lang) = self.layout_before_menu.take() else {
             return;
         };
@@ -622,6 +644,12 @@ impl Processor {
     }
 
     pub fn handle_focus(&mut self, event: &FocusEvent) {
+        if let FocusEvent::MenuClosedFor(time) = event {
+            if self.menu_started_at == Some(*time) {
+                self.restore_layout_after_menu();
+            }
+            return;
+        }
         if matches!(event, FocusEvent::MenuClosed | FocusEvent::WindowChanged(_)) {
             self.restore_layout_after_menu();
         }
@@ -656,8 +684,14 @@ impl Processor {
             self.spelling_undo = None;
         }
         self.remember_target();
+        tracing::debug!(
+            window_changed = matches!(event, FocusEvent::WindowChanged(_)),
+            letters = self.word.len(),
+            "focus event resets the current word"
+        );
         self.reset_all();
         self.block_next_word = false;
+        self.layout_chosen_for_next_word = false;
         self.excluded_cache = None;
         if matches!(event, FocusEvent::WindowChanged(_))
             && self.config.switching.single_layout_for_all_windows
@@ -672,6 +706,7 @@ impl Processor {
 
     /// Handles a layout change notification.
     pub fn handle_layout_change(&mut self, id: LayoutId) -> Vec<Event> {
+        self.refresh_layouts();
         let lang = self.lang_of(id);
         let ours = matches!(self.own_layout_change, Some((l, t)) if Some(l) == lang && t.elapsed() <= OWN_LAYOUT_CHANGE);
         if ours {
@@ -681,7 +716,7 @@ impl Processor {
             if self.config.rules_options.improve_switching {
                 self.previous_word = None;
             }
-            self.block_next_word |= self
+            self.layout_chosen_for_next_word |= self
                 .config
                 .troubleshooting
                 .no_switch_after
@@ -694,6 +729,13 @@ impl Processor {
     /// Description of a layout id from the cached list.
     fn layout_info(&self, id: LayoutId) -> Option<LayoutInfo> {
         self.layouts.iter().find(|l| l.id == id).cloned()
+    }
+    pub fn current_layout_info(&self) -> Option<LayoutInfo> {
+        self.backends
+            .layouts
+            .current()
+            .ok()
+            .and_then(|id| self.layout_info(id))
     }
 
     /// Description of the first layout of `lang`.
@@ -773,6 +815,7 @@ impl Processor {
             InputEvent::MouseButton { .. } => {
                 self.reset_all();
                 self.block_next_word = false;
+                self.layout_chosen_for_next_word = false;
             }
             InputEvent::UnknownKey { pressed, .. } => {
                 if pressed {
@@ -880,6 +923,11 @@ impl Processor {
         self.operation_target = target;
         self.operation_epoch = Some(epoch);
         if !self.target_matches(target) || !self.epoch_matches(Some(epoch)) {
+            tracing::debug!(
+                target_matches = self.target_matches(target),
+                epoch,
+                "captured input for another control or epoch dropped"
+            );
             if let Some(gate) = &gate {
                 gate.reset_word();
             }
@@ -949,6 +997,22 @@ impl Processor {
                         }
                     }
                 }
+            }
+            // A replayed Space would still be down on the Linux output device
+            // and swallow the Space of the comma, so it is replaced, not sent.
+            if !consume
+                && let InputEvent::Key {
+                    key: PhysKey::Space,
+                    pressed: true,
+                    repeat: false,
+                    time,
+                    ..
+                } = raw
+                && !self.capturing
+                && self.double_space_comma(time, false)
+            {
+                consume = true;
+                self.consumed_keys.insert(PhysKey::Space);
             }
             if !consume
                 && let InputEvent::Key {
@@ -1109,10 +1173,18 @@ impl Processor {
         self.remember_target();
         self.reset_all();
         let mut out = self.autoreplace_feedback();
-        out.push(Event::AutoreplaceList {
-            toggle,
-            target: self.insertion_target(),
-        });
+        let target = match self.capture_insertion_target() {
+            Ok(target) => target,
+            Err(error) => {
+                self.fail(
+                    "cannot capture editor for autoreplace list",
+                    &error,
+                    &mut out,
+                );
+                return out;
+            }
+        };
+        out.push(Event::AutoreplaceList { toggle, target });
         out
     }
 
@@ -1122,10 +1194,43 @@ impl Processor {
         self.remember_target();
         self.reset_all();
         let mut out = self.autoreplace_feedback();
-        out.push(Event::ClipboardHistory {
-            target: self.insertion_target(),
-        });
+        let target = match self.capture_insertion_target() {
+            Ok(target) => target,
+            Err(error) => {
+                self.fail(
+                    "cannot capture editor for clipboard history",
+                    &error,
+                    &mut out,
+                );
+                return out;
+            }
+        };
+        out.push(Event::ClipboardHistory { target });
         out
+    }
+
+    pub fn restore_input_target(&self, target: InputTarget) -> Vec<Event> {
+        let Some(focus) = &self.backends.focus else {
+            return Vec::new();
+        };
+        if focus.input_target().ok().flatten() == Some(target) {
+            return Vec::new();
+        }
+        match focus.active_window() {
+            Ok(Some(window)) if window.pid != Some(std::process::id()) => return Vec::new(),
+            Err(error) => {
+                return vec![Event::Error(format!(
+                    "cannot determine focus after closing picker: {error}"
+                ))];
+            }
+            _ => {}
+        }
+        if let Err(error) = focus.activate_target(target) {
+            return vec![Event::Error(format!(
+                "cannot restore editor after closing picker: {error}"
+            ))];
+        }
+        Vec::new()
     }
 
     /// New clipboard contents for «Следить за буфером обмена».
@@ -1214,6 +1319,15 @@ impl Processor {
         out
     }
 
+    fn capture_insertion_target(&self) -> okbs_platform::Result<Option<InputTarget>> {
+        let target = match &self.backends.focus {
+            Some(focus) => focus.capture_input_target()?,
+            None => None,
+        };
+        Ok(target
+            .or_else(|| self.input_gate.as_ref().and_then(|gate| gate.last_target()))
+            .or(self.last_input_target))
+    }
     fn insertion_target(&self) -> Option<InputTarget> {
         self.backends
             .focus
@@ -1292,7 +1406,7 @@ impl Processor {
                 self.mods.set(key, true);
                 self.switch_candidate = (alone && self.is_switch_key(key)).then_some((key, time));
                 if alone && matches!(key, PhysKey::AltLeft | PhysKey::AltRight) {
-                    self.match_menu_layout();
+                    self.match_menu_layout(time);
                 }
             }
             return;
@@ -1400,7 +1514,7 @@ impl Processor {
                 {
                     return;
                 }
-                if self.double_space_comma(time) {
+                if self.double_space_comma(time, true) {
                     return;
                 }
                 self.last_space = Some(time);
@@ -1462,6 +1576,14 @@ impl Processor {
 
     fn push_word_key(&mut self, press: KeyPress) {
         if self.word.is_empty() {
+            self.word_after_plan = self.last.as_ref().is_some_and(|last| {
+                last.shown_in() == Lang::En
+                    && last.prefix.is_empty()
+                    && !last.separator.is_empty()
+                    && last.separator.iter().all(|key| key.key == PhysKey::Space)
+                    && layouts::render(&last.keys, self.detector.keymap(Lang::En))
+                        .eq_ignore_ascii_case("plan")
+            });
             self.word_glued = self.last.as_ref().is_some_and(|last| {
                 !last.separator.is_empty()
                     && !last.separator.iter().any(|separator| {
@@ -1481,6 +1603,7 @@ impl Processor {
             self.last = None;
             self.word_lang = self.current_lang();
             self.word_blocked = std::mem::take(&mut self.block_next_word);
+            self.word_layout_chosen = std::mem::take(&mut self.layout_chosen_for_next_word);
         }
         self.word.push(press);
     }
@@ -1504,7 +1627,9 @@ impl Processor {
         let Some(lang) = self.word_lang else {
             return false;
         };
-        if !manual && (self.current_lang() != Some(lang) || self.word_blocked) {
+        if !manual
+            && (self.current_lang() != Some(lang) || self.word_blocked || self.word_layout_chosen)
+        {
             return false;
         }
         let typed = layouts::render(&self.word, self.detector.keymap(lang));
@@ -1615,6 +1740,7 @@ impl Processor {
         let check = separator.key == PhysKey::Space
             && !self.word.is_empty()
             && !self.word_blocked
+            && !self.word_layout_chosen
             && !self.word_glued
             && self.current_lang() == self.word_lang
             && self.config.spellcheck.check_typed_words;
@@ -1680,9 +1806,17 @@ impl Processor {
         }
         let keys = std::mem::take(&mut self.word);
         let prefix = std::mem::take(&mut self.word_prefix);
+        let after_plan = std::mem::take(&mut self.word_after_plan);
         let typed_in = self.word_lang.take();
         let blocked = std::mem::take(&mut self.word_blocked);
+        let layout_chosen = std::mem::take(&mut self.word_layout_chosen);
         let Some(typed_in) = typed_in else {
+            if !keys.is_empty() {
+                tracing::debug!(
+                    letters = keys.len(),
+                    "word skipped: its layout language was unknown when it started"
+                );
+            }
             self.last = None;
             if improve {
                 self.previous_word = None;
@@ -1725,11 +1859,12 @@ impl Processor {
         } else {
             self.previous_word
         };
-        let analysis = self.detector.analyze_with_previous_word(
+        let analysis = self.detector.analyze_with_word_context(
             &last.keys,
             typed_in,
             self.context,
             previous_word,
+            after_plan,
         );
         // Decision::Switch contains typed text. Log only non-text metadata.
         let (stay_reason, switch_reason) = match &analysis.decision {
@@ -1747,12 +1882,15 @@ impl Processor {
             suspicious = analysis.decision == Decision::Suspicious,
             "word finished"
         );
-        if analysis
-            .current
-            .score
-            .letters
-            .max(analysis.other.score.letters)
-            >= 2
+        // A manually chosen layout keeps the word out of the switching
+        // context, as before; only its case can still be fixed below.
+        if !layout_chosen
+            && analysis
+                .current
+                .score
+                .letters
+                .max(analysis.other.score.letters)
+                >= 2
         {
             match &analysis.decision {
                 Decision::Switch { to, .. } => self.context = Some(*to),
@@ -1765,7 +1903,7 @@ impl Processor {
         }
         let autoswitch = self.config.general.autoswitch;
         let target = match &analysis.decision {
-            Decision::Switch { to, .. } if autoswitch => Some(*to),
+            Decision::Switch { to, .. } if autoswitch && !layout_chosen => Some(*to),
             _ => None,
         };
         if improve {
@@ -1782,13 +1920,13 @@ impl Processor {
                     || shown.rank.is_some()
                     || shown.known_lenient
                     || shown.score.letters == 1);
-            self.previous_word =
-                (separator.key == PhysKey::Space && recognised).then_some(shown.lang);
+            self.previous_word = (separator.key == PhysKey::Space && recognised && !layout_chosen)
+                .then_some(shown.lang);
         }
         let final_lang = target.unwrap_or(typed_in);
         let fix = self.case_fix(&keys_of(&self.last), final_lang);
         if target.is_none() && fix.is_none() {
-            if autoswitch && analysis.decision == Decision::Suspicious {
+            if autoswitch && !layout_chosen && analysis.decision == Decision::Suspicious {
                 out.push(Event::Suspicious);
                 self.play(Sound::Suspicious);
             }
@@ -1910,8 +2048,9 @@ impl Processor {
         }
     }
 
-    /// «Запятая по двойному нажатию клавиши Пробел».
-    fn double_space_comma(&mut self, time: Instant) -> bool {
+    /// «Запятая по двойному нажатию клавиши Пробел». `delivered`: the second
+    /// Space has reached the application; a captured one is replaced instead.
+    fn double_space_comma(&mut self, time: Instant, delivered: bool) -> bool {
         let previous = self.last_space.take();
         if !self.config.advanced.double_space_comma || !self.word.is_empty() {
             return false;
@@ -1932,7 +2071,8 @@ impl Processor {
             return false;
         };
         comma.push(KeyPress::plain(PhysKey::Space));
-        let result = self.backends.injector.backspace(2).and_then(|()| {
+        let erase = if delivered { 2 } else { 1 };
+        let result = self.backends.injector.backspace(erase).and_then(|()| {
             self.backends
                 .injector
                 .send(&Self::strokes(comma.iter().copied()))
@@ -1983,7 +2123,7 @@ impl Processor {
             return self.fail("cannot switch the layout", &err, out);
         }
         self.chosen_lang = Some(lang);
-        self.block_next_word |= self
+        self.layout_chosen_for_next_word |= self
             .config
             .troubleshooting
             .no_switch_after
@@ -2017,7 +2157,7 @@ impl Processor {
                     self.own_layout_change = Some((lang, Instant::now()));
                     self.chosen_lang = Some(lang);
                 }
-                self.block_next_word |= self
+                self.layout_chosen_for_next_word |= self
                     .config
                     .troubleshooting
                     .no_switch_after
@@ -2669,8 +2809,20 @@ impl Processor {
                 return Err(PlatformError::Unsupported("clipboard"));
             };
             match clipboard.text() {
-                Ok(Some(text)) if text != CLIPBOARD_MARKER => return Ok(Some((text, saved))),
+                Ok(Some(text)) if text != CLIPBOARD_MARKER => {
+                    tracing::debug!(
+                        elapsed_ms = started.elapsed().as_millis() as u64,
+                        chars = text.chars().count(),
+                        same_as_before = saved.as_deref() == Some(text.as_str()),
+                        "selection copied"
+                    );
+                    return Ok(Some((text, saved)));
+                }
                 _ if started.elapsed() >= self.timing.copy_timeout => {
+                    tracing::debug!(
+                        timeout_ms = self.timing.copy_timeout.as_millis() as u64,
+                        "no selection copied in time"
+                    );
                     self.restore_clipboard(saved, CLIPBOARD_MARKER);
                     return Ok(None);
                 }
@@ -2724,6 +2876,7 @@ impl Processor {
             self.backends
                 .injector
                 .tap(&[PhysKey::ControlLeft], PhysKey::KeyV)?;
+            tracing::debug!(?op, "converted selection pasted");
             Ok(())
         })();
         if let Err(err) = pasted {
