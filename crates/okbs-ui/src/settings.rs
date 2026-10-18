@@ -218,6 +218,8 @@ pub enum SettingsInput {
     LinuxSetup(crate::linux_setup::Status),
     LinuxSetupConfig(Box<Config>),
     LinuxSetupFinished,
+    /// Startup continued by itself: the setup window is no longer needed.
+    CloseWindow,
     /// The engine has completed a particular replacement button action.
     SpellingReplacementFinished {
         request_id: u64,
@@ -800,6 +802,8 @@ impl SettingsView {
                     self.dialog = None;
                 }
             }
+            // Handled by the window, which hides itself.
+            SettingsInput::CloseWindow => {}
             SettingsInput::LinuxSetupConfig(config) => {
                 if matches!(self.dialog, Some(Dialog::LinuxSetup(_))) {
                     self.draft = (*config).clone();

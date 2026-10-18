@@ -20,6 +20,15 @@
 
 ### Fixed
 
+- Letters typed while Break or a selection command (change layout or case,
+  transliterate, number to words, paste without formatting) was rewriting
+  the text could land in the middle of it (`glhbdtn` instead of
+  `ghbdtn l...`). They now wait and follow the corrected text, as after an
+  automatic correction. Windows and Linux.
+- **Linux:** when the desktop connection came up a moment after the program
+  started, the setup window stayed open although every check had passed. The
+  program now continues by itself and closes the window, unless the user has
+  already used it.
 - **Linux, Wayland:** hidden windows (settings, autoreplace list, clipboard
   history, spelling popup) no longer appear as empty windows. Wayland cannot
   hide a window, so they are now closed instead.

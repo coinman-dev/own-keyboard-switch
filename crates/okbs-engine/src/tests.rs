@@ -4183,3 +4183,32 @@ fn mouse_buttons_send_nothing_when_disabled() {
     });
     assert_eq!(h.desktop.lock().injected, before);
 }
+
+#[test]
+fn keys_typed_during_break_wait_for_its_correction() {
+    let gate = okbs_platform::autoreplace_gate::AutoReplaceGate::new(&Config::default());
+    let key = |key, pressed| InputEvent::Key {
+        key,
+        pressed,
+        repeat: false,
+        time: Instant::now(),
+        injected: false,
+    };
+    let field = Some(InputTarget {
+        window: 1,
+        control: 1,
+    });
+    // Break retypes the last word; a letter pressed meanwhile must follow it.
+    assert!(gate.capture(key(PhysKey::Pause, true), Some(Lang::Ru), field));
+    assert!(gate.reserves(PhysKey::Pause));
+    assert!(gate.capture(key(PhysKey::KeyL, true), Some(Lang::Ru), field));
+    assert!(gate.capture(key(PhysKey::Pause, false), Some(Lang::Ru), field));
+    assert!(!gate.reserves(PhysKey::Pause));
+    // The release of a withheld press is withheld as well.
+    assert!(gate.capture(key(PhysKey::KeyL, false), Some(Lang::Ru), field));
+    for _ in 0..4 {
+        gate.complete_event(false);
+    }
+    // Once the engine has finished, typing passes straight through again.
+    assert!(!gate.capture(key(PhysKey::KeyA, true), Some(Lang::Ru), field));
+}

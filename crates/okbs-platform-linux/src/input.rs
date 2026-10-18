@@ -553,7 +553,12 @@ impl KeyboardSource for LinuxSource {
                         {
                             mods.set(key, value != 0);
                         }
-                        let captured = !swallowed && filter.gate.capture(event, lang, target);
+                        // A hotkey that types into the target goes through
+                        // the gate too, so keys typed meanwhile wait for it.
+                        let gated = !swallowed
+                            || hotkey
+                            || key.is_some_and(|key| filter.gate.reserves(key));
+                        let captured = gated && filter.gate.capture(event, lang, target);
                         if captured {
                             let epoch = filter.gate.epoch();
                             event = match event {

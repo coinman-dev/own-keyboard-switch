@@ -216,6 +216,9 @@ pub fn run<T>(
     let mut restart_hint = false;
     let mut failed_capture = false;
     let mut requested = (!first_run && status.ready()).then_some(Action::Continue);
+    // The desktop bridge may answer a moment after a restart. Until the user
+    // touches the setup window, a configured system continues by itself.
+    let mut user_acted = false;
     loop {
         if !matches!(stop.try_recv(), Err(crossbeam_channel::TryRecvError::Empty)) {
             return Ok(None);
@@ -227,7 +230,10 @@ pub fn run<T>(
             for event in events.try_iter() {
                 match event {
                     SettingsEvent::Closed => return Ok(None),
-                    SettingsEvent::LinuxSetup(action) => requested = Some(action),
+                    SettingsEvent::LinuxSetup(action) => {
+                        user_acted = true;
+                        requested = Some(action);
+                    }
                     SettingsEvent::Apply(config) => {
                         settings.update(|current| {
                             current.general.run_elevated = config.general.run_elevated
@@ -261,6 +267,9 @@ pub fn run<T>(
                                         settings.config.clone(),
                                     )));
                                     ui.send(SettingsInput::LinuxSetupFinished);
+                                    if !user_acted {
+                                        ui.send(SettingsInput::CloseWindow);
+                                    }
                                 }
                                 return Ok(Some(Ready {
                                     desktop: probe
@@ -366,6 +375,9 @@ pub fn run<T>(
                 status.input = InputAccess::Unavailable;
             }
             last_check = Instant::now();
+            if !first_run && !user_acted && requested.is_none() && status.ready() {
+                requested = Some(Action::Continue);
+            }
         }
         if window.is_none() {
             let (events, receiver) = unbounded();

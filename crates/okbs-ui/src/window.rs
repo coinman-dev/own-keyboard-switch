@@ -294,6 +294,9 @@ impl App {
                     {
                         self.finish_spelling_replacement(ctx, *request_id, *success);
                     }
+                    if input == SettingsInput::CloseWindow {
+                        self.close_settings(ctx);
+                    }
                     if let SettingsInput::ConfigChanged(config) = &input {
                         self.set_appearance(ctx, config.general.ui_language, config.general.theme);
                     }
