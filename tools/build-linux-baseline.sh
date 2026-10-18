@@ -30,4 +30,10 @@ deb http://security.ubuntu.com/ubuntu noble-security main universe
 SOURCES
 cp -L /etc/resolv.conf "$linux_root/etc/resolv.conf"
 chroot "$linux_root" /bin/bash -c 'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential pkg-config ca-certificates libgtk-3-dev libgtk-layer-shell-dev libxkbcommon-dev libx11-dev libxcb1-dev libssl-dev wl-clipboard zenity'
-chroot "$linux_root" /usr/bin/env PATH=/opt/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin CARGO_HOME=/opt/cargo RUSTUP_HOME=/opt/rustup CARGO_TARGET_DIR=/build/target/linux-baseline /bin/bash -c 'cd /build; cargo build --release --locked -p okbswitch'
+# rustup from a distribution package keeps its proxies outside ~/.cargo/bin;
+# then call the stable toolchain directly.
+linux_toolchain_path=
+if [[ ! -x "$linux_cargo_cache/bin/cargo" ]]; then
+    linux_toolchain_path="/opt/rustup/toolchains/$(basename "$(ls -d "$linux_rustup_cache"/toolchains/stable-* | head -1)")/bin:"
+fi
+chroot "$linux_root" /usr/bin/env PATH=/opt/cargo/bin:${linux_toolchain_path}/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin CARGO_HOME=/opt/cargo RUSTUP_HOME=/opt/rustup CARGO_TARGET_DIR=/build/target/linux-baseline /bin/bash -c 'cd /build; cargo build --release --locked -p okbswitch'
