@@ -44,6 +44,15 @@ pub(crate) enum Root {
     Settings,
     List,
     History,
+    /// Only on Wayland, where a hidden root would still be shown.
+    Spellcheck,
+}
+
+/// Wayland cannot hide a window (winit ignores `Visible(false)` there and
+/// eframe keeps painting it), so hidden viewports are closed instead and the
+/// event loop ends when its root is no longer needed.
+fn hides_by_closing() -> bool {
+    cfg!(target_os = "linux") && !crate::window_position::uses_native_position()
 }
 
 #[derive(Default)]
@@ -132,6 +141,8 @@ struct App {
     root: Root,
     list: ListView,
     history: HistoryView,
+    /// The Wayland event loop is closing because no window remains.
+    exiting: bool,
 }
 
 impl App {
@@ -143,6 +154,16 @@ impl App {
             Root::Settings => egui::ViewportId::from_hash_of("settings"),
             Root::List => egui::ViewportId::from_hash_of("autoreplace_list"),
             Root::History => egui::ViewportId::from_hash_of("clipboard_history"),
+            Root::Spellcheck => egui::ViewportId::from_hash_of("spellcheck-popup"),
+        }
+    }
+
+    fn is_shown(&self, window: Root) -> bool {
+        match window {
+            Root::Settings => self.shared.open.load(Ordering::SeqCst),
+            Root::List => self.list.visible(),
+            Root::History => self.history.visible(),
+            Root::Spellcheck => self.spellcheck_result.is_some(),
         }
     }
 
@@ -159,7 +180,7 @@ impl App {
     }
 
     fn spellcheck_id(&self) -> egui::ViewportId {
-        egui::ViewportId::from_hash_of("spellcheck-popup")
+        self.id_of(Root::Spellcheck)
     }
 
     fn show_settings(&self, ctx: &egui::Context) {
@@ -212,7 +233,8 @@ impl App {
 
 impl App {
     fn process_requests(&mut self, ctx: &egui::Context) {
-        if self.shared.shutdown.load(Ordering::SeqCst) {
+        // Requests that arrive meanwhile stay queued for the next loop.
+        if self.shared.shutdown.load(Ordering::SeqCst) || self.exiting {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
@@ -271,6 +293,9 @@ impl App {
                     } = &input
                     {
                         self.finish_spelling_replacement(ctx, *request_id, *success);
+                    }
+                    if input == SettingsInput::CloseWindow {
+                        self.close_settings(ctx);
                     }
                     if let SettingsInput::ConfigChanged(config) = &input {
                         self.set_appearance(ctx, config.general.ui_language, config.general.theme);
@@ -368,6 +393,7 @@ impl App {
                 Root::Settings => self.close_settings(ctx),
                 Root::List => self.list.close(ctx),
                 Root::History => self.history.close(ctx),
+                Root::Spellcheck => self.hide_spelling_popup(ctx),
             }
         }
         self.list.keep_on_screen(ctx);
@@ -563,10 +589,11 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        if self.shared.shutdown.load(Ordering::SeqCst) {
+        if self.shared.shutdown.load(Ordering::SeqCst) || self.exiting {
             return;
         }
         let ctx = ui.ctx().clone();
+        let closing = hides_by_closing();
         // All three native windows belong to this one winit event loop. Keep
         // the hidden viewports registered so logic can reopen them while every
         // window is hidden.
@@ -574,18 +601,20 @@ impl eframe::App for App {
             Root::Settings => self.settings_ui(ui),
             Root::List => self.list.ui(ui),
             Root::History => self.history.ui(ui),
+            Root::Spellcheck => self.spellcheck_ui(ui),
         }
-        if self.root != Root::Settings {
+        // A viewport that is not shown in a frame is closed by egui.
+        if self.root != Root::Settings && (!closing || self.is_shown(Root::Settings)) {
             let builder = settings_builder(tr(Text::SettingsWindowTitle, self.lang))
                 .with_visible(self.shared.open.load(Ordering::SeqCst));
             ctx.show_viewport_immediate(self.settings_id(), builder, |ui, _| self.settings_ui(ui));
         }
-        if self.root != Root::List {
+        if self.root != Root::List && (!closing || self.is_shown(Root::List)) {
             ctx.show_viewport_immediate(self.list_id(), self.list.builder(), |ui, _| {
                 self.list.ui(ui)
             });
         }
-        if self.root != Root::History {
+        if self.root != Root::History && (!closing || self.is_shown(Root::History)) {
             ctx.show_viewport_immediate(self.history_id(), self.history.builder(), |ui, _| {
                 self.history.ui(ui)
             });
@@ -605,20 +634,24 @@ impl eframe::App for App {
         } else {
             spelling_visible
         };
-        let builder = egui::ViewportBuilder::default()
-            .with_title(tr(Text::SpellcheckWordTitle, self.lang))
-            .with_icon(crate::branding::icon())
-            .with_inner_size([360.0, self.spellcheck_height])
-            .with_min_inner_size([300.0, 100.0])
-            .with_max_inner_size([520.0, 320.0])
-            .with_resizable(false)
-            .with_maximize_button(false)
-            .with_always_on_top()
-            .with_active(false)
-            .with_visible(spelling_visible);
-        ctx.show_viewport_immediate(self.spellcheck_id(), builder, |ui, _| {
-            self.spellcheck_ui(ui)
-        });
+        if self.root != Root::Spellcheck && (!closing || spelling_visible) {
+            let builder = spellcheck_builder(self.lang, self.spellcheck_height)
+                .with_visible(spelling_visible);
+            ctx.show_viewport_immediate(self.spellcheck_id(), builder, |ui, _| {
+                self.spellcheck_ui(ui)
+            });
+        }
+        if closing
+            && !self.is_shown(self.root)
+            && self.requests.is_empty()
+            && ![Root::Settings, Root::List, Root::History, Root::Spellcheck]
+                .into_iter()
+                .any(|window| window != self.root && self.is_shown(window))
+        {
+            // Not cancelled: neither handler runs again once exiting is set.
+            self.exiting = true;
+            ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Close);
+        }
         #[cfg(windows)]
         crate::key_capture::set_active(
             self.shared.open.load(Ordering::SeqCst) && self.view.is_capturing(),
@@ -797,6 +830,19 @@ impl Drop for SettingsWindow {
     }
 }
 
+fn spellcheck_builder(lang: Lang, height: f32) -> egui::ViewportBuilder {
+    egui::ViewportBuilder::default()
+        .with_title(tr(Text::SpellcheckWordTitle, lang))
+        .with_icon(crate::branding::icon())
+        .with_inner_size([360.0, height])
+        .with_min_inner_size([300.0, 100.0])
+        .with_max_inner_size([520.0, 320.0])
+        .with_resizable(false)
+        .with_maximize_button(false)
+        .with_always_on_top()
+        .with_active(false)
+}
+
 fn settings_builder(title: &str) -> egui::ViewportBuilder {
     egui::ViewportBuilder::default()
         .with_title(title)
@@ -924,6 +970,7 @@ fn window_thread(
         let root = match (initial_list.is_some(), initial_history.is_some()) {
             (true, _) => Root::List,
             (_, true) => Root::History,
+            _ if passive && hides_by_closing() => Root::Spellcheck,
             _ => Root::Settings,
         };
         shared.open.store(root == Root::Settings, Ordering::SeqCst);
@@ -941,6 +988,7 @@ fn window_thread(
             Root::List => list.config.labels.title.clone(),
             Root::History => history.config.labels.title.clone(),
             Root::Settings => settings_title.into(),
+            Root::Spellcheck => tr(Text::SpellcheckWordTitle, lang).into(),
         };
         let mut options = native_options(&title, shared);
         if let Some((result, position)) = &text_result
@@ -972,6 +1020,10 @@ fn window_thread(
             }
             Root::History => {
                 options.viewport = history.builder().with_visible(true);
+                options.centered = false;
+            }
+            Root::Spellcheck => {
+                options.viewport = spellcheck_builder(lang, 150.0).with_visible(true);
                 options.centered = false;
             }
             Root::Settings => {}
@@ -1009,6 +1061,7 @@ fn window_thread(
                     root,
                     list,
                     history,
+                    exiting: false,
                 }))
             }),
         );
@@ -1289,6 +1342,7 @@ mod tests {
             root: Root::Settings,
             list: ListView::default(),
             history: HistoryView::default(),
+            exiting: false,
         };
         app.submit_spelling_replacement("world".into());
         let SettingsEvent::ReplaceSpelling {
@@ -1377,6 +1431,7 @@ mod tests {
                 root,
                 list: ListView::default(),
                 history: HistoryView::default(),
+                exiting: false,
             };
             app.list.set_visible(true);
             app.history.set_visible(true);
@@ -1424,6 +1479,7 @@ mod tests {
             root: Root::Settings,
             list: ListView::default(),
             history: HistoryView::default(),
+            exiting: false,
         };
         for (visible, preference, expected) in [
             (true, UiLanguage::En, "Own Keyboard Switch Settings"),

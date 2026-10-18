@@ -9,7 +9,7 @@ use crate::sounds::{self, Sound};
 use crate::{ConversionKind, Event, UiRequest};
 use okbs_core::autoreplace::AutoReplacer;
 use okbs_core::config::{
-    AutoReplaceItem, AutoReplaceTrigger, Config, HotkeyAction, SoundEvent, SwitchKey,
+    AutoReplaceItem, AutoReplaceTrigger, Config, HotkeyAction, MouseButton, SoundEvent, SwitchKey,
 };
 use okbs_core::detect::{Decision, Detector};
 use okbs_core::layouts::{self, KeyPress};
@@ -768,6 +768,7 @@ impl Processor {
                 ..
             } | InputEvent::UnknownKey { pressed: true, .. }
                 | InputEvent::MouseButton { .. }
+                | InputEvent::MouseShortcut { .. }
         );
         let own_window = match event {
             InputEvent::MouseButton { in_own_window, .. } => in_own_window,
@@ -780,7 +781,7 @@ impl Processor {
         };
         if user_action && let Some(pending) = &self.pending_spelling {
             let kind = match event {
-                InputEvent::MouseButton { .. } => "mouse_button",
+                InputEvent::MouseButton { .. } | InputEvent::MouseShortcut { .. } => "mouse_button",
                 InputEvent::Key {
                     key: PhysKey::Space,
                     ..
@@ -816,6 +817,12 @@ impl Processor {
                 self.reset_all();
                 self.block_next_word = false;
                 self.layout_chosen_for_next_word = false;
+            }
+            InputEvent::MouseShortcut { button, .. } => {
+                self.reset_all();
+                self.block_next_word = false;
+                self.layout_chosen_for_next_word = false;
+                self.mouse_shortcut(button, &mut out);
             }
             InputEvent::UnknownKey { pressed, .. } => {
                 if pressed {
@@ -3149,6 +3156,20 @@ impl Processor {
     /// until the program restarts.
     pub fn decline_spelling(&mut self, word: &str) {
         self.declined_spelling.insert(word.to_lowercase());
+    }
+
+    fn mouse_shortcut(&mut self, button: MouseButton, out: &mut Vec<Event>) {
+        let Some(hotkey) = self.config.mouse.action(button) else {
+            return;
+        };
+        tracing::info!(?button, %hotkey, "mouse shortcut");
+        if let Err(err) = self
+            .backends
+            .injector
+            .tap(&hotkey.modifier_keys(), hotkey.key)
+        {
+            self.fail("cannot send the mouse button shortcut", &err, out);
+        }
     }
 
     fn paste_plain(&mut self, out: &mut Vec<Event>) {

@@ -2,6 +2,37 @@
 
 # Changelog
 
+## 0.5.0-beta — 2026-10-18
+
+### Added
+
+- **Mouse buttons.** A new "Mouse" settings section assigns a key combination
+  to the side buttons and the wheel click. It is off by default, since another
+  mouse program may own these buttons; once turned on, the side button nearer
+  the wheel copies (Ctrl+C) and the other one pastes (Ctrl+V), and their own
+  action (browser Back/Forward) is turned off while assigned. On Linux the
+  mouse is forwarded through a virtual twin without the assigned buttons.
+
+### Changed
+
+- The first start offers to exclude only terminals. Code editors and IDEs are
+  no longer suggested; add them in "Excluded programs" when needed.
+
+### Fixed
+
+- Letters typed while Break or a selection command (change layout or case,
+  transliterate, number to words, paste without formatting) was rewriting
+  the text could land in the middle of it (`glhbdtn` instead of
+  `ghbdtn l...`). They now wait and follow the corrected text, as after an
+  automatic correction. Windows and Linux.
+- **Linux:** the setup window no longer appears on a normal start. After the
+  first start it is shown only when something still needs the user after a
+  few seconds of quiet rechecks (the desktop connection may come up a moment
+  late); if every check passes later, the program continues by itself.
+- **Linux, Wayland:** hidden windows (settings, autoreplace list, clipboard
+  history, spelling popup) no longer appear as empty windows. Wayland cannot
+  hide a window, so they are now closed instead.
+
 ## 0.4.0-beta — 2026-10-15
 
 ### Added

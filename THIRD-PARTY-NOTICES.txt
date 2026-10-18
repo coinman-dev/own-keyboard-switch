@@ -3107,7 +3107,7 @@ DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------
 MIT License
-- rustls 0.23.45 (https://github.com/rustls/rustls)
+- rustls 0.23.46 (https://github.com/rustls/rustls)
 
 Copyright (c) 2016 Joseph Birr-Pixton <jpixton@gmail.com>
 
@@ -7065,13 +7065,13 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ------------------------------------------------------------------------
 PolyForm Noncommercial License 1.0.0
-- okbs-core 0.4.0-beta
-- okbs-engine 0.4.0-beta
-- okbs-platform 0.4.0-beta
-- okbs-platform-linux 0.4.0-beta
-- okbs-platform-windows 0.4.0-beta
-- okbs-ui 0.4.0-beta
-- okbswitch 0.4.0-beta
+- okbs-core 0.5.0-beta
+- okbs-engine 0.5.0-beta
+- okbs-platform 0.5.0-beta
+- okbs-platform-linux 0.5.0-beta
+- okbs-platform-windows 0.5.0-beta
+- okbs-ui 0.5.0-beta
+- okbswitch 0.5.0-beta
 
 # PolyForm Noncommercial License 1.0.0
 

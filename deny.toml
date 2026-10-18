@@ -10,6 +10,14 @@ all-features = false
 
 [advisories]
 yanked = "deny"
+# zvariant, zvariant_derive and zbus_names were merged into zbus 6 and are no
+# longer published separately. They are not vulnerabilities; zbus 5 is still
+# required by the tray (ksni 0.3). Remove once ksni moves to zbus 6.
+ignore = [
+    { id = "RUSTSEC-2026-0370", reason = "zvariant merged into zbus 6; ksni needs zbus 5" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names merged into zbus 6; ksni needs zbus 5" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive merged into zbus 6; ksni needs zbus 5" },
+]
 
 [licenses]
 # Third-party license allowlist. The workspace's own license is in LICENSE.

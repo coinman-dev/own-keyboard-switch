@@ -4,13 +4,13 @@
 use crate::INJECT_TAG;
 use crossbeam_channel::Sender;
 use okbs_core::PhysKey;
-use okbs_core::config::{Config, SwitchKey};
+use okbs_core::config::{Config, Mouse, MouseButton, SwitchKey};
 use okbs_platform::autoreplace_gate::AutoReplaceGate;
 use okbs_platform::{InputEvent, KeyboardSource, PlatformError, Result, StopGuard};
 use std::cell::RefCell;
 use std::collections::HashSet;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -18,8 +18,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CANCEL, VK_CAP
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetForegroundWindow, GetWindowThreadProcessId, HC_ACTION, KBDLLHOOKSTRUCT,
     LLKHF_EXTENDED, MSLLHOOKSTRUCT, SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL,
-    WH_MOUSE_LL, WM_KEYDOWN, WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_RBUTTONDOWN, WM_SYSKEYDOWN,
-    WM_XBUTTONDOWN, WindowFromPoint,
+    WH_MOUSE_LL, WM_KEYDOWN, WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_RBUTTONDOWN,
+    WM_SYSKEYDOWN, WM_XBUTTONDOWN, WM_XBUTTONUP, WindowFromPoint, XBUTTON1, XBUTTON2,
 };
 
 struct HookState {
@@ -33,6 +33,7 @@ struct HookState {
 #[derive(Debug)]
 pub struct HookFilter {
     swallow_capslock: AtomicBool,
+    mouse: Mutex<Mouse>,
     pub autoreplace: Arc<AutoReplaceGate>,
 }
 
@@ -40,6 +41,7 @@ impl Default for HookFilter {
     fn default() -> Self {
         Self {
             swallow_capslock: AtomicBool::new(false),
+            mouse: Mutex::new(Mouse::default()),
             autoreplace: Arc::new(AutoReplaceGate::new(&Config::default())),
         }
     }
@@ -51,6 +53,9 @@ impl HookFilter {
         let swallow =
             config.advanced.disable_capslock || config.switching.switch_key == SwitchKey::CapsLock;
         self.swallow_capslock.store(swallow, Ordering::Relaxed);
+        if let Ok(mut mouse) = self.mouse.lock() {
+            *mouse = config.mouse.clone();
+        }
         self.autoreplace.configure(config);
     }
 }
@@ -173,9 +178,38 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
     unsafe { CallNextHookEx(None, code, wparam, lparam) }
 }
 
+/// The «Управление мышью» button of a hook message, if it has one.
+fn assignable_button(message: u32, mouse_data: u32) -> Option<MouseButton> {
+    match message {
+        WM_MBUTTONDOWN | WM_MBUTTONUP => Some(MouseButton::Middle),
+        WM_XBUTTONDOWN | WM_XBUTTONUP => match (mouse_data >> 16) as u16 {
+            XBUTTON1 => Some(MouseButton::Back),
+            XBUTTON2 => Some(MouseButton::Forward),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 {
         let message = wparam.0 as u32;
+        // SAFETY: HC_ACTION provides a live MSLLHOOKSTRUCT for this callback.
+        let mouse_data = unsafe { (*(lparam.0 as *const MSLLHOOKSTRUCT)).mouseData };
+        let button = assignable_button(message, mouse_data);
+        let (assigned, blocked) = STATE.with_borrow(|state| {
+            let Some(state) = state else {
+                return (None, false);
+            };
+            let Some(button) = button else {
+                return (None, false);
+            };
+            let Ok(mouse) = state.filter.mouse.lock() else {
+                return (None, false);
+            };
+            (mouse.action(button).map(|_| button), mouse.blocks(button))
+        });
+        let down = matches!(message, WM_MBUTTONDOWN | WM_XBUTTONDOWN);
         if matches!(
             message,
             WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN
@@ -210,8 +244,18 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
                         .autoreplace
                         .capture(event, None, crate::focus::input_target());
                     let _ = state.sink.send(event);
+                    if let Some(button) = assigned.filter(|_| down) {
+                        let _ = state.sink.send(InputEvent::MouseShortcut {
+                            button,
+                            time: Instant::now(),
+                        });
+                    }
                 }
             });
+        }
+        if blocked {
+            // Applications receive neither the press nor the release.
+            return LRESULT(1);
         }
     }
     // SAFETY: forwarding the unchanged hook arguments.

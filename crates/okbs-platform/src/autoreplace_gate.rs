@@ -274,10 +274,19 @@ impl AutoReplaceGate {
                 && !s.capturing
                 && target.is_some()
             {
+                // Commands that type into the target: keys pressed meanwhile
+                // must follow their text, not land in the middle of it.
                 let hotkey = s.hotkeys_enabled
                     && [
                         HotkeyAction::ShowAutoreplaceMenu,
                         HotkeyAction::ToggleAutoreplaceList,
+                        HotkeyAction::CancelOrConvertLastWord,
+                        HotkeyAction::ConvertSelectionLayout,
+                        HotkeyAction::InvertSelectionCase,
+                        HotkeyAction::TransliterateSelection,
+                        HotkeyAction::NumberToWords,
+                        HotkeyAction::PastePlain,
+                        HotkeyAction::AddSelectionToAutoreplace,
                     ]
                     .into_iter()
                     .any(|action| {
@@ -322,6 +331,11 @@ impl AutoReplaceGate {
             s.feed(event, lang);
         }
         intercept
+    }
+
+    /// Whether the press of `key` was withheld, so its release must be too.
+    pub fn reserves(&self, key: PhysKey) -> bool {
+        self.0.lock().is_ok_and(|s| s.reserved.contains(&key))
     }
 
     /// Suppress only a confirmation key still held in our asynchronously polled GUI.

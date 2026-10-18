@@ -237,6 +237,7 @@ struct Capture {
     stop: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
     output: Arc<Mutex<Output>>,
+    _mouse: crate::mouse::MouseRemap,
 }
 impl Drop for Capture {
     fn drop(&mut self) {
@@ -279,6 +280,12 @@ impl KeyboardSource for LinuxSource {
                 "no accessible physical keyboard; configure input access first",
             ));
         }
+        let mouse = crate::mouse::MouseRemap::start(
+            self.filter.config.clone(),
+            self.filter.gate.clone(),
+            self.desktop.clone(),
+            sink.clone(),
+        );
         let stop = Arc::new(AtomicBool::new(false));
         let signal = stop.clone();
         let output = self.output.clone();
@@ -412,6 +419,21 @@ impl KeyboardSource for LinuxSource {
                                 if sink.send(event).is_err() {
                                     return;
                                 }
+                                // Reaches here only while the mouse is not
+                                // grabbed, so its own action happens as well.
+                                let assigned = crate::mouse::button_of(code).filter(|&button| {
+                                    filter
+                                        .config
+                                        .lock()
+                                        .is_ok_and(|config| config.mouse.action(button).is_some())
+                                });
+                                if let Some(button) = assigned
+                                    && sink
+                                        .send(InputEvent::MouseShortcut { button, time })
+                                        .is_err()
+                                {
+                                    return;
+                                }
                             }
                             continue;
                         }
@@ -531,7 +553,12 @@ impl KeyboardSource for LinuxSource {
                         {
                             mods.set(key, value != 0);
                         }
-                        let captured = !swallowed && filter.gate.capture(event, lang, target);
+                        // A hotkey that types into the target goes through
+                        // the gate too, so keys typed meanwhile wait for it.
+                        let gated = !swallowed
+                            || hotkey
+                            || key.is_some_and(|key| filter.gate.reserves(key));
+                        let captured = gated && filter.gate.capture(event, lang, target);
                         if captured {
                             let epoch = filter.gate.epoch();
                             event = match event {
@@ -610,6 +637,7 @@ impl KeyboardSource for LinuxSource {
             stop,
             thread: Some(thread),
             output: self.output.clone(),
+            _mouse: mouse,
         }))
     }
 }
@@ -646,7 +674,7 @@ fn discover_missing(
         let Ok(mut device) = Device::open(&path) else {
             continue;
         };
-        if device.name() == Some(VIRTUAL_NAME) {
+        if device.name() == Some(VIRTUAL_NAME) || crate::mouse::is_own_virtual(&device) {
             continue;
         }
         let keyboard = device

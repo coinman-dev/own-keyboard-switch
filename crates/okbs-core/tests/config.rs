@@ -673,7 +673,6 @@ fn suggested_exclusions_are_added_once() {
     assert!(
         config::SUGGESTED_TERMINALS
             .iter()
-            .chain(config::SUGGESTED_EDITORS)
             .all(|name| name.ends_with(".exe") != cfg!(target_os = "linux")
                 && !name.contains(['/', '\\']))
     );

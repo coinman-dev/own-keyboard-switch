@@ -194,6 +194,26 @@ impl Hotkey {
         )
     }
 
+    /// Modifier keys to hold when this combination is synthesized. `Any`
+    /// side is sent as the left key.
+    pub fn modifier_keys(&self) -> Vec<PhysKey> {
+        let pick = |side: Option<Side>, left: PhysKey, right: PhysKey| match side {
+            None => None,
+            Some(Side::Right) => Some(right),
+            Some(Side::Any | Side::Left) => Some(left),
+        };
+        [
+            pick(self.mods.ctrl, PhysKey::ControlLeft, PhysKey::ControlRight),
+            pick(self.mods.shift, PhysKey::ShiftLeft, PhysKey::ShiftRight),
+            pick(self.mods.alt, PhysKey::AltLeft, PhysKey::AltRight),
+            pick(self.mods.win, PhysKey::MetaLeft, PhysKey::MetaRight),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|&key| key != self.key)
+        .collect()
+    }
+
     /// Whether pressing `key` while `state` modifiers are held triggers this hotkey.
     ///
     /// Modifiers that are not part of the hotkey must not be held, so

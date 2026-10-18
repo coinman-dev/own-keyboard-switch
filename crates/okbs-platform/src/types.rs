@@ -1,5 +1,6 @@
 //! Data exchanged between platform backends and the engine.
 
+use okbs_core::config::MouseButton;
 use okbs_core::{Lang, PhysKey};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -55,6 +56,10 @@ pub enum InputEvent {
         /// Never infer this from the foreground window later on the engine thread.
         in_own_window: bool,
     },
+    /// A mouse button assigned in «Управление мышью» was pressed. The engine
+    /// sends its key combination; the source has already withheld the
+    /// button itself when the settings ask for that.
+    MouseShortcut { button: MouseButton, time: Instant },
 }
 
 /// Identity of the foreground window and its focused control.
