@@ -25,10 +25,10 @@
   the text could land in the middle of it (`glhbdtn` instead of
   `ghbdtn l...`). They now wait and follow the corrected text, as after an
   automatic correction. Windows and Linux.
-- **Linux:** when the desktop connection came up a moment after the program
-  started, the setup window stayed open although every check had passed. The
-  program now continues by itself and closes the window, unless the user has
-  already used it.
+- **Linux:** the setup window no longer appears on a normal start. After the
+  first start it is shown only when something still needs the user after a
+  few seconds of quiet rechecks (the desktop connection may come up a moment
+  late); if every check passes later, the program continues by itself.
 - **Linux, Wayland:** hidden windows (settings, autoreplace list, clipboard
   history, spelling popup) no longer appear as empty windows. Wayland cannot
   hide a window, so they are now closed instead.
