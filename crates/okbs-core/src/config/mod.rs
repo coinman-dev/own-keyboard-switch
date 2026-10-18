@@ -6,6 +6,7 @@
 
 mod hotkeys;
 mod load;
+mod mouse;
 mod rules_file;
 mod sanitize;
 mod suggested;
@@ -14,8 +15,9 @@ pub use hotkeys::{HotkeyAction, HotkeyBinding, Hotkeys};
 pub use load::{
     ConfigError, ConfigIssue, LoadOutcome, from_toml_str, load_or_create, save, to_toml_string,
 };
+pub use mouse::{Mouse, MouseButton};
 pub use rules_file::{ImportedRules, MergeReport, merge_rules, rules_from_toml, rules_to_toml};
-pub use suggested::{SUGGESTED_EDITORS, SUGGESTED_TERMINALS, add_executables};
+pub use suggested::{SUGGESTED_TERMINALS, add_executables};
 
 use crate::keys::PhysKey;
 use crate::lang::Lang;
@@ -54,6 +56,8 @@ pub struct Config {
     pub clipboard: Clipboard,
     /// Проверка орфографии.
     pub spellcheck: Spellcheck,
+    /// Управление мышью.
+    pub mouse: Mouse,
     /// Linux-specific options.
     pub linux: Linux,
     /// Logging.
@@ -76,6 +80,7 @@ impl Default for Config {
             sounds: Sounds::default(),
             clipboard: Clipboard::default(),
             spellcheck: Spellcheck::default(),
+            mouse: Mouse::default(),
             linux: Linux::default(),
             log: Log::default(),
         }

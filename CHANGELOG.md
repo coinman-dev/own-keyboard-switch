@@ -2,6 +2,28 @@
 
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Mouse buttons.** A new "Mouse" settings section assigns a key combination
+  to the side buttons and the wheel click. It is off by default, since another
+  mouse program may own these buttons; once turned on, the side button nearer
+  the wheel copies (Ctrl+C) and the other one pastes (Ctrl+V), and their own
+  action (browser Back/Forward) is turned off while assigned. On Linux the
+  mouse is forwarded through a virtual twin without the assigned buttons.
+
+### Changed
+
+- The first start offers to exclude only terminals. Code editors and IDEs are
+  no longer suggested; add them in "Excluded programs" when needed.
+
+### Fixed
+
+- **Linux, Wayland:** hidden windows (settings, autoreplace list, clipboard
+  history, spelling popup) no longer appear as empty windows. Wayland cannot
+  hide a window, so they are now closed instead.
+
 ## 0.4.0-beta — 2026-10-15
 
 ### Added

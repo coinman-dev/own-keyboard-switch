@@ -3,7 +3,7 @@
 //! Russian and English strings use familiar wording for each setting.
 
 use okbs_core::Lang;
-use okbs_core::config::HotkeyAction;
+use okbs_core::config::{HotkeyAction, MouseButton};
 
 macro_rules! texts {
     ($( $id:ident => $ru:literal, $en:literal; )*) => {
@@ -60,6 +60,7 @@ texts! {
     // Settings sections
     SectionGeneral => "Общие", "General";
     SectionHotkeys => "Горячие клавиши", "Hotkeys";
+    SectionMouse => "Мышь", "Mouse";
     SectionRules => "Правила переключения", "Switching rules";
     SectionExclusions => "Программы-исключения", "Excluded programs";
     SectionTroubleshooting => "Устранение проблем", "Troubleshooting";
@@ -142,6 +143,14 @@ texts! {
     HotkeysHint => "Выберите действие и назначьте для него комбинацию клавиш.", "Select an action and assign a key combination to it.";
     ColumnAction => "Действие", "Action";
     ColumnCombination => "Комбинация", "Combination";
+    // Mouse
+    MouseEnabled => "Назначать комбинации клавиш кнопкам мыши", "Assign key combinations to mouse buttons";
+    MouseBlockOriginal => "Отключить собственное действие назначенных кнопок (например, «Назад» в браузере)", "Disable the own action of assigned buttons (such as browser \"Back\")";
+    MouseHint => "Выберите кнопку и назначьте комбинацию, которую она будет нажимать. Пустая комбинация оставляет обычное действие кнопки.", "Select a button and assign the key combination it presses. An empty combination keeps the button's usual action.";
+    ColumnMouseButton => "Кнопка", "Button";
+    MouseForward => "Боковая кнопка ближе к колёсику («Вперёд»)", "Side button nearer the wheel (\"Forward\")";
+    MouseBack => "Боковая кнопка дальше от колёсика («Назад»)", "Side button farther from the wheel (\"Back\")";
+    MouseMiddle => "Нажатие колёсика", "Wheel click";
     ActCancelOrConvertLastWord => "Отменить конвертацию раскладки", "Undo layout conversion";
     ActConvertSelectionLayout => "Сменить раскладку выделенного текста", "Change layout of selected text";
     ActInvertSelectionCase => "Сменить регистр выделенного текста", "Change case of selected text";
@@ -189,11 +198,10 @@ texts! {
     ExclusionsByFolder => "По папке с программами", "By program folder";
     ColumnApplication => "Приложение", "Application";
     ColumnPath => "Путь", "Path";
-    SuggestExclusionsButton => "Добавить терминалы и среды разработки...", "Add terminals and IDEs...";
-    SuggestExclusionsTitle => "Терминалы и среды разработки", "Terminals and IDEs";
-    SuggestExclusionsText => "В терминалах и редакторах кода набирают команды и имена, которые легко принять за слова в другой раскладке. Добавить эти программы в исключения, чтобы раскладка в них не переключалась автоматически?", "Commands and names typed in terminals and code editors are easily taken for words in the other layout. Add these programs to the exclusions so that the layout is not switched in them automatically?";
+    SuggestExclusionsButton => "Добавить терминалы...", "Add terminals...";
+    SuggestExclusionsTitle => "Терминалы", "Terminals";
+    SuggestExclusionsText => "В терминалах набирают команды, которые легко принять за слова в другой раскладке. Добавить терминалы в исключения, чтобы раскладка в них не переключалась автоматически? Другие программы можно добавить самостоятельно.", "Commands typed in terminals are easily taken for words in the other layout. Add the terminals to the exclusions so that the layout is not switched in them automatically? Other programs can be added by hand.";
     SuggestTerminals => "Терминалы и командная строка", "Terminals and command line";
-    SuggestEditors => "Среды разработки и редакторы кода", "IDEs and code editors";
     SuggestExclusionsLater => "Список можно изменить в разделе «Программы-исключения».", "The list can be changed later under Excluded programs.";
     BtnAddChosen => "Добавить", "Add";
     BtnDoNotAdd => "Не добавлять", "Do not add";
@@ -397,6 +405,15 @@ texts! {
     BtnPlay => "Проиграть", "Play";
     BtnChange => "Изменить...", "Change...";
     BtnBrowse => "Обзор...", "Browse...";
+}
+
+/// Label of a button in the «Мышь» list.
+pub const fn mouse_button_text(button: MouseButton) -> Text {
+    match button {
+        MouseButton::Forward => Text::MouseForward,
+        MouseButton::Back => Text::MouseBack,
+        MouseButton::Middle => Text::MouseMiddle,
+    }
 }
 
 /// Label of a hotkey action in the «Горячие клавиши» list.

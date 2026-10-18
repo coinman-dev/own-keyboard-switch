@@ -8,12 +8,13 @@
 use crate::appearance::configure as configure_context;
 use crate::appearance::{CONTROL_HEIGHT, action_button, content as content_style};
 use crate::flags::{Flag, flag_for_layout};
-use crate::i18n::{Text, hotkey_action_text, tr};
+use crate::i18n::{Text, hotkey_action_text, mouse_button_text, tr};
 use egui::{Color32, RichText, Ui};
 use okbs_core::config::{
     AutoReplaceItem, AutoReplaceTrigger, Config, ExecutableExclusion, FolderExclusion,
-    HotkeyAction, HotkeyBinding, ImportedRules, LogLevel, MatchKind, MergeReport, Rule, RuleAction,
-    SoundEvent, SoundMode, SwitchKey, Theme, TitleExclusion, TypedSpellcheckMode, UiLanguage,
+    HotkeyAction, HotkeyBinding, ImportedRules, LogLevel, MatchKind, MergeReport, MouseButton,
+    Rule, RuleAction, SoundEvent, SoundMode, SwitchKey, Theme, TitleExclusion, TypedSpellcheckMode,
+    UiLanguage,
 };
 use okbs_core::{Hotkey, Lang};
 
@@ -27,6 +28,8 @@ pub enum Section {
     General,
     /// «Горячие клавиши».
     Hotkeys,
+    /// «Мышь».
+    Mouse,
     /// «Правила переключения».
     Rules,
     /// «Программы-исключения».
@@ -45,9 +48,10 @@ pub enum Section {
 
 impl Section {
     /// All sections.
-    pub const ALL: [Section; 9] = [
+    pub const ALL: [Section; 10] = [
         Section::General,
         Section::Hotkeys,
+        Section::Mouse,
         Section::Rules,
         Section::Exclusions,
         Section::Troubleshooting,
@@ -61,6 +65,7 @@ impl Section {
         match self {
             Section::General => Text::SectionGeneral,
             Section::Hotkeys => Text::SectionHotkeys,
+            Section::Mouse => Text::SectionMouse,
             Section::Rules => Text::SectionRules,
             Section::Exclusions => Text::SectionExclusions,
             Section::Troubleshooting => Text::SectionTroubleshooting,
@@ -298,12 +303,44 @@ enum ExclusionTab {
     Folder,
 }
 
+/// What the combination dialog edits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HotkeySlot {
+    /// A program action in «Горячие клавиши».
+    Action(HotkeyAction),
+    /// The combination a mouse button presses.
+    Mouse(MouseButton),
+}
+
+impl HotkeySlot {
+    fn text(self) -> Text {
+        match self {
+            Self::Action(action) => hotkey_action_text(action),
+            Self::Mouse(button) => mouse_button_text(button),
+        }
+    }
+
+    fn get(self, config: &Config) -> HotkeyBinding {
+        match self {
+            Self::Action(action) => config.hotkeys.get(action),
+            Self::Mouse(button) => config.mouse.get(button),
+        }
+    }
+
+    fn get_mut(self, config: &mut Config) -> &mut HotkeyBinding {
+        match self {
+            Self::Action(action) => config.hotkeys.get_mut(action),
+            Self::Mouse(button) => config.mouse.get_mut(button),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 enum Dialog {
     ApplyError,
     LinuxSetup(crate::linux_setup::Status),
     Hotkey {
-        action: HotkeyAction,
+        slot: HotkeySlot,
         text: String,
         capturing: bool,
         error: Option<String>,
@@ -331,7 +368,6 @@ enum Dialog {
     /// Terminals and IDEs offered as excluded programs.
     SuggestedExclusions {
         terminals: bool,
-        editors: bool,
         /// Offered on the first start: the answer is saved without «Применить».
         apply_now: bool,
     },
@@ -422,6 +458,7 @@ pub struct SettingsView {
     general_tab: GeneralTab,
     exclusion_tab: ExclusionTab,
     selected_hotkey: Option<HotkeyAction>,
+    selected_mouse_button: Option<MouseButton>,
     selected_rule: Option<usize>,
     selected_exclusion: Option<usize>,
     selected_autoreplace: Option<usize>,
@@ -636,6 +673,7 @@ impl SettingsView {
             general_tab: GeneralTab::Basic,
             exclusion_tab: ExclusionTab::Executable,
             selected_hotkey: None,
+            selected_mouse_button: None,
             selected_rule: None,
             selected_exclusion: None,
             selected_autoreplace: None,
@@ -831,7 +869,6 @@ impl SettingsView {
                     self.section = Section::Exclusions;
                     self.dialog = Some(Dialog::SuggestedExclusions {
                         terminals: true,
-                        editors: true,
                         apply_now: true,
                     });
                 }
@@ -941,6 +978,7 @@ impl SettingsView {
                     match self.section {
                         Section::General => self.general(ui, lang),
                         Section::Hotkeys => self.hotkeys(ui, lang, events),
+                        Section::Mouse => self.mouse(ui, lang, events),
                         Section::Rules => self.rules(ui, lang, events),
                         Section::Exclusions => self.exclusions(ui, lang),
                         Section::Troubleshooting => self.troubleshooting(ui, lang),
@@ -1419,16 +1457,73 @@ impl SettingsView {
             open = self.selected_hotkey;
         }
         if let Some(action) = open {
-            self.open_hotkey_dialog(action, events);
+            self.selected_hotkey = Some(action);
+            self.open_hotkey_dialog(HotkeySlot::Action(action), events);
         }
     }
 
+    fn mouse(&mut self, ui: &mut Ui, lang: Lang, events: &mut Vec<SettingsEvent>) {
+        ui.checkbox(&mut self.draft.mouse.enabled, tr(Text::MouseEnabled, lang));
+        ui.add_enabled_ui(self.draft.mouse.enabled, |ui| {
+            ui.checkbox(
+                &mut self.draft.mouse.block_original,
+                tr(Text::MouseBlockOriginal, lang),
+            );
+            ui.add_space(6.0);
+            ui.label(tr(Text::MouseHint, lang));
+            ui.add_space(4.0);
+            let mut open = None;
+            const COLUMNS: &[f32] = &[0.7, 0.3];
+            table_row(ui, COLUMNS, false, |ui, column| {
+                let text = if column == 0 {
+                    Text::ColumnMouseButton
+                } else {
+                    Text::ColumnCombination
+                };
+                cell_label(ui, RichText::new(tr(text, lang)).strong());
+            });
+            ui.scope(|ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                for (index, &button) in MouseButton::ALL.iter().enumerate() {
+                    let selected = self.selected_mouse_button == Some(button);
+                    table_row(ui, COLUMNS, index % 2 == 0, |ui, column| {
+                        if column == 0 {
+                            let response =
+                                cell_selectable(ui, selected, tr(mouse_button_text(button), lang));
+                            if response.clicked() {
+                                self.selected_mouse_button = Some(button);
+                            }
+                            if response.double_clicked() {
+                                open = Some(button);
+                            }
+                        } else {
+                            cell_label(ui, self.draft.mouse.get(button).to_string());
+                        }
+                    });
+                }
+            });
+            ui.add_space(6.0);
+            if ui
+                .add_enabled(
+                    self.selected_mouse_button.is_some(),
+                    egui::Button::new(tr(Text::BtnAssign, lang)),
+                )
+                .clicked()
+            {
+                open = self.selected_mouse_button;
+            }
+            if let Some(button) = open {
+                self.selected_mouse_button = Some(button);
+                self.open_hotkey_dialog(HotkeySlot::Mouse(button), events);
+            }
+        });
+    }
+
     /// The dialog listens right away: the user just presses the combination.
-    fn open_hotkey_dialog(&mut self, action: HotkeyAction, events: &mut Vec<SettingsEvent>) {
-        self.selected_hotkey = Some(action);
+    fn open_hotkey_dialog(&mut self, slot: HotkeySlot, events: &mut Vec<SettingsEvent>) {
         self.dialog = Some(Dialog::Hotkey {
-            action,
-            text: self.draft.hotkeys.get(action).to_string(),
+            slot,
+            text: slot.get(&self.draft).to_string(),
             capturing: true,
             error: None,
         });
@@ -1651,7 +1746,7 @@ impl SettingsView {
                 value: values[i].clone(),
             });
         }
-        // Terminals and editors under their file names on this platform.
+        // Terminals under their file names on this platform.
         if cfg!(any(windows, target_os = "linux"))
             && ui
                 .add(action_button(tr(Text::SuggestExclusionsButton, lang)))
@@ -1659,7 +1754,6 @@ impl SettingsView {
         {
             self.dialog = Some(Dialog::SuggestedExclusions {
                 terminals: true,
-                editors: true,
                 apply_now: false,
             });
         }
@@ -2163,19 +2257,19 @@ impl SettingsView {
                 });
             }
             Dialog::Hotkey {
-                action,
+                slot,
                 text,
                 capturing,
                 error,
             } => {
-                let action = *action;
+                let slot = *slot;
                 let mut start_capture = false;
                 let mut stop_capture = false;
                 egui::Modal::new(egui::Id::new("hotkey_dialog")).show(&ctx, |ui| {
                     content_style(ui);
                     ui.set_width(380.0);
                     ui.heading(tr(Text::HotkeyDialogTitle, lang));
-                    ui.label(RichText::new(tr(hotkey_action_text(action), lang)).strong());
+                    ui.label(RichText::new(tr(slot.text(), lang)).strong());
                     ui.add_space(6.0);
                     if *capturing {
                         ui.label(tr(Text::HotkeyPressPrompt, lang));
@@ -2197,7 +2291,13 @@ impl SettingsView {
                     };
                     match &parsed {
                         Ok(binding) => {
-                            if let Some(other) = binding.0.and_then(|h| {
+                            // A mouse button only presses its combination,
+                            // so it cannot clash with a program action.
+                            let action = match slot {
+                                HotkeySlot::Action(action) => Some(action),
+                                HotkeySlot::Mouse(_) => None,
+                            };
+                            if let Some(other) = binding.0.zip(action).and_then(|(h, action)| {
                                 self.draft
                                     .hotkeys
                                     .iter()
@@ -2231,16 +2331,14 @@ impl SettingsView {
                             .clicked()
                             && let Ok(binding) = parsed
                         {
-                            *self.draft.hotkeys.get_mut(action) = binding;
+                            *slot.get_mut(&mut self.draft) = binding;
                             keep = false;
                         }
                         if ui.button(tr(Text::BtnClear, lang)).clicked() {
                             text.clear();
                         }
                         if ui.button(tr(Text::BtnDefault, lang)).clicked() {
-                            *text = okbs_core::config::Hotkeys::default()
-                                .get(action)
-                                .to_string();
+                            *text = slot.get(&Config::default()).to_string();
                         }
                         if ui.button(tr(Text::BtnCancel, lang)).clicked() {
                             keep = false;
@@ -2562,7 +2660,6 @@ impl SettingsView {
             }
             Dialog::SuggestedExclusions {
                 terminals,
-                editors,
                 apply_now,
             } => {
                 egui::Modal::new(egui::Id::new("suggested_exclusions_dialog")).show(&ctx, |ui| {
@@ -2572,46 +2669,25 @@ impl SettingsView {
                     ui.add_space(4.0);
                     ui.add(egui::Label::new(tr(Text::SuggestExclusionsText, lang)).wrap());
                     ui.add_space(6.0);
-                    for (chosen, text, names) in [
-                        (
-                            &mut *terminals,
-                            Text::SuggestTerminals,
-                            okbs_core::config::SUGGESTED_TERMINALS,
-                        ),
-                        (
-                            &mut *editors,
-                            Text::SuggestEditors,
-                            okbs_core::config::SUGGESTED_EDITORS,
-                        ),
-                    ] {
-                        ui.checkbox(chosen, tr(text, lang));
-                        ui.indent(text, |ui| weak(ui, &names.join(", ")));
-                    }
+                    ui.checkbox(terminals, tr(Text::SuggestTerminals, lang));
+                    ui.indent(Text::SuggestTerminals, |ui| {
+                        weak(ui, &okbs_core::config::SUGGESTED_TERMINALS.join(", "))
+                    });
                     ui.add_space(4.0);
                     weak(ui, tr(Text::SuggestExclusionsLater, lang));
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         if ui
-                            .add_enabled(
-                                *terminals || *editors,
-                                action_button(tr(Text::BtnAddChosen, lang)),
-                            )
+                            .add_enabled(*terminals, action_button(tr(Text::BtnAddChosen, lang)))
                             .clicked()
                         {
-                            let chosen: Vec<&str> = [
-                                (*terminals, okbs_core::config::SUGGESTED_TERMINALS),
-                                (*editors, okbs_core::config::SUGGESTED_EDITORS),
-                            ]
-                            .into_iter()
-                            .filter(|(chosen, _)| *chosen)
-                            .flat_map(|(_, names)| names.iter().copied())
-                            .collect();
-                            okbs_core::config::add_executables(&mut self.draft.exclusions, &chosen);
+                            let chosen = okbs_core::config::SUGGESTED_TERMINALS;
+                            okbs_core::config::add_executables(&mut self.draft.exclusions, chosen);
                             if *apply_now {
                                 // Only this answer is saved; other unsaved
                                 // edits of the draft stay unsaved.
                                 let mut config = self.applied.clone();
-                                okbs_core::config::add_executables(&mut config.exclusions, &chosen);
+                                okbs_core::config::add_executables(&mut config.exclusions, chosen);
                                 self.applied = config.clone();
                                 events.push(SettingsEvent::Apply(Box::new(config)));
                             }
@@ -2865,6 +2941,35 @@ mod tests {
             view.section = Section::General;
             frame(&mut view, &ctx);
         }
+    }
+
+    #[test]
+    fn mouse_section_shows_the_defaults_and_applies_a_new_combination() {
+        let ctx = test_context();
+        let mut view = SettingsView::new(Config::default(), Section::Mouse, Lang::Ru);
+        assert!(
+            !view.draft().mouse.enabled,
+            "another mouse program may own the buttons"
+        );
+        click(&mut view, &ctx, tr(Text::MouseEnabled, Lang::Ru));
+        assert!(view.draft().mouse.enabled);
+        let texts: Vec<String> = drawn_texts(&mut view, &ctx)
+            .into_iter()
+            .map(|(text, _)| text)
+            .collect();
+        assert!(texts.iter().any(|t| t == "Ctrl+C"));
+        assert!(texts.iter().any(|t| t == "Ctrl+V"));
+        click(&mut view, &ctx, tr(Text::MouseMiddle, Lang::Ru));
+        let events = click(&mut view, &ctx, tr(Text::BtnAssign, Lang::Ru));
+        assert!(matches!(events.as_slice(), [SettingsEvent::CaptureHotkey]));
+        view.handle(SettingsInput::HotkeyCaptured("Ctrl+W".parse().unwrap()));
+        let events = click(&mut view, &ctx, tr(Text::BtnOk, Lang::Ru));
+        assert!(matches!(
+            events.as_slice(),
+            [SettingsEvent::CancelCapture] | []
+        ));
+        assert_eq!(view.draft().mouse.middle.to_string(), "Ctrl+W");
+        assert_eq!(view.draft().mouse.forward.to_string(), "Ctrl+C");
     }
 
     /// Everything the window offers on Windows works; only the Linux port of
@@ -3358,10 +3463,6 @@ mod tests {
             view.handle(SettingsInput::SuggestExclusions);
             assert_eq!(view.section, Section::Exclusions);
             frame(&mut view, &ctx);
-            if add {
-                // Only the terminals.
-                click(&mut view, &ctx, tr(Text::SuggestEditors, Lang::Ru));
-            }
             let label = if add {
                 tr(Text::BtnAddChosen, Lang::Ru)
             } else {
@@ -3396,14 +3497,13 @@ mod tests {
         let ctx = test_context();
         let mut config = Config::default();
         config.exclusions.executables.push(ExecutableExclusion {
-            path: okbs_core::config::SUGGESTED_EDITORS[0].to_ascii_lowercase(),
+            path: okbs_core::config::SUGGESTED_TERMINALS[0].to_ascii_lowercase(),
         });
         let mut view = SettingsView::new(config, Section::Exclusions, Lang::Ru);
         click(&mut view, &ctx, tr(Text::SuggestExclusionsButton, Lang::Ru));
         let events = click(&mut view, &ctx, tr(Text::BtnAddChosen, Lang::Ru));
         assert!(events.is_empty(), "nothing is saved before «Применить»");
-        let count = okbs_core::config::SUGGESTED_TERMINALS.len()
-            + okbs_core::config::SUGGESTED_EDITORS.len();
+        let count = okbs_core::config::SUGGESTED_TERMINALS.len();
         assert_eq!(view.draft.exclusions.executables.len(), count);
         assert!(view.is_modified());
     }
@@ -3413,7 +3513,10 @@ mod tests {
         let ctx = test_context();
         let mut view = SettingsView::new(Config::default(), Section::Hotkeys, Lang::Ru);
         let mut events = Vec::new();
-        view.open_hotkey_dialog(HotkeyAction::CancelOrConvertLastWord, &mut events);
+        view.open_hotkey_dialog(
+            HotkeySlot::Action(HotkeyAction::CancelOrConvertLastWord),
+            &mut events,
+        );
         assert_eq!(events, [SettingsEvent::CaptureHotkey]);
         assert!(view.is_capturing(), "waits without an extra click");
         match &view.dialog {

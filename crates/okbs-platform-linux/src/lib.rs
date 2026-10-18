@@ -18,6 +18,7 @@ pub mod diagnose;
 pub mod input;
 pub mod integration;
 mod layer;
+mod mouse;
 #[cfg(test)]
 mod native_input_acceptance;
 pub mod panels;

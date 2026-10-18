@@ -4139,3 +4139,47 @@ fn engine_events_play_their_configured_sounds() {
     assert_eq!(h.text(), "ghbdtn ");
     assert!(h.take_sounds().is_empty(), "sound effects are off");
 }
+
+#[test]
+fn mouse_side_buttons_copy_and_paste_once_enabled() {
+    use okbs_core::config::MouseButton;
+    let mut config = Config::default();
+    config.mouse.enabled = true;
+    let mut h = Harness::with_config(Lang::En, config);
+    h.desktop.lock().text = "hello".chars().collect();
+    h.select_all();
+    let press = |h: &mut Harness, button| {
+        h.processor.handle_input(InputEvent::MouseShortcut {
+            button,
+            time: Instant::now(),
+        })
+    };
+    press(&mut h, MouseButton::Forward);
+    assert_eq!(h.desktop.lock().clipboard.as_deref(), Some("hello"));
+    press(&mut h, MouseButton::Back);
+    assert_eq!(h.text(), "hello");
+    assert!(
+        !h.desktop.lock().ctrl,
+        "the synthesized Ctrl must be released"
+    );
+    h.desktop.lock().clipboard = Some(" world".into());
+    h.processor.handle_input(InputEvent::MouseShortcut {
+        button: MouseButton::Middle,
+        time: Instant::now(),
+    });
+    assert_eq!(h.text(), "hello", "an unassigned button sends nothing");
+}
+
+#[test]
+fn mouse_buttons_send_nothing_when_disabled() {
+    use okbs_core::config::MouseButton;
+    let mut config = Config::default();
+    config.mouse.enabled = false;
+    let mut h = Harness::with_config(Lang::En, config);
+    let before = h.desktop.lock().injected;
+    h.processor.handle_input(InputEvent::MouseShortcut {
+        button: MouseButton::Back,
+        time: Instant::now(),
+    });
+    assert_eq!(h.desktop.lock().injected, before);
+}
