@@ -2,6 +2,16 @@
 
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Windows:** in applications whose input field is a separate embedded window
+  (Tauri and other WebView2 programs) the layout is now read and switched in
+  that field: the tray flag follows a layout change at once, typed text is
+  recognised in the right layout, and a password typed in the Russian layout
+  is retyped in English instead of failing.
+
 ## 0.5.0-beta — 2026-10-18
 
 ### Added

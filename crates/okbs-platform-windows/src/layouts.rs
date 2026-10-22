@@ -115,20 +115,41 @@ pub fn installed_layouts() -> Vec<LayoutInfo> {
     list.into_iter().map(|h| describe(layout_id(h))).collect()
 }
 
-fn foreground_thread() -> Option<(HWND, u32)> {
+/// The foreground window, the thread whose layout applies to typing and the
+/// window that receives layout requests. A focused child window can belong to
+/// another thread and process with its own layout: WebView2 in Tauri and other
+/// hosted browsers. Its thread, not the top-level one, receives the keys.
+fn foreground_thread() -> Option<(HWND, u32, HWND)> {
     // SAFETY: both calls accept any window handle, including a null one.
-    unsafe {
-        let hwnd = GetForegroundWindow();
-        if hwnd.is_invalid() {
-            return None;
-        }
-        input_thread(hwnd).map(|thread| (hwnd, thread))
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd.is_invalid() {
+        return None;
     }
+    let thread = input_thread(hwnd)?;
+    let mut info = GUITHREADINFO {
+        cbSize: size_of::<GUITHREADINFO>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: `info` is a properly sized GUITHREADINFO.
+    if unsafe { GetGUIThreadInfo(thread, &mut info) }.is_err() || info.hwndFocus.is_invalid() {
+        return Some((hwnd, thread, hwnd));
+    }
+    // A console keeps the conhost input thread found by `input_thread`.
+    if window_class(hwnd) == "ConsoleWindowClass" {
+        return Some((hwnd, thread, info.hwndFocus));
+    }
+    // SAFETY: querying an opaque HWND does not dereference foreign memory.
+    let focused = unsafe { GetWindowThreadProcessId(info.hwndFocus, None) };
+    Some((
+        hwnd,
+        if focused != 0 { focused } else { thread },
+        info.hwndFocus,
+    ))
 }
 
 /// Layout of the foreground input thread, including hosted console windows.
 pub fn foreground_layout() -> Option<LayoutId> {
-    let (_, thread) = foreground_thread()?;
+    let (_, thread, _) = foreground_thread()?;
     // SAFETY: GetKeyboardLayout accepts any thread id.
     Some(layout_id(unsafe { GetKeyboardLayout(thread) }))
 }
@@ -179,24 +200,12 @@ impl LayoutManager for WinLayouts {
     }
 
     fn set(&mut self, layout: LayoutId) -> Result<()> {
-        let (hwnd, thread) =
+        let (hwnd, thread, target) =
             foreground_thread().ok_or(PlatformError::Other("no foreground window".into()))?;
         // SAFETY: thread was obtained from the current foreground input window.
         if layout_id(unsafe { GetKeyboardLayout(thread) }) == layout {
             return Ok(());
         }
-        let mut info = GUITHREADINFO {
-            cbSize: size_of::<GUITHREADINFO>() as u32,
-            ..Default::default()
-        };
-        // SAFETY: `info` is a properly sized GUITHREADINFO.
-        let target = if unsafe { GetGUIThreadInfo(thread, &mut info) }.is_ok()
-            && !info.hwndFocus.is_invalid()
-        {
-            info.hwndFocus
-        } else {
-            hwnd
-        };
         // SAFETY: posting a message with plain values.
         unsafe {
             PostMessageW(
