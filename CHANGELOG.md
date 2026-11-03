@@ -6,6 +6,11 @@
 
 ### Fixed
 
+- A comma typed with the Russian layout after a word now becomes `?` on
+  Break also after it was erased with Backspace and typed again; before,
+  Backspace made the program forget the word and Break turned the comma
+  into `б`. A selection of symbols alone (`,`, `.`) is converted from the
+  layout that is on.
 - **Windows:** in applications whose input field is a separate embedded window
   (Tauri and other WebView2 programs) the layout is now read and switched in
   that field: the tray flag follows a layout change at once, typed text is
