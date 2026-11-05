@@ -7,6 +7,8 @@ use okbs_platform::{
 };
 use std::cell::RefCell;
 use std::path::PathBuf;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use windows::Win32::Foundation::{CloseHandle, HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::ClientToScreen;
 use windows::Win32::System::Com::{
@@ -17,9 +19,9 @@ use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
 use windows::Win32::UI::Accessibility::{
-    CUIAutomation, HWINEVENTHOOK, IUIAutomation, IUIAutomation2, IUIAutomationTextPattern2,
-    SetWinEventHook, TextPatternRangeEndpoint_Start, TextUnit_Character, UIA_TextPattern2Id,
-    UnhookWinEvent,
+    CUIAutomation, CUIAutomation8, HWINEVENTHOOK, IUIAutomation, IUIAutomation2,
+    IUIAutomationElement, IUIAutomationTextPattern2, SetWinEventHook,
+    TextPatternRangeEndpoint_Start, TextUnit_Character, UIA_TextPattern2Id, UnhookWinEvent,
 };
 use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetThreadDpiAwarenessContext,
@@ -268,7 +270,7 @@ impl FocusInfo for WinFocus {
     }
 
     fn activate_target(&self, target: InputTarget) -> Result<()> {
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         tracing::debug!(target: "okbs_input", ?target, current = ?input_target(),
             "Windows focus restoration requested");
         let window = HWND(target.window as usize as *mut core::ffi::c_void);
@@ -279,7 +281,7 @@ impl FocusInfo for WinFocus {
         }
         // SAFETY: activation is requested only by a user's insert command.
         let accepted = unsafe { SetForegroundWindow(window) }.as_bool();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(150);
+        let deadline = Instant::now() + Duration::from_millis(150);
         loop {
             if input_target() == Some(target) {
                 tracing::debug!(target: "okbs_input", ?target, accepted,
@@ -287,10 +289,10 @@ impl FocusInfo for WinFocus {
                     "Windows target control restored");
                 return Ok(());
             }
-            if std::time::Instant::now() >= deadline {
+            if Instant::now() >= deadline {
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            std::thread::sleep(Duration::from_millis(5));
         }
         tracing::debug!(target: "okbs_input", ?target, accepted, current = ?input_target(),
             elapsed_ms = started.elapsed().as_millis() as u64,
@@ -366,6 +368,18 @@ thread_local! {
     static AUTOMATION: RefCell<Option<Option<IUIAutomation>>> = const { RefCell::new(None) };
 }
 
+/// Longest wait for the focused application's UI Automation provider. Keys
+/// typed meanwhile are held back, so a busy application must not keep them:
+/// the defaults (2 s to connect, 20 s per call) froze typing in SilverFast.
+const UIA_TIMEOUT_MS: u32 = 300;
+/// A query this slow marks its process as slow.
+const UIA_SLOW: Duration = Duration::from_millis(250);
+/// How long a slow process is not asked again.
+const UIA_SLOW_PAUSE: Duration = Duration::from_secs(60);
+
+/// The process whose UI Automation answered too slowly last, and when.
+static SLOW_UIA: Mutex<Option<(u32, Instant)>> = Mutex::new(None);
+
 /// UI Automation client of the calling thread, created on first use.
 fn automation() -> Option<IUIAutomation> {
     AUTOMATION.with_borrow_mut(|slot| {
@@ -374,21 +388,75 @@ fn automation() -> Option<IUIAutomation> {
             // an already initialized apartment returns a harmless error code.
             unsafe {
                 let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-                let client: Option<IUIAutomation> =
-                    CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok();
-                if let Some(client2) = client
+                // Only the Windows 8 class implements IUIAutomation2, which
+                // sets the timeouts; the original one keeps the defaults.
+                let client = CoCreateInstance::<_, IUIAutomation>(
+                    &CUIAutomation8,
+                    None,
+                    CLSCTX_INPROC_SERVER,
+                )
+                .or_else(|_| CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER))
+                .ok();
+                let limited = client
                     .as_ref()
                     .and_then(|c| c.cast::<IUIAutomation2>().ok())
-                {
-                    // Do not stall typing when the focused application hangs.
-                    let _ = client2.SetConnectionTimeout(300);
-                    let _ = client2.SetTransactionTimeout(300);
+                    .is_some_and(|client2| {
+                        client2.SetConnectionTimeout(UIA_TIMEOUT_MS).is_ok()
+                            && client2.SetTransactionTimeout(UIA_TIMEOUT_MS).is_ok()
+                    });
+                if !limited {
+                    tracing::warn!("UI Automation timeouts are not available");
                 }
                 client
             }
         })
         .clone()
     })
+}
+
+/// Process of the foreground window.
+fn foreground_pid() -> Option<u32> {
+    // SAFETY: query-only calls; `pid` is a valid out pointer.
+    unsafe {
+        let window = GetForegroundWindow();
+        if window.is_invalid() {
+            return None;
+        }
+        let mut pid = 0;
+        GetWindowThreadProcessId(window, Some(&mut pid));
+        (pid != 0).then_some(pid)
+    }
+}
+
+/// Runs `query` on the focused UI Automation element, unless the foreground
+/// process answered too slowly recently: some applications (Qt ones such as
+/// SilverFast) stall while busy, and every query would hold the typed keys.
+fn with_focused_element<T>(query: impl FnOnce(&IUIAutomationElement) -> Option<T>) -> Option<T> {
+    let pid = foreground_pid()?;
+    if let Ok(slow) = SLOW_UIA.lock()
+        && slow.is_some_and(|(slow_pid, since)| slow_pid == pid && since.elapsed() < UIA_SLOW_PAUSE)
+    {
+        return None;
+    }
+    let client = automation()?;
+    let started = Instant::now();
+    // SAFETY: plain COM call on a valid client; the element is reference counted.
+    let result = unsafe { client.GetFocusedElement() }
+        .ok()
+        .and_then(|element| query(&element));
+    let elapsed = started.elapsed();
+    if elapsed >= UIA_SLOW {
+        tracing::info!(
+            pid,
+            elapsed_ms = elapsed.as_millis() as u64,
+            pause_s = UIA_SLOW_PAUSE.as_secs(),
+            "UI Automation of the foreground application is slow; not asked for a while"
+        );
+        if let Ok(mut slow) = SLOW_UIA.lock() {
+            *slow = Some((pid, Instant::now()));
+        }
+    }
+    result
 }
 
 /// The caret of classic controls, which create a system caret.
@@ -420,11 +488,9 @@ fn system_caret() -> Option<[f32; 2]> {
 /// The caret of browsers, Electron, WPF and UWP editors, from the character
 /// before it: a caret range itself has no width and often no rectangle.
 fn uia_caret() -> Option<[f32; 2]> {
-    let client = automation()?;
-    // SAFETY: plain COM calls on a valid client; the returned array is read
+    // SAFETY: plain COM calls on a valid element; the returned array is read
     // within its bounds and destroyed once.
-    unsafe {
-        let element = client.GetFocusedElement().ok()?;
+    with_focused_element(|element| unsafe {
         let pattern: IUIAutomationTextPattern2 =
             element.GetCurrentPatternAs(UIA_TextPattern2Id).ok()?;
         let mut active = BOOL::default();
@@ -445,17 +511,13 @@ fn uia_caret() -> Option<[f32; 2]> {
             .map(|rect| [(rect[0] + rect[2]) as f32, (rect[1] + rect[3]) as f32]);
         let _ = SafeArrayDestroy(rects);
         position
-    }
+    })
 }
 
 /// Whether the focused element is a password field (browsers, WPF, UWP).
 fn uia_is_password() -> Option<bool> {
-    let client = automation()?;
-    // SAFETY: plain COM calls on a valid client; results are reference counted.
-    unsafe {
-        let element = client.GetFocusedElement().ok()?;
-        element.CurrentIsPassword().ok().map(|b| b.as_bool())
-    }
+    // SAFETY: a plain COM call on a valid element.
+    with_focused_element(|element| unsafe { element.CurrentIsPassword() }.ok()).map(|b| b.as_bool())
 }
 
 /// The hook covers the small range that holds both the foreground change and

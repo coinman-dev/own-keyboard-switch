@@ -6,6 +6,14 @@
 
 ### Fixed
 
+- **Windows:** SilverFast 9 no longer stops responding when the layout is
+  switched. It hangs on the layout request the program sent to the window;
+  in Qt programs the layout is now switched with the Windows language
+  shortcut (Alt+Shift, Ctrl+Shift or Win+Space), as when the user presses it.
+- **Windows:** typing no longer freezes for up to 20 seconds after a
+  conversion in applications that answer accessibility queries slowly. The
+  300 ms limit on these queries was never applied; it now is, and a program
+  that answered slowly is not asked again for a minute.
 - A comma typed with the Russian layout after a word now becomes `?` on
   Break also after it was erased with Backspace and typed again; before,
   Backspace made the program forget the word and Break turned the comma
