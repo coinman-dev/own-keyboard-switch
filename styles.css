@@ -26,6 +26,7 @@
   --mono: "Cascadia Code", "JetBrains Mono", "SF Mono", Consolas, "DejaVu Sans Mono", monospace;
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
   --wrap: 1180px;
+  --shot-opacity: 0.9; /* screenshots let the background show through by 10% */
 }
 
 * { box-sizing: border-box; }
@@ -267,6 +268,7 @@ p { text-wrap: pretty; }
   box-shadow: 0 70px 120px -50px rgba(29, 78, 216, 0.8), 0 30px 70px -40px rgba(190, 18, 60, 0.6);
   transform-origin: 50% 100%; will-change: transform;
 }
+.shot img { opacity: var(--shot-opacity); }
 
 /* ---------- How ---------- */
 .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; position: relative; counter-reset: s; }
@@ -358,7 +360,7 @@ p { text-wrap: pretty; }
   opacity: 0; transform: scale(1.06) translateY(24px);
   transition: opacity 0.55s var(--ease), transform 0.7s var(--ease);
 }
-.tour-frame img.is-active { opacity: 1; transform: none; }
+.tour-frame img.is-active { opacity: var(--shot-opacity); transform: none; }
 .tour-dots { display: flex; gap: 8px; justify-content: center; }
 .tour-dots i { width: 26px; height: 4px; border-radius: 2px; background: var(--line-strong); transition: background 0.3s, width 0.3s; }
 .tour-dots i.is-active { width: 46px; background: var(--grad); }
@@ -467,7 +469,7 @@ kbd {
   .tour-grid { grid-template-columns: 1fr; }
   .tour-stage { display: none; }
   .tour-step { min-height: 0; opacity: 1; padding: 0 0 0 18px; margin-bottom: 44px; }
-  .tour-inline { display: block; margin-top: 10px; border-radius: 10px; border: 1px solid var(--line-strong); }
+  .tour-inline { display: block; opacity: var(--shot-opacity); margin-top: 10px; border-radius: 10px; border: 1px solid var(--line-strong); }
   .keylist li { grid-template-columns: 1fr; gap: 12px; }
   .section { padding-top: 80px; }
 }
