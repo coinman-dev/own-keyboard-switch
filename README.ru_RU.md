@@ -7,7 +7,7 @@
 <h1 align="center">Own Keyboard Switch</h1>
 <p align="center">Автоматическое переключение русской и английской раскладки в Windows и Linux.</p>
 
-[![Релиз](https://img.shields.io/badge/release-0.5.0--beta-orange)](https://github.com/coinman-dev/own-keyboard-switch/releases/tag/v0.5.0-beta)
+[![Релиз](https://img.shields.io/badge/release-0.6.0--beta-orange)](https://github.com/coinman-dev/own-keyboard-switch/releases/tag/v0.6.0-beta)
 [![Сборка](https://github.com/coinman-dev/own-keyboard-switch/actions/workflows/release.yml/badge.svg)](https://github.com/coinman-dev/own-keyboard-switch/actions/workflows/release.yml)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-blue)](#скачать)
 [![Linux](https://img.shields.io/badge/Linux-X11%20%7C%20GNOME%20%7C%20KDE-blue)](#linux)
@@ -25,19 +25,21 @@
 **[Руководство пользователя](doc/ru/README.md)** — установка, быстрый старт,
 как работает автопереключение, все настройки, Linux, решение проблем.
 
-> **0.5.0-beta — предварительный релиз для Windows и Linux** (X11, GNOME и
-> KDE Plasma 6 на Wayland). В нём появились сочетания клавиш для кнопок мыши
-> и исправления, найденные на настоящем компьютере с Kubuntu 26.04. Версия для
+> **0.6.0-beta — предварительный релиз для Windows и Linux** (X11, GNOME и
+> KDE Plasma 6 на Wayland). В нём появилось руководство пользователя со
+> снимками экрана, программа распознаёт команды и слова языков
+> программирования, набранные не в той раскладке, и правильно переключает
+> раскладку в программах на Qt и во встроенных полях ввода Windows. Версия для
 > Linux ещё молодая: сообщения об ошибках приветствуются.
 
 ## Скачать
 
 | Вариант | Скачать | Как использовать |
 |---|---|---|
-| Portable | [okbswitch-portable.exe](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.5.0-beta/okbswitch-portable.exe) | Положить в доступную для записи папку и запустить. Установка не нужна. |
-| Установщик | [okbswitch-install.exe](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.5.0-beta/okbswitch-install.exe) | Выбрать установку для себя или всех пользователей, ярлыки и автозапуск. |
-| Пакет Linux | [okbswitch_0.5.0-beta_amd64.deb](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.5.0-beta/okbswitch_0.5.0-beta_amd64.deb) | Ubuntu 24.04 и новее: `sudo apt install ./okbswitch_0.5.0-beta_amd64.deb`. |
-| AppImage для Linux | [okbswitch-0.5.0-beta-x86_64.AppImage](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.5.0-beta/okbswitch-0.5.0-beta-x86_64.AppImage) | Сделать исполняемым и запустить; настройки хранятся рядом с файлом. |
+| Portable | [okbswitch-portable.exe](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.6.0-beta/okbswitch-portable.exe) | Положить в доступную для записи папку и запустить. Установка не нужна. |
+| Установщик | [okbswitch-install.exe](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.6.0-beta/okbswitch-install.exe) | Выбрать установку для себя или всех пользователей, ярлыки и автозапуск. |
+| Пакет Linux | [okbswitch_0.6.0-beta_amd64.deb](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.6.0-beta/okbswitch_0.6.0-beta_amd64.deb) | Ubuntu 24.04 и новее: `sudo apt install ./okbswitch_0.6.0-beta_amd64.deb`. |
+| AppImage для Linux | [okbswitch-0.6.0-beta-x86_64.AppImage](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.6.0-beta/okbswitch-0.6.0-beta-x86_64.AppImage) | Сделать исполняемым и запустить; настройки хранятся рядом с файлом. |
 
 Windows 10/11 x64; Linux x86_64 с X11, GNOME 45–50 или KDE Plasma 6. В Linux при
 первом запуске программа просит разрешение (pkexec), чтобы дать сеансу доступ к
@@ -100,7 +102,7 @@ Windows 10/11 x64; Linux x86_64 с X11, GNOME 45–50 или KDE Plasma 6. В Li
 **Установка.** В Ubuntu 24.04 и новее установите пакет:
 
 ```sh
-sudo apt install ./okbswitch_0.5.0-beta_amd64.deb
+sudo apt install ./okbswitch_0.6.0-beta_amd64.deb
 ```
 
 Пакет добавляет программу в меню приложений и устанавливает правило udev
@@ -109,8 +111,8 @@ sudo apt install ./okbswitch_0.5.0-beta_amd64.deb
 root не нужны. AppImage устанавливать не нужно:
 
 ```sh
-chmod +x okbswitch-0.5.0-beta-x86_64.AppImage
-./okbswitch-0.5.0-beta-x86_64.AppImage
+chmod +x okbswitch-0.6.0-beta-x86_64.AppImage
+./okbswitch-0.6.0-beta-x86_64.AppImage
 ```
 
 **Первый запуск.** Окно настройки проверяет доступ к клавиатуре, связь с рабочим

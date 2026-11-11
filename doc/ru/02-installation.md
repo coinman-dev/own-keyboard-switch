@@ -60,7 +60,7 @@
 ### Пакет .deb
 
 ```sh
-sudo apt install ./okbswitch_0.5.0-beta_amd64.deb
+sudo apt install ./okbswitch_0.6.0-beta_amd64.deb
 ```
 
 Пакет добавляет программу в меню приложений и устанавливает правило udev,
@@ -70,8 +70,8 @@ sudo apt install ./okbswitch_0.5.0-beta_amd64.deb
 ### AppImage
 
 ```sh
-chmod +x okbswitch-0.5.0-beta-x86_64.AppImage
-./okbswitch-0.5.0-beta-x86_64.AppImage
+chmod +x okbswitch-0.6.0-beta-x86_64.AppImage
+./okbswitch-0.6.0-beta-x86_64.AppImage
 ```
 
 AppImage хранит настройки и журналы рядом с собой, как portable-версия для

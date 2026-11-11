@@ -59,7 +59,7 @@ First add Russian and English layouts in the system keyboard settings.
 ### .deb package
 
 ```sh
-sudo apt install ./okbswitch_0.5.0-beta_amd64.deb
+sudo apt install ./okbswitch_0.6.0-beta_amd64.deb
 ```
 
 The package adds the program to the application menu and installs a udev rule
@@ -69,8 +69,8 @@ that gives the user of the active local session access to keyboards and
 ### AppImage
 
 ```sh
-chmod +x okbswitch-0.5.0-beta-x86_64.AppImage
-./okbswitch-0.5.0-beta-x86_64.AppImage
+chmod +x okbswitch-0.6.0-beta-x86_64.AppImage
+./okbswitch-0.6.0-beta-x86_64.AppImage
 ```
 
 The AppImage keeps its settings and logs next to itself, like the portable
