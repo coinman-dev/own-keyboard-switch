@@ -28,6 +28,12 @@ if [[ -z "${changes//[[:space:]]/}" ]]; then
     exit 1
 fi
 
+# Links in the changelog are relative to the repository root and do not open
+# from the release page; point them at the files of this version's tag.
+# Absolute URLs, in-page anchors and ./ ../ paths stay as they are.
+repo_url="https://github.com/coinman-dev/own-keyboard-switch"
+changes="$(sed -E "s#\]\(([^)/:\#.][^):]*)\)#](${repo_url}/blob/v${version}/\1)#g" <<<"$changes")"
+
 if [[ "$version" == *-* ]]; then
     kind='Предварительная версия'
 else
