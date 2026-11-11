@@ -14,8 +14,10 @@
 #   - .ai/ — планы и журнал работ, .git — история.
 #
 # УДАЛЯЕТСЯ по --force (пересоберётся само):
-#   - target/ — обычно 6–7 ГБ: сборки Linux и Windows, кэш зависимостей,
-#     PNG-превью настроек и журналы рядом с собранным exe;
+#   - target/ — обычно 6–15 ГБ: сборки Linux и Windows, кэш зависимостей,
+#     PNG-превью настроек и журналы рядом с собранным exe. КРОМЕ
+#     target/linux-dist/: там готовые .deb и AppImage выпуска, их загружают
+#     в релиз вручную;
 #   - log/ в корне — журналы, скопированные с Windows для разбора;
 #   - мусор ОС и редактора: *Zone.Identifier (их плодит Проводник Windows
 #     при копировании в WSL), .DS_Store, Thumbs.db, *.swp, *.orig, *.rs.bk,
@@ -26,10 +28,21 @@
 #     Не в git и в архив не идёт. Восстанавливается tools/fetch-lang-sources.sh,
 #     но это сеть и внешние сайты, поэтому решение за человеком.
 #
+# ПОКАЗЫВАЕТСЯ, но удаляется только по --tmp:
+#   - tmp/ — черновики, журналы проверок и отдельные target-каталоги агентов
+#     (бывало до 40 ГБ). В архив не идёт никогда. По --force --tmp удаляется
+#     всё, кроме того, что нужно для выпуска и качается из сети:
+#       tmp/linux-build-noble — корень Ubuntu 24.04 для сборки Linux-выпуска;
+#       tmp/linux-browser     — браузер для проверок ввода (fetch-linux-test-browser.py);
+#       tmp/appimage-runtime  — среда запуска AppImage для упаковки.
+#     Часть файлов создана проверками от root: их скрипт не удалит и скажет,
+#     что нужен sudo.
+#
 # Использование:
 #   tools/clean-artifacts.sh                     # ПРОБНЫЙ ПРОГОН — что уйдёт и сколько это
 #   tools/clean-artifacts.sh --force             # собственно удалить артефакты
 #   tools/clean-artifacts.sh --force --sources   # ...вместе с загруженными корпусами
+#   tools/clean-artifacts.sh --force --tmp       # ...и временные файлы в tmp/
 #   tools/clean-artifacts.sh --archive [OUT]     # собрать лёгкий .tar.gz (ничего не удаляя)
 #                                                # по умолчанию — в ТЕКУЩИЙ каталог
 #   tools/clean-artifacts.sh --archive --with-git [OUT]   # ...вместе с историей .git
@@ -56,30 +69,50 @@ ARTIFACT_DIRS=(
 # Скачанные корпуса: восстановимы, но только из сети.
 HEAVY_REGENERABLE=("data/sources")
 
+# Готовые пакеты выпуска внутри target/: остаются при чистке.
+KEEP_IN_TARGET=("linux-dist")
+
+# Что остаётся в tmp/ при --tmp: нужно для выпуска, качается из сети.
+TMP_KEEP=("linux-build-noble" "linux-browser" "appimage-runtime")
+
 # Мусор ОС и редактора (ищется по всему дереву).
 JUNK_GLOBS=(
   "*.DS_Store" "Thumbs.db" "*Zone.Identifier" "*.swp" "*.swo" "*.orig" "*.rej"
   "*~" "*.rs.bk" "*.pyc" "*.pdb" "okbswitch.*.log" ".okbswitch-write-test"
 )
 
-# Не попадает В АРХИВ, но --force это не трогает.
-ARCHIVE_EXTRA_EXCLUDES=(".idea" ".vscode" "*.iml")
+# Не попадает В АРХИВ, но --force это не трогает (tmp/ — только по --tmp).
+ARCHIVE_EXTRA_EXCLUDES=("tmp" ".idea" ".vscode" "*.iml")
 
 human() { du -sh "$1" 2>/dev/null | cut -f1; }
+# Размер в КБ. du возвращает ошибку, если внутри есть закрытые каталоги (файлы
+# проверок от root в tmp/), но итог всё равно печатает; под pipefail такая
+# ошибка в присваивании молча оборвала бы скрипт.
+kb_of() { { du -sk "$1" 2>/dev/null || true; } | cut -f1; }
+# КБ → «12K», «340M», «13G» для подсчётов, где du вызвать нельзя (разность).
+fmt_kb() {
+  if [ "$1" -ge 1048576 ]; then echo "$(( $1 / 1048576 ))G"
+  elif [ "$1" -ge 1024 ]; then echo "$(( $1 / 1024 ))M"
+  else echo "${1}K"; fi
+}
 
 usage() { sed -n '2,/^set -euo/p' "$SELF" | grep '^#' | sed 's/^# \{0,1\}//'; exit 0; }
 
-# find по дереву без target/.git/data/sources — иначе обход семи гигабайт ради
-# десятка файлов мусора.
+# find по дереву без target/.git/data/sources/tmp — иначе обход десятков гигабайт
+# ради десятка файлов мусора. В tmp/ лежит корень Ubuntu для сборки выпуска и
+# файлы проверок от root: их «мусор» — файлы чужой системы, а закрытый каталог
+# заставил бы find вернуть ошибку, и pipefail молча оборвал бы весь прогон.
 prune_find() {
   find . -path ./.git -prune -o -path ./target -prune -o -path ./data/sources -prune \
-       -o "$@"
+       -o -path ./tmp -prune -o "$@" || true
 }
 
 # ── разбор аргументов ────────────────────────────────────────────────────────
 MODE="dry"          # dry | force | archive
 WITH_GIT=0
 WITH_SOURCES=0
+WITH_TMP=0
+tmp_failed=()
 OUT=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -87,6 +120,7 @@ while [ $# -gt 0 ]; do
     --archive|-a) MODE="archive" ;;
     --with-git)   WITH_GIT=1 ;;
     --sources)    WITH_SOURCES=1 ;;
+    --tmp)        WITH_TMP=1 ;;
     -h|--help)    usage ;;
     -*)           echo "неизвестный ключ: $1" >&2; exit 2 ;;
     *)            OUT="$1" ;;   # позиционный → путь архива
@@ -94,8 +128,8 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-if [ "$WITH_SOURCES" -eq 1 ] && [ "$MODE" != "force" ]; then
-  echo "--sources работает только вместе с --force" >&2
+if { [ "$WITH_SOURCES" -eq 1 ] || [ "$WITH_TMP" -eq 1 ]; } && [ "$MODE" != "force" ]; then
+  echo "--sources и --tmp работают только вместе с --force" >&2
   exit 2
 fi
 
@@ -125,6 +159,7 @@ if [ "$MODE" = "archive" ]; then
   echo "  -> $OUT"
   [ "$WITH_GIT" -eq 0 ] && echo "  (история .git не входит — нужна, добавьте --with-git)"
   echo "  (data/sources/ не входит: 233 МБ, качается tools/fetch-lang-sources.sh)"
+  echo "  (tmp/ не входит: черновики, проверки и корень Ubuntu для сборки)"
   tar -C "$(dirname "$ROOT")" -czf "$OUT" "${excludes[@]}" "$BASE"
   echo "Готово. Размер архива: $(human "$OUT")"
   exit 0
@@ -139,8 +174,28 @@ echo "Артефакты под $ROOT:"
 for d in "${ARTIFACT_DIRS[@]}"; do
   if [ -d "$d" ]; then
     found=1
+    if [ "$d" = "target" ]; then
+      # Готовые пакеты выпуска остаются.
+      kb=$(kb_of target)
+      kept=""
+      keep_args=()
+      for k in "${KEEP_IN_TARGET[@]}"; do
+        keep_args+=(! -name "$k")
+        [ -d "target/$k" ] || continue
+        kb=$(( kb - $(kb_of "target/$k") ))
+        kept="$kept target/$k/ ($(human "target/$k"))"
+      done
+      if [ -n "$kept" ]; then
+        note "$(fmt_kb "$kb")" "target/ (остаются:$kept)"
+      else
+        note "$(human target)" "target/"
+      fi
+      total_kb=$(( total_kb + kb ))
+      [ "$MODE" = "force" ] && find target -mindepth 1 -maxdepth 1 "${keep_args[@]}" -exec rm -rf -- {} +
+      continue
+    fi
     note "$(human "$d")" "$d/"
-    total_kb=$(( total_kb + $(du -sk "$d" | cut -f1) ))
+    total_kb=$(( total_kb + $(kb_of "$d") ))
     [ "$MODE" = "force" ] && rm -rf -- "$d"
   fi
 done
@@ -165,7 +220,7 @@ for d in "${HEAVY_REGENERABLE[@]}"; do
   if [ "$WITH_SOURCES" -eq 1 ]; then
     found=1
     note "$(human "$d")" "$d/ (по --sources)"
-    total_kb=$(( total_kb + $(du -sk "$d" | cut -f1) ))
+    total_kb=$(( total_kb + $(kb_of "$d") ))
     [ "$MODE" = "force" ] && rm -rf -- "$d"
   else
     echo
@@ -174,6 +229,34 @@ for d in "${HEAVY_REGENERABLE[@]}"; do
     echo "  вернуть: tools/fetch-lang-sources.sh"
   fi
 done
+
+# Временные файлы: по умолчанию только показываем.
+if [ -d tmp ]; then
+  tmp_kb=0
+  tmp_list=()
+  for e in tmp/* tmp/.[!.]*; do
+    [ -e "$e" ] || continue
+    keep=0
+    for k in "${TMP_KEEP[@]}"; do [ "$e" = "tmp/$k" ] && keep=1; done
+    [ "$keep" -eq 1 ] && continue
+    tmp_list+=("$e")
+    tmp_kb=$(( tmp_kb + $(kb_of "$e") ))
+  done
+  if [ "${#tmp_list[@]}" -gt 0 ]; then
+    if [ "$WITH_TMP" -eq 1 ]; then
+      found=1
+      note "$(fmt_kb "$tmp_kb")" "tmp/ — ${#tmp_list[@]} шт. (по --tmp; остаются ${TMP_KEEP[*]})"
+      total_kb=$(( total_kb + tmp_kb ))
+      if [ "$MODE" = "force" ]; then
+        for e in "${tmp_list[@]}"; do rm -rf -- "$e" 2>/dev/null || tmp_failed+=("$e"); done
+      fi
+    else
+      echo
+      echo "Временные файлы (НЕ удаляются без --tmp, в архив не идут):"
+      note "$(fmt_kb "$tmp_kb")" "tmp/ — ${#tmp_list[@]} шт., кроме ${TMP_KEEP[*]}"
+    fi
+  fi
+fi
 
 if [ "$found" -eq 0 ]; then
   echo "  (чисто — удалять нечего)"
@@ -194,9 +277,15 @@ if [ "$MODE" = "force" ]; then
   echo "  вернуть сборку:    cargo build"
   echo "  сборка Windows:    tools/cross-windows.sh build --release -p okbswitch"
   [ "$WITH_SOURCES" -eq 1 ] && echo "  вернуть корпуса:   tools/fetch-lang-sources.sh"
+  if [ "${#tmp_failed[@]}" -gt 0 ]; then
+    echo
+    echo "Не удалось удалить из tmp/ (файлы от root, созданные проверками):"
+    for e in "${tmp_failed[@]}"; do echo "  $e"; done
+    echo "  удалить их: sudo rm -rf ${tmp_failed[*]}"
+  fi
 elif [ "$found" -ne 0 ]; then
   echo
   echo "Это был ПРОБНЫЙ ПРОГОН — ничего не удалено."
-  echo "  удалить:            tools/clean-artifacts.sh --force"
+  echo "  удалить:            tools/clean-artifacts.sh --force [--tmp] [--sources]"
   echo "  вместо этого архив: tools/clean-artifacts.sh --archive"
 fi
