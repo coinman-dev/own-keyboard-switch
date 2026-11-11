@@ -7,7 +7,9 @@
   The page sources live in site/. The build copies them to tmp/site-dist, puts the
   version from Cargo.toml in place of {{VERSION}} and takes the screenshots from
   doc/images and the logo from images/, so the page always shows the same pictures
-  as the user guide. {{SITE_URL}} becomes -SiteUrl and {{DATE}} the build date
+  as the user guide. The page itself asks the GitHub API for the newest release
+  and updates the version and the download links, so a new release does not
+  need a rebuild; the built version is the fallback. {{SITE_URL}} becomes -SiteUrl and {{DATE}} the build date
   (robots.txt, sitemap.xml, canonical and hreflang links, schema.org data).
 
   -Ping tells search engines that support IndexNow (Bing, Yandex, Seznam, Naver)
@@ -40,6 +42,7 @@ if ($cargo -notmatch '(?m)^version\s*=\s*"([^"]+)"') { throw 'Version not found 
 $version = $Matches[1]
 if (-not $SiteUrl.EndsWith('/')) { $SiteUrl += '/' }
 $date = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
+$build = (Get-Date).ToUniversalTime().ToString('yyyyMMddHHmm')  # cache-busting for styles.css and main.js
 
 if (Test-Path $dist) { Remove-Item $dist -Recurse -Force }
 New-Item -ItemType Directory -Force (Join-Path $dist 'img') | Out-Null
@@ -48,7 +51,7 @@ foreach ($file in Get-ChildItem (Join-Path $root 'site') -File) {
     $target = Join-Path $dist $file.Name
     if ($file.Extension -in '.html', '.css', '.js', '.xml', '.txt') {
         $text = [System.IO.File]::ReadAllText($file.FullName, $utf8).
-            Replace('{{VERSION}}', $version).Replace('{{SITE_URL}}', $SiteUrl).Replace('{{DATE}}', $date)
+            Replace('{{VERSION}}', $version).Replace('{{SITE_URL}}', $SiteUrl).Replace('{{DATE}}', $date).Replace('{{BUILD}}', $build)
         [System.IO.File]::WriteAllText($target, $text, $utf8)
     } else {
         Copy-Item $file.FullName $target

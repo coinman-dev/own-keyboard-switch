@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru">
+<html lang="ru" data-version="{{VERSION}}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -44,7 +44,7 @@
   <link rel="icon" href="img/favicon.ico" sizes="any">
   <link rel="icon" type="image/png" href="img/logo-256.png">
   <script>document.documentElement.classList.add('js');</script>
-  <link rel="stylesheet" href="styles.css?v={{VERSION}}">
+  <link rel="stylesheet" href="styles.css?v={{BUILD}}">
 </head>
 <body>
   <div class="progress" aria-hidden="true"><span id="progressBar"></span></div>
@@ -376,29 +376,29 @@
       <header class="section-head">
         <p class="eyebrow reveal" data-i18n="dl.eyebrow">Скачать · {{VERSION}}</p>
         <h2 class="reveal" style="--d:80ms" data-i18n="dl.title">Windows 10/11 и Linux</h2>
-        <p class="section-lead reveal" style="--d:160ms" data-i18n="dl.lead">Предварительный релиз. Версия для Linux ещё молодая: сообщения об ошибках приветствуются.</p>
+        <p class="section-lead reveal" style="--d:160ms" id="prereleaseNote" data-i18n="dl.lead">Предварительный релиз. Версия для Linux ещё молодая: сообщения об ошибках приветствуются.</p>
       </header>
 
       <div class="downloads" data-stagger="90">
-        <a class="dl c-blue reveal" href="https://github.com/coinman-dev/own-keyboard-switch/releases/download/v{{VERSION}}/okbswitch-portable.exe">
+        <a data-asset="portable" class="dl c-blue reveal" href="https://github.com/coinman-dev/own-keyboard-switch/releases/download/v{{VERSION}}/okbswitch-portable.exe">
           <span class="dl-os">Windows x64</span>
           <strong>Portable</strong>
           <span class="dl-file">okbswitch-portable.exe</span>
           <span class="dl-note" data-i18n="dl.1">Положить в доступную для записи папку и запустить. Установка не нужна.</span>
         </a>
-        <a class="dl c-blue reveal" href="https://github.com/coinman-dev/own-keyboard-switch/releases/download/v{{VERSION}}/okbswitch-install.exe">
+        <a data-asset="installer" class="dl c-blue reveal" href="https://github.com/coinman-dev/own-keyboard-switch/releases/download/v{{VERSION}}/okbswitch-install.exe">
           <span class="dl-os">Windows x64</span>
           <strong data-i18n="dl.2.t">Установщик</strong>
           <span class="dl-file">okbswitch-install.exe</span>
           <span class="dl-note" data-i18n="dl.2">Установка для себя или всех пользователей, ярлыки и автозапуск.</span>
         </a>
-        <a class="dl c-red reveal" href="https://github.com/coinman-dev/own-keyboard-switch/releases/download/v{{VERSION}}/okbswitch_{{VERSION}}_amd64.deb">
+        <a data-asset="deb" class="dl c-red reveal" href="https://github.com/coinman-dev/own-keyboard-switch/releases/download/v{{VERSION}}/okbswitch_{{VERSION}}_amd64.deb">
           <span class="dl-os">Linux x86_64</span>
           <strong data-i18n="dl.3.t">Пакет .deb</strong>
           <span class="dl-file">okbswitch_{{VERSION}}_amd64.deb</span>
           <span class="dl-note" data-i18n="dl.3">Ubuntu 24.04 и новее. Добавляет программу в меню приложений.</span>
         </a>
-        <a class="dl c-red reveal" href="https://github.com/coinman-dev/own-keyboard-switch/releases/download/v{{VERSION}}/okbswitch-{{VERSION}}-x86_64.AppImage">
+        <a data-asset="appimage" class="dl c-red reveal" href="https://github.com/coinman-dev/own-keyboard-switch/releases/download/v{{VERSION}}/okbswitch-{{VERSION}}-x86_64.AppImage">
           <span class="dl-os">Linux x86_64</span>
           <strong>AppImage</strong>
           <span class="dl-file">okbswitch-{{VERSION}}-x86_64.AppImage</span>
@@ -495,6 +495,6 @@
     </nav>
   </footer>
 
-  <script src="main.js?v={{VERSION}}"></script>
+  <script src="main.js?v={{BUILD}}"></script>
 </body>
 </html>

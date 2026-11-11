@@ -171,7 +171,11 @@
   $$('[data-i18n-aria]').forEach(function (el) { RU[el.dataset.i18nAria] = el.getAttribute('aria-label'); });
   $$('[data-href-en]').forEach(function (el) { el.dataset.hrefRu = el.getAttribute('href'); });
 
-  function t(key) { return DICT[lang][key] || RU[key] || ''; }
+  /* The version the page was built for; replaced by the newest release after load. */
+  var BUILT = root.dataset.version;
+  var version = BUILT;
+  function withVersion(text) { return version === BUILT ? text : text.split(BUILT).join(version); }
+  function t(key) { return withVersion(DICT[lang][key] || RU[key] || ''); }
 
   function applyLang(next, remember) {
     lang = next === 'en' ? 'en' : 'ru';
@@ -520,8 +524,79 @@
     });
   });
 
+  /* ------------------------------------------------------------------ *
+   * Newest release. GitHub Pages serves static files only, so the page asks
+   * the GitHub API which release is the newest (prereleases included) and
+   * rewrites the version and download links. Without network or with the API
+   * limit reached, the version of the build stays.
+   * ------------------------------------------------------------------ */
+  var REPO = 'coinman-dev/own-keyboard-switch';
+  var ASSETS = {
+    portable: /portable\.exe$/i,
+    installer: /install\.exe$/i,
+    deb: /_amd64\.deb$/i,
+    appimage: /\.AppImage$/i
+  };
+
+  function applyRelease(rel) {
+    var next = String(rel.tag_name || '').replace(/^v/, '');
+    if (!/^\d+\.\d+/.test(next)) return;
+    var old = version;
+    version = next;
+    if (next !== old) {
+      // Texts with the version: headings, file names, install commands.
+      $$('[data-asset] .dl-file, .code code').forEach(function (el) {
+        el.textContent = el.textContent.split(old).join(next);
+      });
+      $$('.copy').forEach(function (el) { el.dataset.copy = el.dataset.copy.split(old).join(next); });
+      $$('[data-asset]').forEach(function (el) {
+        el.setAttribute('href', el.getAttribute('href').split(old).join(next));
+      });
+      $$('[data-i18n]').forEach(function (el) {
+        if (/\d+\.\d+/.test(DICT[lang][el.dataset.i18n] || RU[el.dataset.i18n] || '')) el.innerHTML = t(el.dataset.i18n);
+      });
+    }
+    // Exact file links from the release. A file not attached yet (the Linux
+    // files are uploaded after the Windows ones) points to the release page.
+    $$('[data-asset]').forEach(function (el) {
+      var asset = (rel.assets || []).filter(function (a) { return ASSETS[el.dataset.asset].test(a.name); })[0];
+      if (asset) {
+        el.setAttribute('href', asset.browser_download_url);
+        $('.dl-file', el).textContent = asset.name;
+      } else if (rel.html_url) {
+        el.setAttribute('href', rel.html_url);
+      }
+    });
+    $('#prereleaseNote').hidden = !rel.prerelease;
+  }
+
+  function loadRelease() {
+    var cacheKey = 'okbs-release';
+    try {
+      var cached = JSON.parse(sessionStorage.getItem(cacheKey) || 'null');
+      if (cached && Date.now() - cached.at < 30 * 60 * 1000) { applyRelease(cached.rel); return; }
+    } catch (e) { /* storage unavailable */ }
+    if (!window.fetch) return;
+    fetch('https://api.github.com/repos/' + REPO + '/releases?per_page=5', {
+      headers: { Accept: 'application/vnd.github+json' }
+    }).then(function (r) { return r.ok ? r.json() : []; }).then(function (list) {
+      var rel = list.filter(function (x) { return !x.draft; })[0];
+      if (!rel) return;
+      // Keep only what the page needs.
+      rel = {
+        tag_name: rel.tag_name,
+        html_url: rel.html_url,
+        prerelease: rel.prerelease,
+        assets: (rel.assets || []).map(function (a) { return { name: a.name, browser_download_url: a.browser_download_url }; })
+      };
+      try { sessionStorage.setItem(cacheKey, JSON.stringify({ at: Date.now(), rel: rel })); } catch (e) { /* ignore */ }
+      applyRelease(rel);
+    }).catch(function () { /* offline: keep the built version */ });
+  }
+
   /* ------------------------------------------------------------------ */
   applyLang(initialLang(), false);
+  loadRelease();
   onFrame();
   if (reduced) showFinal(EXAMPLES[0]); else runDemo();
 })();
