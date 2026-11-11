@@ -442,9 +442,21 @@
   var tourSteps = $$('.tour-step');
   var tourImgs = $$('img', frame);
   var tourDots = $$('#tourDots i');
+  var tourIndex = 0;
   function setTour(index) {
+    var prev = tourIndex;
+    if (index < 0 || index === prev) return;
+    tourIndex = index;
     tourSteps.forEach(function (el, i) { el.classList.toggle('is-active', i === index); });
-    tourImgs.forEach(function (el, i) { el.classList.toggle('is-active', i === index); });
+    // Forward: the new screenshot comes in from the right and pushes the old one out to the left.
+    // Backward the motion reverses. Screenshots in between jump without crossing the frame.
+    tourImgs.forEach(function (el, i) {
+      var moving = i === index || i === prev;
+      if (!moving) el.style.transition = 'none';
+      el.classList.toggle('is-active', i === index);
+      el.classList.toggle('is-past', i < index);
+      if (!moving) { void el.offsetWidth; el.style.transition = ''; }
+    });
     tourDots.forEach(function (el, i) { el.classList.toggle('is-active', i === index); });
   }
   if ('IntersectionObserver' in window) {
