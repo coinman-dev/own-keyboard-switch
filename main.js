@@ -163,6 +163,7 @@
     'copied': 'Скопировано'
   };
   var DICT = { ru: RU, en: EN };
+  var SITE = $('link[rel="alternate"][hreflang="ru"]').getAttribute('href');
   var lang = 'ru';
 
   $$('[data-i18n]').forEach(function (el) { RU[el.dataset.i18n] = el.innerHTML; });
@@ -191,14 +192,25 @@
       b.setAttribute('aria-pressed', String(b.dataset.lang === lang));
     });
     refreshVerdicts();
+    // The Russian page lives at the site root, the English one at ?lang=en (see hreflang in index.html).
+    var url = SITE + (lang === 'en' ? '?lang=en' : '');
+    $('link[rel="canonical"]').setAttribute('href', url);
+    $('meta[property="og:url"]').setAttribute('content', url);
+    $('meta[property="og:locale"]').setAttribute('content', lang === 'en' ? 'en_US' : 'ru_RU');
     if (remember) {
       try { localStorage.setItem('okbs-lang', lang); } catch (e) { /* private mode */ }
+      if (window.history && history.replaceState) {
+        history.replaceState(null, '', (lang === 'en' ? '?lang=en' : location.pathname) + location.hash);
+      }
     }
   }
 
   function initialLang() {
     var q = /[?&]lang=(ru|en)\b/.exec(location.search);
     if (q) return q[1];
+    // Search engines get the language of the address they asked for, so that
+    // the root stays Russian for them, as declared by hreflang.
+    if (/bot|crawl|spider|slurp|yandex|bing|duckduck|baidu|lighthouse/i.test(navigator.userAgent)) return 'ru';
     try {
       var saved = localStorage.getItem('okbs-lang');
       if (saved === 'ru' || saved === 'en') return saved;
