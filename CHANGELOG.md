@@ -11,6 +11,10 @@
 
 ### Fixed
 
+- The autoreplace list and insert menu open again after the clipboard history
+  window was the first one shown: the program windows no longer stop
+  responding. Switching between the list and the menu no longer recreates the
+  window.
 - Shell commands and programming words typed in the Russian layout are now
   switched to English also at the start of a line and without English
   context: `htop`, `dir`, `tmp`, `chkdsk`, `mkdir`, `netstat`, `cls`,

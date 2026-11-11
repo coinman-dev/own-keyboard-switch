@@ -1015,7 +1015,7 @@ fn window_thread(
         }
         match root {
             Root::List => {
-                options.viewport = list.builder().with_visible(true);
+                options.viewport = list.root_builder();
                 options.centered = false;
             }
             Root::History => {
