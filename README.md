@@ -18,6 +18,13 @@
 `ghbdtn` → `привет`, `руддщ` → `hello`. It runs in the tray, supports custom rules
 and text expansions, and includes clipboard tools and a floating layout indicator.
 
+<p align="center">
+  <img src="doc/images/en/general.png" alt="Own Keyboard Switch: the settings window, General section" width="640">
+</p>
+
+**[User guide](doc/en/README.md)** — installation, quick start, how automatic
+switching works, every setting, Linux, troubleshooting.
+
 > **0.5.0-beta is a prerelease for Windows and Linux** (X11, GNOME and KDE
 > Plasma 6 on Wayland). It adds mouse button shortcuts and fixes found on a
 > real Kubuntu 26.04 computer. The Linux version is still young: reports are

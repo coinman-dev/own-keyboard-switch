@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+### Added
+
+- User guide in English and Russian with screenshots of every settings
+  section: [doc/en](doc/en/README.md), [doc/ru](doc/ru/README.md).
+
 ### Fixed
 
 - Shell commands and programming words typed in the Russian layout are now
