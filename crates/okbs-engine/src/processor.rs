@@ -1511,7 +1511,15 @@ impl Processor {
                         self.block_next_word |= blockers.backspace;
                     }
                 } else {
-                    self.last = None;
+                    // Erasing a separator keeps the word: Break still knows
+                    // a comma typed again after it (`Вопрос ,` → `Вопрос ?`).
+                    let erased = self
+                        .last
+                        .as_mut()
+                        .is_some_and(|last| last.separator.pop().is_some());
+                    if !erased {
+                        self.last = None;
+                    }
                     self.block_next_word |= blockers.backspace;
                 }
             }
@@ -1887,6 +1895,8 @@ impl Processor {
             ?switch_reason,
             target = ?analysis.decision.switch_to(),
             suspicious = analysis.decision == Decision::Suspicious,
+            // The layout was chosen by hand before the word: no automatic switch.
+            layout_chosen,
             "word finished"
         );
         // A manually chosen layout keeps the word out of the switching
@@ -1940,6 +1950,7 @@ impl Processor {
             return;
         }
         if self.focus_blocks() {
+            tracing::debug!("word not corrected: own window, excluded program or password field");
             if improve {
                 self.previous_word = None;
             }
@@ -2868,7 +2879,20 @@ impl Processor {
             self.restore_clipboard(saved, &text);
             return SelectionLeft::Selected;
         }
-        let Some(result) = op.apply(&text) else {
+        // Symbols alone tell no layout: they were typed in the one that is on,
+        // so `,` typed with the Russian layout becomes `?`, not `б`.
+        let symbols_from = (op == TextOp::Layout && layouts::guess_text_lang(&text).is_none())
+            .then(|| self.current_lang())
+            .flatten();
+        let result = match symbols_from {
+            Some(from) => Some(layouts::convert_text(
+                &text,
+                layouts::builtin_keymap(from),
+                layouts::builtin_keymap(from.other()),
+            )),
+            None => op.apply(&text),
+        };
+        let Some(result) = result else {
             self.restore_clipboard(saved, &text);
             self.play(Sound::Error);
             return SelectionLeft::Selected;
@@ -2894,7 +2918,9 @@ impl Processor {
             return SelectionLeft::Selected;
         }
         if op == TextOp::Layout
-            && let Some(lang) = layouts::guess_text_lang(&result)
+            && let Some(lang) = symbols_from
+                .map(Lang::other)
+                .or_else(|| layouts::guess_text_lang(&result))
             && let Err(err) = self.set_lang(lang)
         {
             tracing::debug!("cannot switch layout after selection conversion: {err}");

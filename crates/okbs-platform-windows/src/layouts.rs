@@ -3,6 +3,7 @@
 
 use crossbeam_channel::Sender;
 use okbs_core::{KeyMap, Lang, PhysKey};
+use okbs_platform::{Injector, KeyStroke};
 use okbs_platform::{LayoutId, LayoutInfo, LayoutManager, PlatformError, Result, StopGuard};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -12,6 +13,7 @@ use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::Globalization::{
     GetLocaleInfoEx, LCIDToLocaleName, LOCALE_SLOCALIZEDDISPLAYNAME,
 };
+use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_SZ, RegGetValueW};
 use windows::Win32::UI::Input::Ime::ImmGetDefaultIMEWnd;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyboardLayout, GetKeyboardLayoutList, HKL, MAPVK_VSC_TO_VK_EX, MapVirtualKeyExW,
@@ -115,20 +117,41 @@ pub fn installed_layouts() -> Vec<LayoutInfo> {
     list.into_iter().map(|h| describe(layout_id(h))).collect()
 }
 
-fn foreground_thread() -> Option<(HWND, u32)> {
+/// The foreground window, the thread whose layout applies to typing and the
+/// window that receives layout requests. A focused child window can belong to
+/// another thread and process with its own layout: WebView2 in Tauri and other
+/// hosted browsers. Its thread, not the top-level one, receives the keys.
+fn foreground_thread() -> Option<(HWND, u32, HWND)> {
     // SAFETY: both calls accept any window handle, including a null one.
-    unsafe {
-        let hwnd = GetForegroundWindow();
-        if hwnd.is_invalid() {
-            return None;
-        }
-        input_thread(hwnd).map(|thread| (hwnd, thread))
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd.is_invalid() {
+        return None;
     }
+    let thread = input_thread(hwnd)?;
+    let mut info = GUITHREADINFO {
+        cbSize: size_of::<GUITHREADINFO>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: `info` is a properly sized GUITHREADINFO.
+    if unsafe { GetGUIThreadInfo(thread, &mut info) }.is_err() || info.hwndFocus.is_invalid() {
+        return Some((hwnd, thread, hwnd));
+    }
+    // A console keeps the conhost input thread found by `input_thread`.
+    if window_class(hwnd) == "ConsoleWindowClass" {
+        return Some((hwnd, thread, info.hwndFocus));
+    }
+    // SAFETY: querying an opaque HWND does not dereference foreign memory.
+    let focused = unsafe { GetWindowThreadProcessId(info.hwndFocus, None) };
+    Some((
+        hwnd,
+        if focused != 0 { focused } else { thread },
+        info.hwndFocus,
+    ))
 }
 
 /// Layout of the foreground input thread, including hosted console windows.
 pub fn foreground_layout() -> Option<LayoutId> {
-    let (_, thread) = foreground_thread()?;
+    let (_, thread, _) = foreground_thread()?;
     // SAFETY: GetKeyboardLayout accepts any thread id.
     Some(layout_id(unsafe { GetKeyboardLayout(thread) }))
 }
@@ -165,6 +188,89 @@ pub fn keymap_for(id: LayoutId) -> KeyMap {
     map
 }
 
+/// Qt windows (`Qt630QWindowIcon`, `Qt5QWindowIcon`…).
+fn is_qt_window(window: HWND) -> bool {
+    let class = window_class(window);
+    class.starts_with("Qt") && class.contains("QWindow")
+}
+
+/// Keys of the Windows shortcut that switches the input language
+/// («Сочетания клавиш для языков ввода»); Win+Space when none is set.
+fn language_hotkey() -> &'static [PhysKey] {
+    let mut value = [0_u16; 8];
+    let mut size = (value.len() * 2) as u32;
+    // SAFETY: the buffer and its size in bytes describe valid memory.
+    let read = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            windows::core::w!(r"Keyboard Layout\Toggle"),
+            windows::core::w!("Language Hotkey"),
+            RRF_RT_REG_SZ,
+            None,
+            Some(value.as_mut_ptr().cast()),
+            Some(&mut size),
+        )
+    };
+    let setting = if read.is_ok() {
+        value[0]
+    } else {
+        u16::from(b'1')
+    };
+    match u8::try_from(setting).unwrap_or(0) {
+        b'1' => &[PhysKey::AltLeft, PhysKey::ShiftLeft],
+        b'2' => &[PhysKey::ControlLeft, PhysKey::ShiftLeft],
+        b'4' => &[PhysKey::Backquote],
+        _ => &[PhysKey::MetaLeft, PhysKey::Space],
+    }
+}
+
+/// Switches with the Windows language shortcut, pressed as many times as it
+/// takes. SilverFast 9 (Qt 6.3) stops responding for good when a layout
+/// change arrives as `WM_INPUTLANGCHANGEREQUEST`, but accepts the shortcut.
+fn switch_by_hotkey(hwnd: HWND, thread: u32, layout: LayoutId) -> Result<()> {
+    let keys = language_hotkey();
+    let strokes: Vec<KeyStroke> = keys
+        .iter()
+        .map(|&key| KeyStroke::press(key))
+        .chain(keys.iter().rev().map(|&key| KeyStroke::release(key)))
+        .collect();
+    let mut injector = crate::SendInputInjector::default();
+    for _ in 0..installed_layouts().len().max(1) {
+        // SAFETY: thread id of the foreground input window.
+        let before = layout_id(unsafe { GetKeyboardLayout(thread) });
+        if before == layout {
+            return Ok(());
+        }
+        injector.send(&strokes)?;
+        let deadline = std::time::Instant::now() + Duration::from_millis(250);
+        loop {
+            // SAFETY: handle/value queries only.
+            if unsafe { GetForegroundWindow() } != hwnd {
+                return Err(PlatformError::Other(
+                    "focus changed before layout switch".into(),
+                ));
+            }
+            // SAFETY: as above.
+            let now = layout_id(unsafe { GetKeyboardLayout(thread) });
+            if now == layout {
+                return Ok(());
+            }
+            if now != before {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(PlatformError::Other(
+                    "the language shortcut did not switch the layout".into(),
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    Err(PlatformError::Other(
+        "the language shortcut did not reach the requested layout".into(),
+    ))
+}
+
 /// Layout manager for the foreground window.
 #[derive(Debug, Default)]
 pub struct WinLayouts;
@@ -179,24 +285,15 @@ impl LayoutManager for WinLayouts {
     }
 
     fn set(&mut self, layout: LayoutId) -> Result<()> {
-        let (hwnd, thread) =
+        let (hwnd, thread, target) =
             foreground_thread().ok_or(PlatformError::Other("no foreground window".into()))?;
         // SAFETY: thread was obtained from the current foreground input window.
         if layout_id(unsafe { GetKeyboardLayout(thread) }) == layout {
             return Ok(());
         }
-        let mut info = GUITHREADINFO {
-            cbSize: size_of::<GUITHREADINFO>() as u32,
-            ..Default::default()
-        };
-        // SAFETY: `info` is a properly sized GUITHREADINFO.
-        let target = if unsafe { GetGUIThreadInfo(thread, &mut info) }.is_ok()
-            && !info.hwndFocus.is_invalid()
-        {
-            info.hwndFocus
-        } else {
-            hwnd
-        };
+        if is_qt_window(hwnd) || is_qt_window(target) {
+            return switch_by_hotkey(hwnd, thread, layout);
+        }
         // SAFETY: posting a message with plain values.
         unsafe {
             PostMessageW(

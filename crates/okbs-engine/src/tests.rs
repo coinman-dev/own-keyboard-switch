@@ -4212,3 +4212,40 @@ fn keys_typed_during_break_wait_for_its_correction() {
     // Once the engine has finished, typing passes straight through again.
     assert!(!gate.capture(key(PhysKey::KeyA, true), Some(Lang::Ru), field));
 }
+
+/// A comma typed with the Russian layout after a space becomes `?` on Break,
+/// also after it was erased and typed again, and when the word is no longer
+/// tracked (the comma alone, converted as a selection).
+#[test]
+fn break_turns_a_comma_typed_again_into_a_question_mark() {
+    // Steps: Russian text, `P` = Break, `B` = Backspace, `M` = mouse click.
+    for (steps, expected) in [
+        (&["Вопрос ,", "P"][..], "Вопрос ?"),
+        (&["Вопрос ,", "B", ",", "P"], "Вопрос ?"),
+        (&["Вопрос ,", "P", "P", "B", ",", "P"], "Вопрос ?"),
+        (&["Вопрос,", "B", " ,", "P"], "Вопрос ?"),
+        (&["Вопрос,", "P", "P", "B", " ,", "P"], "Вопрос ?"),
+        (&["Вопрос ", "B", " ,", "P"], "Вопрос ?"),
+        (&["Ну и почему ,", "B", "B", " ,", "P"], "Ну и почему ?"),
+        (&["Вопрос ,", "M", "P"], "Вопрос ?"),
+        (&["Вопрос .", "M", "P"], "Вопрос /"),
+    ] {
+        let mut h = Harness::with_config(Lang::Ru, reported_config());
+        h.enable_gate();
+        for step in steps {
+            match *step {
+                "P" => h.tap(PhysKey::Pause),
+                "B" => h.tap(PhysKey::Backspace),
+                "M" => h
+                    .events
+                    .extend(h.processor.handle_input(InputEvent::MouseButton {
+                        time: Instant::now(),
+                        in_own_window: false,
+                    })),
+                text => h.type_as(text, Lang::Ru),
+            }
+        }
+        assert_eq!(h.text(), expected, "{steps:?}");
+        assert_eq!(h.layout(), Lang::En, "{steps:?}");
+    }
+}

@@ -7,7 +7,7 @@
 <h1 align="center">Own Keyboard Switch</h1>
 <p align="center">Automatic Russian ↔ English keyboard layout switching for Windows and Linux.</p>
 
-[![Release](https://img.shields.io/badge/release-0.5.0--beta-orange)](https://github.com/coinman-dev/own-keyboard-switch/releases/tag/v0.5.0-beta)
+[![Release](https://img.shields.io/badge/release-0.6.0--beta-orange)](https://github.com/coinman-dev/own-keyboard-switch/releases/tag/v0.6.0-beta)
 [![Build](https://github.com/coinman-dev/own-keyboard-switch/actions/workflows/release.yml/badge.svg)](https://github.com/coinman-dev/own-keyboard-switch/actions/workflows/release.yml)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-blue)](#download)
 [![Linux](https://img.shields.io/badge/Linux-X11%20%7C%20GNOME%20%7C%20KDE-blue)](#linux)
@@ -18,19 +18,27 @@
 `ghbdtn` → `привет`, `руддщ` → `hello`. It runs in the tray, supports custom rules
 and text expansions, and includes clipboard tools and a floating layout indicator.
 
-> **0.5.0-beta is a prerelease for Windows and Linux** (X11, GNOME and KDE
-> Plasma 6 on Wayland). It adds mouse button shortcuts and fixes found on a
-> real Kubuntu 26.04 computer. The Linux version is still young: reports are
-> welcome.
+<p align="center">
+  <img src="doc/images/en/general.png" alt="Own Keyboard Switch: the settings window, General section" width="640">
+</p>
+
+**[User guide](doc/en/README.md)** — installation, quick start, how automatic
+switching works, every setting, Linux, troubleshooting.
+
+> **0.6.0-beta is a prerelease for Windows and Linux** (X11, GNOME and KDE
+> Plasma 6 on Wayland). It adds a user guide with screenshots, recognises shell
+> commands and programming words typed in the wrong layout and fixes layout
+> switching in Qt programs and embedded input fields on Windows. The Linux
+> version is still young: reports are welcome.
 
 ## Download
 
 | Edition | Download | Usage |
 |---|---|---|
-| Portable | [okbswitch-portable.exe](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.5.0-beta/okbswitch-portable.exe) | Put the file in a writable folder and run it. No installation required. |
-| Installer | [okbswitch-install.exe](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.5.0-beta/okbswitch-install.exe) | Choose a current-user or all-users installation, shortcuts and startup options. |
-| Linux package | [okbswitch_0.5.0-beta_amd64.deb](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.5.0-beta/okbswitch_0.5.0-beta_amd64.deb) | Ubuntu 24.04 or newer: `sudo apt install ./okbswitch_0.5.0-beta_amd64.deb`. |
-| Linux AppImage | [okbswitch-0.5.0-beta-x86_64.AppImage](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.5.0-beta/okbswitch-0.5.0-beta-x86_64.AppImage) | Make it executable and run it; settings are kept next to the file. |
+| Portable | [okbswitch-portable.exe](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.6.0-beta/okbswitch-portable.exe) | Put the file in a writable folder and run it. No installation required. |
+| Installer | [okbswitch-install.exe](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.6.0-beta/okbswitch-install.exe) | Choose a current-user or all-users installation, shortcuts and startup options. |
+| Linux package | [okbswitch_0.6.0-beta_amd64.deb](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.6.0-beta/okbswitch_0.6.0-beta_amd64.deb) | Ubuntu 24.04 or newer: `sudo apt install ./okbswitch_0.6.0-beta_amd64.deb`. |
+| Linux AppImage | [okbswitch-0.6.0-beta-x86_64.AppImage](https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.6.0-beta/okbswitch-0.6.0-beta-x86_64.AppImage) | Make it executable and run it; settings are kept next to the file. |
 
 Windows 10/11 x64; Linux x86_64 with X11, GNOME 45–50 or KDE Plasma 6. On Linux
 the first start asks for permission (pkexec) to give your session access to the
@@ -94,7 +102,7 @@ Add the Russian and English layouts in the system keyboard settings first.
 **Install.** On Ubuntu 24.04 or newer install the package:
 
 ```sh
-sudo apt install ./okbswitch_0.5.0-beta_amd64.deb
+sudo apt install ./okbswitch_0.6.0-beta_amd64.deb
 ```
 
 It adds the program to the application menu and installs a udev rule
@@ -103,8 +111,8 @@ local session access to keyboards and to `/dev/uinput`. Membership in the
 `input` group or root is not needed. The AppImage needs no installation:
 
 ```sh
-chmod +x okbswitch-0.5.0-beta-x86_64.AppImage
-./okbswitch-0.5.0-beta-x86_64.AppImage
+chmod +x okbswitch-0.6.0-beta-x86_64.AppImage
+./okbswitch-0.6.0-beta-x86_64.AppImage
 ```
 
 **First start.** A setup window checks the keyboard access, the desktop

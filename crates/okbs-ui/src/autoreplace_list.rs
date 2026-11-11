@@ -291,6 +291,12 @@ impl ListView {
         });
     }
 
+    /// The builder passed to egui on every frame. It must not depend on the
+    /// mode: egui recreates a window whose `active` flag changes, and the glow
+    /// backend did not survive recreating this immediate viewport (the GUI
+    /// thread stopped after the clipboard history had been the first window).
+    /// The window is created inactive; the temporary menu takes focus with
+    /// `ViewportCommand::Focus` when it is shown.
     pub fn builder(&self) -> egui::ViewportBuilder {
         egui::ViewportBuilder::default()
             .with_title(&self.config.labels.title)
@@ -299,7 +305,38 @@ impl ListView {
             .with_resizable(false)
             .with_maximize_button(false)
             .with_always_on_top()
-            .with_active(!self.persistent)
+            .with_active(false)
             .with_visible(self.visible())
+    }
+
+    /// The builder of the list when it is the first window of the GUI thread:
+    /// the temporary menu is created focused, the persistent list is not.
+    pub fn root_builder(&self) -> egui::ViewportBuilder {
+        self.builder()
+            .with_active(!self.persistent)
+            .with_visible(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn switching_between_list_and_menu_does_not_recreate_the_window() {
+        let menu = ListView::default();
+        menu.set_visible(true);
+        let list = ListView {
+            persistent: true,
+            ..ListView::default()
+        };
+        list.set_visible(true);
+        let mut current = menu.builder();
+        for next in [list.builder(), menu.builder(), list.builder()] {
+            let (_, recreate) = current.patch(next);
+            assert!(!recreate);
+        }
+        assert_eq!(menu.root_builder().active, Some(true));
+        assert_eq!(list.root_builder().active, Some(false));
     }
 }

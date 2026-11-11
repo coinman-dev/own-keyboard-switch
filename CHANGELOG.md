@@ -2,6 +2,45 @@
 
 # Changelog
 
+## 0.6.0-beta — 2026-11-11
+
+### Added
+
+- User guide in English and Russian with screenshots of every settings
+  section: [doc/en](doc/en/README.md), [doc/ru](doc/ru/README.md).
+
+### Fixed
+
+- The autoreplace list and insert menu open again after the clipboard history
+  window was the first one shown: the program windows no longer stop
+  responding. Switching between the list and the menu no longer recreates the
+  window.
+- Shell commands and programming words typed in the Russian layout are now
+  switched to English also at the start of a line and without English
+  context: `htop`, `dir`, `tmp`, `chkdsk`, `mkdir`, `netstat`, `cls`,
+  `ifconfig`, `systemctl`, `kubectl`, `xcopy`, `pwd`, `env` and about a
+  hundred more Windows and Linux commands and keywords. Commands whose keys
+  spell a Russian word, slang or a name stay as typed (`del` = «вуд»,
+  `ps` = «зы», `bg` = «ип»).
+- **Windows:** SilverFast 9 no longer stops responding when the layout is
+  switched. It hangs on the layout request the program sent to the window;
+  in Qt programs the layout is now switched with the Windows language
+  shortcut (Alt+Shift, Ctrl+Shift or Win+Space), as when the user presses it.
+- **Windows:** typing no longer freezes for up to 20 seconds after a
+  conversion in applications that answer accessibility queries slowly. The
+  300 ms limit on these queries was never applied; it now is, and a program
+  that answered slowly is not asked again for a minute.
+- A comma typed with the Russian layout after a word now becomes `?` on
+  Break also after it was erased with Backspace and typed again; before,
+  Backspace made the program forget the word and Break turned the comma
+  into `б`. A selection of symbols alone (`,`, `.`) is converted from the
+  layout that is on.
+- **Windows:** in applications whose input field is a separate embedded window
+  (Tauri and other WebView2 programs) the layout is now read and switched in
+  that field: the tray flag follows a layout change at once, typed text is
+  recognised in the right layout, and a password typed in the Russian layout
+  is retyped in English instead of failing.
+
 ## 0.5.0-beta — 2026-10-18
 
 ### Added
