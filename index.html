@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Own Keyboard Switch — автоматическое переключение раскладки RU/EN</title>
+  <meta name="description" content="Own Keyboard Switch исправляет слова, набранные не в той раскладке: ghbdtn → привет, руддщ → hello. Windows и Linux, без сети, рекламы и проверки обновлений.">
+  <meta name="theme-color" content="#070a14">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Own Keyboard Switch">
+  <meta property="og:description" content="Автоматическое переключение русской и английской раскладки в Windows и Linux.">
+  <meta property="og:url" content="https://coinman-dev.github.io/own-keyboard-switch/">
+  <meta property="og:image" content="https://coinman-dev.github.io/own-keyboard-switch/img/logo.png">
+  <link rel="canonical" href="https://coinman-dev.github.io/own-keyboard-switch/">
+  <link rel="icon" href="img/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" href="img/logo-256.png">
+  <script>document.documentElement.classList.add('js');</script>
+  <link rel="stylesheet" href="styles.css?v=0.6.0-beta">
+</head>
+<body>
+  <div class="progress" aria-hidden="true"><span id="progressBar"></span></div>
+
+  <div class="backdrop" aria-hidden="true">
+    <span class="blob blob-blue" data-parallax="0.18"></span>
+    <span class="blob blob-red" data-parallax="-0.12"></span>
+    <span class="blob blob-yellow" data-parallax="0.3"></span>
+    <span class="grid"></span>
+  </div>
+
+  <header class="top" id="top">
+    <a class="brand" href="#hero">
+      <img src="img/logo-256.png" alt="" width="36" height="36">
+      <span>Own Keyboard Switch</span>
+    </a>
+    <nav class="nav" aria-label="Разделы" data-i18n-aria="nav.label">
+      <a href="#how" data-i18n="nav.how">Как работает</a>
+      <a href="#features" data-i18n="nav.features">Возможности</a>
+      <a href="#tour" data-i18n="nav.tour">Настройки</a>
+      <a href="#keys" data-i18n="nav.keys">Клавиши</a>
+      <a href="#faq" data-i18n="nav.faq">Вопросы</a>
+    </nav>
+    <div class="top-actions">
+      <div class="lang" role="group" aria-label="Язык / Language">
+        <button type="button" data-lang="ru" aria-pressed="true">RU</button>
+        <button type="button" data-lang="en" aria-pressed="false">EN</button>
+      </div>
+      <a class="btn btn-small btn-primary" href="#download" data-i18n="nav.download">Скачать</a>
+    </div>
+  </header>
+
+  <main>
+    <!-- Hero -->
+    <section class="hero" id="hero">
+      <div class="hero-text">
+        <p class="eyebrow reveal" data-i18n="hero.eyebrow">Windows и Linux · 0.6.0-beta</p>
+        <h1 class="reveal" style="--d:80ms" data-i18n="hero.title">Печатайте как&nbsp;обычно. <span class="grad">Раскладку исправит программа.</span></h1>
+        <p class="lead reveal" style="--d:160ms" data-i18n="hero.lead">Own Keyboard Switch исправляет слова, набранные не в той раскладке. Когда слово закончено, программа решает, на каком языке оно написано, стирает его, переключает раскладку и набирает заново.</p>
+        <div class="cta reveal" style="--d:240ms">
+          <a class="btn btn-primary" href="#download" data-i18n="hero.download">Скачать 0.6.0-beta</a>
+          <a class="btn btn-ghost js-guide" href="https://github.com/coinman-dev/own-keyboard-switch/blob/main/doc/ru/README.md" data-href-en="https://github.com/coinman-dev/own-keyboard-switch/blob/main/doc/en/README.md" data-i18n="hero.guide">Руководство пользователя</a>
+        </div>
+        <ul class="facts reveal" style="--d:320ms">
+          <li data-i18n="hero.fact1">Текст не уходит в сеть</li>
+          <li data-i18n="hero.fact2">Словари встроены</li>
+          <li data-i18n="hero.fact3">Без рекламы и проверки обновлений</li>
+        </ul>
+      </div>
+
+      <div class="demo reveal" data-reveal="zoom" style="--d:200ms" aria-hidden="true">
+        <div class="demo-head">
+          <span class="dots"><i></i><i></i><i></i></span>
+          <span class="demo-title" data-i18n="demo.title">Что вы печатаете</span>
+          <span class="chip-layout" id="demoLayout" data-layout="en">EN</span>
+        </div>
+        <div class="demo-field" id="demoField"><span id="demoText"></span><span class="caret"></span></div>
+        <div class="keys-row" id="demoKeys"></div>
+        <div class="readings">
+          <div class="reading reading-en" id="readEn">
+            <span class="reading-tag">EN</span>
+            <code></code>
+            <em data-i18n-yes="demo.word" data-i18n-no="demo.noword"></em>
+          </div>
+          <div class="reading reading-ru" id="readRu">
+            <span class="reading-tag">RU</span>
+            <code></code>
+            <em></em>
+          </div>
+        </div>
+        <p class="demo-note" data-i18n="demo.note">Одни и те же клавиши — два прочтения. Остаётся то, которое является словом.</p>
+      </div>
+      <p class="sr-only" data-i18n="demo.sr">Пример: вы набираете ghbdtn в английской раскладке, программа заменяет это на «привет» и включает русскую раскладку.</p>
+    </section>
+
+    <!-- Running pairs -->
+    <section class="ribbon" aria-hidden="true">
+      <div class="ribbon-row" data-drift="-0.35">
+        <span><b class="en">ghbdtn</b><i>→</i><b class="ru">привет</b></span>
+        <span><b class="ru">руддщ</b><i>→</i><b class="en">hello</b></span>
+        <span><b class="ru">ИшпМщмф2024!</b><i>→</i><b class="en">BigVova2024!</b></span>
+        <span><b class="ru">ьлвшк</b><i>→</i><b class="en">mkdir</b></span>
+        <span><b class="ru">ШЫЩ</b><i>→</i><b class="en">ISO</b></span>
+        <span><b class="en">z</b><i>→</i><b class="ru">я</b></span>
+        <span><b class="en">ghbdtn</b><i>→</i><b class="ru">привет</b></span>
+        <span><b class="ru">руддщ</b><i>→</i><b class="en">hello</b></span>
+        <span><b class="ru">ИшпМщмф2024!</b><i>→</i><b class="en">BigVova2024!</b></span>
+        <span><b class="ru">ьлвшк</b><i>→</i><b class="en">mkdir</b></span>
+        <span><b class="ru">ШЫЩ</b><i>→</i><b class="en">ISO</b></span>
+        <span><b class="en">z</b><i>→</i><b class="ru">я</b></span>
+      </div>
+      <div class="ribbon-row ribbon-row-2" data-drift="0.28">
+        <span><b class="ru">ПРивет</b><i>→</i><b class="ru">Привет</b></span>
+        <span><b class="en">Ghbdtn? rfr ltkf&amp;</b><i>→</i><b class="ru">Привет, как дела?</b></span>
+        <span><b class="ru">пРИВЕТ</b><i>→</i><b class="ru">Привет</b></span>
+        <span><b class="ru">рещз</b><i>→</i><b class="en">htop</b></span>
+        <span><b class="ru">Привет</b><i>↔</i><b class="en">Privet</b></span>
+        <span><b class="ru">ш</b><i>→</i><b class="en">i</b></span>
+        <span><b class="ru">ПРивет</b><i>→</i><b class="ru">Привет</b></span>
+        <span><b class="en">Ghbdtn? rfr ltkf&amp;</b><i>→</i><b class="ru">Привет, как дела?</b></span>
+        <span><b class="ru">пРИВЕТ</b><i>→</i><b class="ru">Привет</b></span>
+        <span><b class="ru">рещз</b><i>→</i><b class="en">htop</b></span>
+        <span><b class="ru">Привет</b><i>↔</i><b class="en">Privet</b></span>
+        <span><b class="ru">ш</b><i>→</i><b class="en">i</b></span>
+      </div>
+    </section>
+
+    <!-- Screenshot -->
+    <section class="shot-wrap">
+      <figure class="shot" id="heroShot">
+        <img src="img/ru/general.png" data-shot="general.png" width="1002" height="789" alt="Окно настроек Own Keyboard Switch, раздел «Общие»" data-i18n-alt="shot.alt">
+      </figure>
+    </section>
+
+    <!-- How it works -->
+    <section class="section" id="how">
+      <header class="section-head">
+        <p class="eyebrow reveal" data-i18n="how.eyebrow">Как работает автопереключение</p>
+        <h2 class="reveal" style="--d:80ms" data-i18n="how.title">Программа запоминает клавиши, а&nbsp;не&nbsp;текст на&nbsp;экране</h2>
+      </header>
+
+      <ol class="steps" id="steps">
+        <li class="step reveal" data-reveal="left">
+          <span class="step-n">1</span>
+          <h3 data-i18n="how.s1.t">Вы заканчиваете слово</h3>
+          <p data-i18n="how.s1.p">Пробел, Enter, Tab или знак, который не является буквой ни в русской, ни в английской раскладке.</p>
+        </li>
+        <li class="step reveal" data-reveal="left" style="--d:120ms">
+          <span class="step-n">2</span>
+          <h3 data-i18n="how.s2.t">Сравниваются два прочтения</h3>
+          <p data-i18n="how.s2.p">Есть ли каждое в словаре и насколько это частое слово, насколько обычны сочетания букв для каждого языка, что говорят встроенные правила.</p>
+        </li>
+        <li class="step reveal" data-reveal="left" style="--d:240ms">
+          <span class="step-n">3</span>
+          <h3 data-i18n="how.s3.t">Слово набирается заново</h3>
+          <p data-i18n="how.s3.p">Если одно прочтение — настоящее слово, а другое — бессмыслица, слово стирается и печатается в другой раскладке. Раскладка переключается.</p>
+        </li>
+      </ol>
+
+      <div class="twocol">
+        <div class="panel reveal" data-reveal="left">
+          <h3 data-i18n="how.term.t">В терминале Enter подождёт</h3>
+          <p data-i18n="how.term.p">Enter сразу выполняет команду, поэтому программа задерживает его, пока проверяет последнее слово, и передаёт терминалу уже после исправления. Команды Windows и Linux и слова языков программирования она знает, даже если их нет в обычном словаре.</p>
+          <div class="term">
+            <div><span class="prompt">$</span> <s>ьлвшк</s> <b>mkdir</b> build</div>
+            <div><span class="prompt">$</span> <s>рещз</s> <b>htop</b></div>
+          </div>
+        </div>
+        <div class="panel reveal" data-reveal="right">
+          <h3 data-i18n="how.skip.t">Когда программа не вмешивается</h3>
+          <p data-i18n="how.skip.p">Слово намеренно остаётся как есть, если:</p>
+          <ul class="ticks">
+            <li data-i18n="how.skip.1">перед словом нажимали Backspace — вы исправляете текст сами;</li>
+            <li data-i18n="how.skip.2">вы сами сменили раскладку перед словом;</li>
+            <li data-i18n="how.skip.3">оба прочтения похожи на слова — программа не спорит со словом, которое существует;</li>
+            <li data-i18n="how.skip.4">окно — программа-исключение или поле пароля;</li>
+            <li data-i18n="how.skip.5">включена раскладка, отличная от русской и английской.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section class="section" id="features">
+      <header class="section-head">
+        <p class="eyebrow reveal" data-i18n="feat.eyebrow">Что программа умеет</p>
+        <h2 class="reveal" style="--d:80ms" data-i18n="feat.title">Не только раскладка</h2>
+      </header>
+
+      <div class="cards" data-stagger="70">
+        <article class="card c-blue reveal">
+          <span class="glyph">RU ⇄ EN</span>
+          <h3 data-i18n="feat.1.t">Автопереключение</h3>
+          <p data-i18n="feat.1.p">Решение по встроенным словарям, частотам слов, статистике сочетаний букв и дополнительным правилам. Однобуквенные слова тоже исправляются: z → я.</p>
+        </article>
+        <article class="card c-yellow reveal">
+          <span class="glyph">Break</span>
+          <h3 data-i18n="feat.2.t">Отмена одной клавишей</h3>
+          <p data-i18n="feat.2.p">Break отменяет последнее исправление или переводит слово, которое программа не тронула. После нескольких отмен подряд программа предложит правило для этого слова.</p>
+        </article>
+        <article class="card c-red reveal">
+          <span class="glyph">••••</span>
+          <h3 data-i18n="feat.3.t">Пароли</h3>
+          <p data-i18n="feat.3.p">Пароль, набранный в русской раскладке, перепечатывается по-английски: ИшпМщмф2024! → BigVova2024!. В поле пароля английская раскладка включается с первого символа.</p>
+        </article>
+        <article class="card c-blue reveal">
+          <span class="glyph">ПРивет</span>
+          <h3 data-i18n="feat.4.t">Регистр</h3>
+          <p data-i18n="feat.4.p">Исправляет две заглавные в начале слова, текст со случайно включённым Caps Lock и аббревиатуры в неправильной раскладке: ШЫЩ → ISO.</p>
+        </article>
+        <article class="card c-yellow reveal">
+          <span class="glyph">Aa ↔ аА</span>
+          <h3 data-i18n="feat.5.t">Работа с текстом</h3>
+          <p data-i18n="feat.5.p">Смена раскладки, регистра и транслитерация выделенного текста и буфера обмена, вставка без форматирования, число прописью.</p>
+        </article>
+        <article class="card c-red reveal">
+          <span class="glyph">;адр</span>
+          <h3 data-i18n="feat.6.t">Автозамена</h3>
+          <p data-i18n="feat.6.p">Сокращения разворачиваются в готовый текст, в том числе многострочный, с запоминаемым местом курсора. Сокращение узнаётся и в другой раскладке.</p>
+        </article>
+        <article class="card c-blue reveal">
+          <span class="glyph">abc ✓</span>
+          <h3 data-i18n="feat.7.t">Проверка орфографии</h3>
+          <p data-i18n="feat.7.p">По команде или прямо при наборе: варианты у курсора или автоисправление однозначных ошибок. Проверка идёт на компьютере, по словарям Hunspell.</p>
+        </article>
+        <article class="card c-yellow reveal">
+          <span class="glyph">× 30</span>
+          <h3 data-i18n="feat.8.t">Буфер обмена и индикатор</h3>
+          <p data-i18n="feat.8.p">История последних 30 скопированных текстов, плавающий индикатор раскладки, флаги в трее, звуки и переключение раскладки одной клавишей.</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- Tour -->
+    <section class="section tour" id="tour">
+      <header class="section-head">
+        <p class="eyebrow reveal" data-i18n="tour.eyebrow">Окно настроек</p>
+        <h2 class="reveal" style="--d:80ms" data-i18n="tour.title">Всё настраивается</h2>
+      </header>
+
+      <div class="tour-grid">
+        <div class="tour-steps">
+          <article class="tour-step is-active" data-shot="general.png">
+            <h3 data-i18n="tour.1.t">Общие</h3>
+            <p data-i18n="tour.1.p">Автозапуск, автопереключение, распознавание паролей, значок в виде флагов, плавающий индикатор. Интерфейс на русском и английском, светлая, тёмная и системная тема.</p>
+            <img class="tour-inline" src="img/ru/general.png" data-shot="general.png" width="1002" height="789" loading="lazy" alt="">
+          </article>
+          <article class="tour-step" data-shot="rules.png">
+            <h3 data-i18n="tour.2.t">Правила переключения</h3>
+            <p data-i18n="tour.2.p">Свои правила для слов: «Переводить в другую раскладку» или «Не переводить». Правила выгружаются в файл и загружаются обратно. Опция «Улучшить переключение» распознаёт больше коротких английских слов после русского.</p>
+            <img class="tour-inline" src="img/ru/rules.png" data-shot="rules.png" width="1002" height="789" loading="lazy" alt="">
+          </article>
+          <article class="tour-step" data-shot="exclusions.png">
+            <h3 data-i18n="tour.3.t">Программы-исключения</h3>
+            <p data-i18n="tour.3.p">В выбранных программах слова не проверяются вовсе. Терминалы и среды разработки программа предлагает добавить при первом запуске.</p>
+            <img class="tour-inline" src="img/ru/exclusions.png" data-shot="exclusions.png" width="1002" height="789" loading="lazy" alt="">
+          </article>
+          <article class="tour-step" data-shot="autoreplace.png">
+            <h3 data-i18n="tour.4.t">Автозамена</h3>
+            <p data-i18n="tour.4.p">Замена по подсказке, пробелу, Enter, Tab или горячей клавише. Записи можно вставлять и без сокращений — из плавающего списка или меню у курсора.</p>
+            <img class="tour-inline" src="img/ru/autoreplace.png" data-shot="autoreplace.png" width="1002" height="789" loading="lazy" alt="">
+          </article>
+          <article class="tour-step" data-shot="spellcheck.png">
+            <h3 data-i18n="tour.5.t">Проверка орфографии</h3>
+            <p data-i18n="tour.5.p">Русский и английский, свои слова, дополнительные словари. Скачивание словаря кнопкой «Загрузить» — единственное, для чего программе нужна сеть.</p>
+            <img class="tour-inline" src="img/ru/spellcheck.png" data-shot="spellcheck.png" width="1002" height="789" loading="lazy" alt="">
+          </article>
+          <article class="tour-step" data-shot="hotkeys.png">
+            <h3 data-i18n="tour.6.t">Горячие клавиши и мышь</h3>
+            <p data-i18n="tour.6.p">Любое действие можно переназначить, а кнопкам мыши — задать сочетания клавиш. Нет клавиши Break на ноутбуке — назначьте другую.</p>
+            <img class="tour-inline" src="img/ru/hotkeys.png" data-shot="hotkeys.png" width="1002" height="789" loading="lazy" alt="">
+          </article>
+        </div>
+
+        <div class="tour-stage" aria-hidden="true">
+          <div class="tour-frame" id="tourFrame">
+            <img class="is-active" src="img/ru/general.png" data-shot="general.png" width="1002" height="789" alt="">
+            <img src="img/ru/rules.png" data-shot="rules.png" width="1002" height="789" loading="lazy" alt="">
+            <img src="img/ru/exclusions.png" data-shot="exclusions.png" width="1002" height="789" loading="lazy" alt="">
+            <img src="img/ru/autoreplace.png" data-shot="autoreplace.png" width="1002" height="789" loading="lazy" alt="">
+            <img src="img/ru/spellcheck.png" data-shot="spellcheck.png" width="1002" height="789" loading="lazy" alt="">
+            <img src="img/ru/hotkeys.png" data-shot="hotkeys.png" width="1002" height="789" loading="lazy" alt="">
+          </div>
+          <div class="tour-dots" id="tourDots"><i class="is-active"></i><i></i><i></i><i></i><i></i><i></i></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Keys -->
+    <section class="section" id="keys">
+      <header class="section-head">
+        <p class="eyebrow reveal" data-i18n="keys.eyebrow">Главное на одной странице</p>
+        <h2 class="reveal" style="--d:80ms" data-i18n="keys.title">Шесть сочетаний, которые стоит запомнить</h2>
+      </header>
+
+      <ul class="keylist" data-stagger="80">
+        <li class="reveal" data-reveal="right">
+          <span class="combo"><kbd>Break</kbd></span>
+          <span class="keydesc" data-i18n="keys.1">Отменить исправление или перевести слово вручную — сразу после слова</span>
+        </li>
+        <li class="reveal" data-reveal="right">
+          <span class="combo"><kbd>Shift</kbd><kbd>Break</kbd></span>
+          <span class="keydesc" data-i18n="keys.2">Перевести выделенный текст в другую раскладку</span>
+        </li>
+        <li class="reveal" data-reveal="right">
+          <span class="combo"><kbd>Alt</kbd><kbd>Break</kbd></span>
+          <span class="keydesc" data-i18n="keys.3">Сменить регистр выделенного текста</span>
+        </li>
+        <li class="reveal" data-reveal="right">
+          <span class="combo"><kbd>Alt</kbd><kbd>Scroll Lock</kbd></span>
+          <span class="keydesc" data-i18n="keys.4">Транслитерировать выделенный текст: Привет ↔ Privet</span>
+        </li>
+        <li class="reveal" data-reveal="right">
+          <span class="combo"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>V</kbd></span>
+          <span class="keydesc" data-i18n="keys.5">Вставить без форматирования</span>
+        </li>
+        <li class="reveal" data-reveal="right">
+          <span class="combo"><kbd data-i18n="keys.dbl">2 × щелчок</kbd></span>
+          <span class="keydesc" data-i18n="keys.6">По значку в трее — открыть настройки (в KDE Plasma — один щелчок)</span>
+        </li>
+      </ul>
+      <p class="aside reveal" data-i18n="keys.note">Сочетания меняются в разделе «Горячие клавиши».</p>
+    </section>
+
+    <!-- Privacy -->
+    <section class="section" id="privacy">
+      <header class="section-head">
+        <p class="eyebrow reveal" data-i18n="priv.eyebrow">Чего программа не делает</p>
+        <h2 class="reveal" style="--d:80ms" data-i18n="priv.title">Набранный текст остаётся на&nbsp;компьютере</h2>
+      </header>
+      <div class="trio" data-stagger="110">
+        <article class="pillar reveal" data-reveal="zoom">
+          <h3 data-i18n="priv.1.t">Не отправляет текст в сеть</h3>
+          <p data-i18n="priv.1.p">Словари и языковые модели встроены. Сеть нужна только чтобы скачать дополнительный словарь орфографии, когда вы сами нажмёте «Загрузить». Обновления не проверяются, рекламы нет.</p>
+        </article>
+        <article class="pillar reveal" data-reveal="zoom">
+          <h3 data-i18n="priv.2.t">Не пишет текст в журнал</h3>
+          <p data-i18n="priv.2.p">В журнале есть только служебные сведения: сколько букв было в слове, какое принято решение и почему. Журнал выключен, пока вы сами его не включите.</p>
+        </article>
+        <article class="pillar reveal" data-reveal="zoom">
+          <h3 data-i18n="priv.3.t">Только русский и английский</h3>
+          <p data-i18n="priv.3.p">Программа работает с парой «русский — английский». Другие раскладки можно оставить в системе: по умолчанию ввод в них программа не трогает.</p>
+        </article>
+      </div>
+    </section>
+
+    <!-- Download -->
+    <section class="section" id="download">
+      <header class="section-head">
+        <p class="eyebrow reveal" data-i18n="dl.eyebrow">Скачать · 0.6.0-beta</p>
+        <h2 class="reveal" style="--d:80ms" data-i18n="dl.title">Windows 10/11 и Linux</h2>
+        <p class="section-lead reveal" style="--d:160ms" data-i18n="dl.lead">Предварительный релиз. Версия для Linux ещё молодая: сообщения об ошибках приветствуются.</p>
+      </header>
+
+      <div class="downloads" data-stagger="90">
+        <a class="dl c-blue reveal" href="https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.6.0-beta/okbswitch-portable.exe">
+          <span class="dl-os">Windows x64</span>
+          <strong>Portable</strong>
+          <span class="dl-file">okbswitch-portable.exe</span>
+          <span class="dl-note" data-i18n="dl.1">Положить в доступную для записи папку и запустить. Установка не нужна.</span>
+        </a>
+        <a class="dl c-blue reveal" href="https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.6.0-beta/okbswitch-install.exe">
+          <span class="dl-os">Windows x64</span>
+          <strong data-i18n="dl.2.t">Установщик</strong>
+          <span class="dl-file">okbswitch-install.exe</span>
+          <span class="dl-note" data-i18n="dl.2">Установка для себя или всех пользователей, ярлыки и автозапуск.</span>
+        </a>
+        <a class="dl c-red reveal" href="https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.6.0-beta/okbswitch_0.6.0-beta_amd64.deb">
+          <span class="dl-os">Linux x86_64</span>
+          <strong data-i18n="dl.3.t">Пакет .deb</strong>
+          <span class="dl-file">okbswitch_0.6.0-beta_amd64.deb</span>
+          <span class="dl-note" data-i18n="dl.3">Ubuntu 24.04 и новее. Добавляет программу в меню приложений.</span>
+        </a>
+        <a class="dl c-red reveal" href="https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.6.0-beta/okbswitch-0.6.0-beta-x86_64.AppImage">
+          <span class="dl-os">Linux x86_64</span>
+          <strong>AppImage</strong>
+          <span class="dl-file">okbswitch-0.6.0-beta-x86_64.AppImage</span>
+          <span class="dl-note" data-i18n="dl.4">Сделать исполняемым и запустить; настройки хранятся рядом с файлом.</span>
+        </a>
+      </div>
+
+      <div class="twocol">
+        <div class="panel reveal" data-reveal="left">
+          <h3 data-i18n="dl.linux.t">Linux: где работает</h3>
+          <ul class="sessions">
+            <li><b>X11</b><span data-i18n="dl.linux.1">Любой рабочий стол, ничего устанавливать не нужно.</span></li>
+            <li><b>GNOME 45–50 · Wayland</b><span data-i18n="dl.linux.2">Встроенное расширение GNOME Shell; после первого запуска один раз выйдите из сеанса и войдите снова.</span></li>
+            <li><b>KDE Plasma 6 · Wayland</b><span data-i18n="dl.linux.3">Служба раскладок KDE и встроенный скрипт KWin.</span></li>
+          </ul>
+          <p class="aside" data-i18n="dl.linux.note">Sway, Hyprland и другие композиторы Wayland пока не поддерживаются.</p>
+        </div>
+        <div class="panel reveal" data-reveal="right">
+          <h3 data-i18n="dl.cmd.t">Установка в Linux</h3>
+          <div class="code">
+            <button type="button" class="copy" data-copy="sudo apt install ./okbswitch_0.6.0-beta_amd64.deb" data-i18n="copy">Копировать</button>
+            <pre><code>sudo apt install ./okbswitch_0.6.0-beta_amd64.deb</code></pre>
+          </div>
+          <div class="code">
+            <button type="button" class="copy" data-copy="chmod +x okbswitch-0.6.0-beta-x86_64.AppImage &amp;&amp; ./okbswitch-0.6.0-beta-x86_64.AppImage" data-i18n="copy">Копировать</button>
+            <pre><code>chmod +x okbswitch-0.6.0-beta-x86_64.AppImage
+./okbswitch-0.6.0-beta-x86_64.AppImage</code></pre>
+          </div>
+          <p class="aside" data-i18n="dl.cmd.note">При первом запуске программа просит разрешение (pkexec), чтобы дать сеансу доступ к клавиатурам. Сама программа всегда работает от обычного пользователя.</p>
+        </div>
+      </div>
+
+      <p class="links reveal">
+        <a href="https://github.com/coinman-dev/own-keyboard-switch/releases" data-i18n="dl.all">Все релизы и суммы SHA-256</a>
+        <a href="https://github.com/coinman-dev/own-keyboard-switch/blob/main/CHANGELOG.ru_RU.md" data-href-en="https://github.com/coinman-dev/own-keyboard-switch/blob/main/CHANGELOG.md" data-i18n="dl.changes">Список изменений</a>
+        <a href="https://github.com/coinman-dev/own-keyboard-switch/blob/main/doc/ru/02-installation.md" data-href-en="https://github.com/coinman-dev/own-keyboard-switch/blob/main/doc/en/02-installation.md" data-i18n="dl.install">Подробно об установке</a>
+      </p>
+    </section>
+
+    <!-- FAQ -->
+    <section class="section" id="faq">
+      <header class="section-head">
+        <p class="eyebrow reveal" data-i18n="faq.eyebrow">Решение проблем и вопросы</p>
+        <h2 class="reveal" style="--d:80ms" data-i18n="faq.title">Если что-то идёт не так</h2>
+      </header>
+
+      <div class="faq" data-stagger="60">
+        <details class="reveal">
+          <summary data-i18n="faq.1.q">Слово не исправилось</summary>
+          <p data-i18n="faq.1.a">Чаще всего перед словом нажимали Backspace, раскладку переключили вручную прямо перед словом, программа находится в исключениях или оба прочтения похожи на слова («рук» — her). Нажмите Break, чтобы перевести слово сейчас, и добавьте правило «Переводить в другую раскладку», если слово должно исправляться всегда.</p>
+        </details>
+        <details class="reveal">
+          <summary data-i18n="faq.2.q">Программа исправляет то, что не нужно</summary>
+          <p data-i18n="faq.2.a">Нажмите Break — исправление отменится. После двух отмен подряд программа предложит правило «Не переводить». Для терминов одной программы добавьте её в исключения; для коротких слов увеличьте «Не переключать слова короче, букв» или сдвиньте чувствительность анализа к «осторожно».</p>
+        </details>
+        <details class="reveal">
+          <summary data-i18n="faq.3.q">Не работает в некоторых окнах Windows</summary>
+          <p data-i18n="faq.3.a">Windows не даёт обычной программе читать клавиатуру в окнах, запущенных от имени администратора: диспетчер задач, установщики, консоль администратора. Включите «Общие → Запускать с правами Администратора».</p>
+        </details>
+        <details class="reveal">
+          <summary data-i18n="faq.4.q">Клавиша Break не работает или её нет</summary>
+          <p data-i18n="faq.4.a">На многих ноутбуках Break (Pause) нет или она нажимается через Fn. Назначьте действию «Отменить конвертацию раскладки» другое сочетание в разделе «Горячие клавиши».</p>
+        </details>
+        <details class="reveal">
+          <summary data-i18n="faq.5.q">Антивирус ругается</summary>
+          <p data-i18n="faq.5.a">Переключатель раскладки по своей природе следит за клавиатурой и посылает нажатия, поэтому эвристики антивирусов иногда на него реагируют. Скачивайте программу только со страницы Releases и сверяйте суммы SHA-256, опубликованные рядом с файлами.</p>
+        </details>
+        <details class="reveal">
+          <summary data-i18n="faq.6.q">Linux: клавиши не перехватываются</summary>
+          <p data-i18n="faq.6.a">Откройте окно настройки — оно появляется при запуске, если что-то не готово — и пройдите отмеченные пункты: доступ к клавиатуре, интеграция рабочего стола, раскладки, активный сеанс. Команда okbswitch --diagnose покажет сеанс, раскладки и доступ к устройствам.</p>
+        </details>
+      </div>
+
+      <p class="links reveal">
+        <a href="https://github.com/coinman-dev/own-keyboard-switch/blob/main/doc/ru/15-faq.md" data-href-en="https://github.com/coinman-dev/own-keyboard-switch/blob/main/doc/en/15-faq.md" data-i18n="faq.more">Все вопросы в руководстве</a>
+        <a href="https://github.com/coinman-dev/own-keyboard-switch/issues" data-i18n="faq.issue">Сообщить об ошибке</a>
+      </p>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="foot-brand">
+      <img src="img/logo-256.png" alt="" width="56" height="56" loading="lazy">
+      <div>
+        <strong>Own Keyboard Switch</strong>
+        <span data-i18n="foot.license">Собственный код проекта — по лицензии PolyForm Noncommercial 1.0.0: бесплатно для некоммерческого использования.</span>
+      </div>
+    </div>
+    <nav class="foot-links" aria-label="GitHub">
+      <a href="https://github.com/coinman-dev/own-keyboard-switch">GitHub</a>
+      <a class="js-guide" href="https://github.com/coinman-dev/own-keyboard-switch/blob/main/doc/ru/README.md" data-href-en="https://github.com/coinman-dev/own-keyboard-switch/blob/main/doc/en/README.md" data-i18n="foot.guide">Руководство</a>
+      <a href="https://github.com/coinman-dev/own-keyboard-switch/releases" data-i18n="foot.releases">Релизы</a>
+      <a href="https://github.com/coinman-dev/own-keyboard-switch/blob/main/LICENSE" data-i18n="foot.lic">Лицензия</a>
+    </nav>
+  </footer>
+
+  <script src="main.js?v=0.6.0-beta"></script>
+</body>
+</html>
