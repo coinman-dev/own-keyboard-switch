@@ -50,7 +50,7 @@ fn technical_corpus_preserves_case_and_lexical_collisions() {
             }
         }
         assert_eq!(ambiguous, 13);
-        assert_eq!(cases, 1308);
+        assert_eq!(cases, 1662);
         println!("extra_rules={extra_rules}: {cases} cases, {ambiguous} lexical collisions");
     }
 }
@@ -140,6 +140,42 @@ fn reported_names_and_mixed_case_brands_switch_as_whole_words() {
             );
             assert_eq!(detector.decide(&keys, Lang::En).switch_to(), None, "{word}");
         }
+    }
+}
+
+#[test]
+fn reported_commands_switch_without_context_and_russian_readings_stay() {
+    let detector = Detector::from_config(&Config::default());
+    // Typed in the Russian layout at the start of a line: рещз, вшк, зрз, …
+    for word in [
+        "htop",
+        "dir",
+        "php",
+        "temp",
+        "tmp",
+        "chkdsk",
+        "ping",
+        "id",
+        "mkdir",
+        "netstat",
+        "cls",
+        "kubectl",
+        "systemctl",
+        "ifconfig",
+        "xcopy",
+        "wget",
+        "pwd",
+        "env",
+    ] {
+        let wrong = detector.analyze(&keys(word), Lang::Ru, None).decision;
+        assert_eq!(wrong.switch_to(), Some(Lang::En), "{word}: {wrong:?}");
+    }
+    // Commands whose keys spell Russian words, slang or a surname are not
+    // in the list: вуд (del), зы (ps), ыы (ss), ип (bg), зек (ptr).
+    for russian in ["вуд", "зы", "ыы", "ип", "зек", "св", "кв"] {
+        let keys = keys_for_text(russian, builtin_keymap(Lang::Ru)).expect("Russian fixture");
+        let decision = detector.analyze(&keys, Lang::Ru, None).decision;
+        assert_eq!(decision.switch_to(), None, "{russian}: {decision:?}");
     }
 }
 

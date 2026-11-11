@@ -1895,6 +1895,8 @@ impl Processor {
             ?switch_reason,
             target = ?analysis.decision.switch_to(),
             suspicious = analysis.decision == Decision::Suspicious,
+            // The layout was chosen by hand before the word: no automatic switch.
+            layout_chosen,
             "word finished"
         );
         // A manually chosen layout keeps the word out of the switching
@@ -1948,6 +1950,7 @@ impl Processor {
             return;
         }
         if self.focus_blocks() {
+            tracing::debug!("word not corrected: own window, excluded program or password field");
             if improve {
                 self.previous_word = None;
             }

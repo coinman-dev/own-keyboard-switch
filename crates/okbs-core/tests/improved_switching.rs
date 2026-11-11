@@ -29,7 +29,7 @@ fn judge(
 
 #[test]
 fn additional_targets_require_the_option_and_russian_context() {
-    for word in ["iso", "dir", "ing", "aa", "aal"] {
+    for word in ["iso", "ing", "aa", "aal"] {
         assert_eq!(
             judge(&enabled(), word, Lang::En, Lang::Ru, Some(Lang::Ru)),
             Decision::Switch {

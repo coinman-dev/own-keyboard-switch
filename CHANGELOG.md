@@ -6,6 +6,13 @@
 
 ### Fixed
 
+- Shell commands and programming words typed in the Russian layout are now
+  switched to English also at the start of a line and without English
+  context: `htop`, `dir`, `tmp`, `chkdsk`, `mkdir`, `netstat`, `cls`,
+  `ifconfig`, `systemctl`, `kubectl`, `xcopy`, `pwd`, `env` and about a
+  hundred more Windows and Linux commands and keywords. Commands whose keys
+  spell a Russian word, slang or a name stay as typed (`del` = «вуд»,
+  `ps` = «зы», `bg` = «ип»).
 - **Windows:** SilverFast 9 no longer stops responding when the layout is
   switched. It hangs on the layout request the program sent to the window;
   in Qt programs the layout is now switched with the Windows language
