@@ -332,3 +332,74 @@ fn real_wayland_egui_popups_and_caret_use_the_requested_monitor() {
         remote.call::<_, _, ()>("Stop", &()).unwrap();
     }
 }
+
+/// Wayland cannot hide a window. When the first window of the event loop
+/// closes while another one is open, the other one moves to a new loop
+/// instead of leaving an empty window behind.
+#[test]
+#[ignore = "requires an isolated KDE Wayland session with the current KWin script"]
+fn real_wayland_closing_the_first_window_keeps_the_others_without_an_empty_one() {
+    use crate::clipboard_history::{ClipboardHistoryConfig, ClipboardHistoryLabels};
+    use crate::settings::{Section, SettingsEvent};
+    use crate::window::SettingsWindow;
+    let _bridge = okbs_platform_linux::desktop::serve_kde_bridge().unwrap();
+    okbs_platform_linux::integration::install_current(&Desktop::Kde).unwrap();
+    let desktop = LinuxDesktop::connect().unwrap();
+    let wait = |title: &str, present: bool| {
+        let deadline = Instant::now() + Duration::from_secs(8);
+        while desktop.placed_window(title).unwrap().is_some() != present {
+            assert!(
+                Instant::now() < deadline,
+                "{title}: expected present={present}"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    let (events, received) = crossbeam_channel::unbounded();
+    let window = SettingsWindow::spawn(events, Lang::En).unwrap();
+    let mut config = Config::default();
+    config.general.ui_language = UiLanguage::En;
+    let history = window.clipboard_history();
+    let history_title = "OKBS history fixture";
+    let settings_title = crate::tr(crate::Text::SettingsWindowTitle, Lang::En);
+    // The bridge reports only windows whose placement this program requested.
+    desktop
+        .place_owned_window(history_title, [40.0, 40.0])
+        .unwrap();
+    desktop
+        .place_owned_window(settings_title, [200.0, 120.0])
+        .unwrap();
+    history.show(
+        ClipboardHistoryConfig {
+            entries: vec!["synthetic entry".into()],
+            labels: ClipboardHistoryLabels {
+                title: history_title.into(),
+                ..ClipboardHistoryLabels::default()
+            },
+            theme: config.general.theme,
+        },
+        [40.0, 40.0],
+    );
+    wait(history_title, true);
+    window.open(&config, Section::General, None, Vec::new());
+    wait(settings_title, true);
+    // The history owned the event loop; closing it must not leave it blank.
+    history.hide();
+    wait(history_title, false);
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(desktop.placed_window(settings_title).unwrap().is_some());
+    assert!(window.is_open(), "settings stay open in the next loop");
+    assert!(
+        !received
+            .try_iter()
+            .any(|event| matches!(event, SettingsEvent::Closed)),
+        "the carried settings window was not closed"
+    );
+    window.send(crate::settings::SettingsInput::CloseWindow);
+    wait(settings_title, false);
+    assert!(
+        received
+            .recv_timeout(Duration::from_secs(5))
+            .is_ok_and(|event| matches!(event, SettingsEvent::Closed))
+    );
+}

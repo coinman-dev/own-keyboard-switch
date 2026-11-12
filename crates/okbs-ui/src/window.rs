@@ -141,8 +141,44 @@ struct App {
     root: Root,
     list: ListView,
     history: HistoryView,
-    /// The Wayland event loop is closing because no window remains.
+    /// The Wayland event loop is closing because its root window is gone.
     exiting: bool,
+    /// Windows that outlive the root, for the next event loop.
+    carry: std::rc::Rc<std::cell::RefCell<Option<Carried>>>,
+}
+
+/// A passive spelling popup: its result, position and target control.
+type SpellcheckPopup = (TextResult, Option<[f32; 2]>, Option<(u64, u64)>);
+
+/// The state of the windows of one event loop, to start the next one with.
+struct Carried {
+    view: SettingsView,
+    settings_open: bool,
+    settings_visible: bool,
+    text_result: Option<TextResult>,
+    text_result_position: Option<[f32; 2]>,
+    spellcheck: Option<SpellcheckPopup>,
+    list: ListView,
+    history: HistoryView,
+    theme: Theme,
+    lang: Lang,
+}
+
+impl Carried {
+    /// The window that starts the loop; a passive popup only when alone.
+    fn root(&self) -> Root {
+        if self.settings_open {
+            Root::Settings
+        } else if self.history.visible() {
+            Root::History
+        } else if self.list.visible() {
+            Root::List
+        } else if self.spellcheck.is_some() && hides_by_closing() {
+            Root::Spellcheck
+        } else {
+            Root::Settings
+        }
+    }
 }
 
 impl App {
@@ -155,6 +191,28 @@ impl App {
             Root::List => egui::ViewportId::from_hash_of("autoreplace_list"),
             Root::History => egui::ViewportId::from_hash_of("clipboard_history"),
             Root::Spellcheck => egui::ViewportId::from_hash_of("spellcheck-popup"),
+        }
+    }
+
+    fn carry_over(&mut self) -> Carried {
+        let lang = self.lang;
+        Carried {
+            view: std::mem::replace(
+                &mut self.view,
+                SettingsView::new(Config::default(), Section::General, self.system_language),
+            ),
+            settings_open: self.is_shown(Root::Settings),
+            settings_visible: self.settings_visible,
+            text_result: self.text_result.take(),
+            text_result_position: self.text_result_position,
+            spellcheck: self
+                .spellcheck_result
+                .take()
+                .map(|result| (result, self.spellcheck_position, self.spellcheck_target)),
+            list: std::mem::take(&mut self.list),
+            history: std::mem::take(&mut self.history),
+            theme: self.theme,
+            lang,
         }
     }
 
@@ -641,13 +699,18 @@ impl eframe::App for App {
                 self.spellcheck_ui(ui)
             });
         }
-        if closing
-            && !self.is_shown(self.root)
-            && self.requests.is_empty()
-            && ![Root::Settings, Root::List, Root::History, Root::Spellcheck]
+        if closing && !self.is_shown(self.root) && self.requests.is_empty() {
+            // The root cannot be hidden here. Windows still open move to a
+            // new event loop in which one of them becomes the root.
+            if [Root::Settings, Root::List, Root::History, Root::Spellcheck]
                 .into_iter()
                 .any(|window| window != self.root && self.is_shown(window))
-        {
+            {
+                let carried = self.carry_over();
+                if let Ok(mut slot) = self.carry.try_borrow_mut() {
+                    *slot = Some(carried);
+                }
+            }
             // Not cancelled: neither handler runs again once exiting is set.
             self.exiting = true;
             ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Close);
@@ -900,183 +963,267 @@ fn window_thread(
     shared: &Arc<Shared>,
     system_language: Lang,
 ) {
-    while let Ok(request) = requests.recv() {
-        let passive = matches!(&request, Request::OpenText(_, _, false, _, _));
-        let mut initial_list = None;
-        let mut initial_history = None;
-        let mut initial_spellcheck = None;
-        let mut initial_spellcheck_position = None;
-        let mut initial_spellcheck_target = None;
-        let (config, section, input, layouts, text_result, settings_visible) = match request {
-            Request::Open(config, section, input, layouts) => {
-                (config, section, input, layouts, None, true)
-            }
-            Request::OpenText(config, result, _, position, target) => {
-                if passive {
-                    initial_spellcheck = Some(result);
-                    initial_spellcheck_position = position;
-                    initial_spellcheck_target = target;
-                    (config, Section::General, None, Vec::new(), None, false)
-                } else {
-                    (
-                        config,
-                        Section::General,
-                        None,
-                        Vec::new(),
-                        Some((result, position)),
-                        false,
-                    )
+    let carry = std::rc::Rc::new(std::cell::RefCell::new(None::<Carried>));
+    loop {
+        let carried = carry.borrow_mut().take();
+        let (state, passive) = match carried {
+            Some(state) => (state, false),
+            None => {
+                let Ok(request) = requests.recv() else {
+                    return;
+                };
+                match initial_state(request, shared, system_language) {
+                    Start::Run(state, passive) => (*state, passive),
+                    Start::Skip => continue,
+                    Start::Shutdown => return,
                 }
             }
-            Request::Input(_) => continue,
-            Request::List(ListRequest::Show(list)) => {
-                let mut config = Config::default();
-                config.general.theme = list.config.theme;
-                initial_list = Some(*list);
-                (
-                    Box::new(config),
-                    Section::General,
-                    None,
-                    Vec::new(),
-                    None,
-                    false,
-                )
-            }
-            Request::List(_) => continue,
-            Request::History(HistoryRequest::Show(history)) => {
-                let mut config = Config::default();
-                config.general.theme = history.config.theme;
-                initial_history = Some(*history);
-                (
-                    Box::new(config),
-                    Section::General,
-                    None,
-                    Vec::new(),
-                    None,
-                    false,
-                )
-            }
-            Request::History(_) => continue,
-            Request::Shutdown => return,
         };
-        let lang = config.general.ui_language.resolve(system_language);
-        let theme = config.general.theme;
-        let mut view = SettingsView::new(*config, section, system_language);
-        shared.restore_dictionary_state(&mut view);
-        view.set_layouts(layouts);
-        if let Some(input) = input {
-            view.handle(input);
-        }
-        let root = match (initial_list.is_some(), initial_history.is_some()) {
-            (true, _) => Root::List,
-            (_, true) => Root::History,
-            _ if passive && hides_by_closing() => Root::Spellcheck,
-            _ => Root::Settings,
-        };
-        shared.open.store(root == Root::Settings, Ordering::SeqCst);
-        let list = initial_list.unwrap_or_default();
-        list.set_visible(root == Root::List);
-        let history = initial_history.unwrap_or_default();
-        history.set_visible(root == Root::History);
-        let app_requests = requests.clone();
-        let app_events = events.clone();
-        let app_shared = shared.clone();
-        let settings_title = text_result
-            .as_ref()
-            .map_or(tr(Text::SettingsWindowTitle, lang), |(r, _)| r.title(lang));
-        let title = match root {
-            Root::List => list.config.labels.title.clone(),
-            Root::History => history.config.labels.title.clone(),
-            Root::Settings => settings_title.into(),
-            Root::Spellcheck => tr(Text::SpellcheckWordTitle, lang).into(),
-        };
-        let mut options = native_options(&title, shared);
-        if let Some((result, position)) = &text_result
-            && result.is_compact()
-        {
-            options.viewport = egui::ViewportBuilder::default()
-                .with_title(result.title(lang))
-                .with_icon(crate::branding::icon())
-                .with_inner_size([390.0, 130.0])
-                .with_min_inner_size([300.0, 115.0])
-                .with_max_inner_size([520.0, 170.0])
-                .with_resizable(false)
-                .with_maximize_button(false)
-                .with_active(false);
-            if !crate::window_position::uses_native_position() {
-                options.viewport = options
-                    .viewport
-                    .with_position(position.unwrap_or([24.0, 24.0]));
-            }
-        }
-        if passive {
-            options.viewport = options.viewport.with_active(false);
-            options.viewport = options.viewport.with_visible(false);
-        }
-        match root {
-            Root::List => {
-                options.viewport = list.root_builder();
-                options.centered = false;
-            }
-            Root::History => {
-                options.viewport = history.builder().with_visible(true);
-                options.centered = false;
-            }
-            Root::Spellcheck => {
-                options.viewport = spellcheck_builder(lang, 150.0).with_visible(true);
-                options.centered = false;
-            }
-            Root::Settings => {}
-        }
-        let (text_result, text_result_position) = match text_result {
-            Some((result, position)) => (Some(result), position),
-            None => (None, None),
-        };
-        let result = eframe::run_native(
-            &title,
-            options,
-            Box::new(move |cc| {
-                crate::appearance::configure(&cc.egui_ctx);
-                crate::appearance::apply_theme(&cc.egui_ctx, theme);
-                cc.egui_ctx.request_repaint();
-                if let Ok(mut slot) = app_shared.context.lock() {
-                    *slot = Some(cc.egui_ctx.clone());
-                }
-                Ok(Box::new(App {
-                    view,
-                    requests: app_requests,
-                    events: app_events,
-                    shared: app_shared,
-                    theme,
-                    lang,
-                    system_language,
-                    settings_visible,
-                    text_result,
-                    text_result_position,
-                    spellcheck_result: initial_spellcheck,
-                    spellcheck_position: initial_spellcheck_position,
-                    spellcheck_target: initial_spellcheck_target,
-                    spellcheck_pending: None,
-                    spellcheck_height: 150.0,
-                    root,
-                    list,
-                    history,
-                    exiting: false,
-                }))
-            }),
+        run_loop(
+            state,
+            passive,
+            requests,
+            events,
+            shared,
+            system_language,
+            &carry,
         );
-        if let Err(err) = result {
-            shared.failed.store(true, Ordering::SeqCst);
-            tracing::error!("cannot open the settings window: {err}");
-        }
+        // A carried settings window is still open in the next loop.
+        let settings_carried = carry
+            .borrow()
+            .as_ref()
+            .is_some_and(|state| state.settings_open);
         if let Ok(mut slot) = shared.context.lock() {
             *slot = None;
         }
-        shared.open.store(false, Ordering::SeqCst);
-        let _ = events.send(SettingsEvent::Closed);
+        if !settings_carried {
+            shared.open.store(false, Ordering::SeqCst);
+            let _ = events.send(SettingsEvent::Closed);
+        }
         if shared.shutdown.load(Ordering::SeqCst) {
             return;
         }
+    }
+}
+
+enum Start {
+    Run(Box<Carried>, bool),
+    Skip,
+    Shutdown,
+}
+
+/// The windows a request opens when no event loop is running.
+fn initial_state(request: Request, shared: &Shared, system_language: Lang) -> Start {
+    let passive = matches!(&request, Request::OpenText(_, _, false, _, _));
+    let mut list = None;
+    let mut history = None;
+    let mut spellcheck = None;
+    let (config, section, input, layouts, text_result, settings_visible) = match request {
+        Request::Open(config, section, input, layouts) => {
+            (config, section, input, layouts, None, true)
+        }
+        Request::OpenText(config, result, _, position, target) => {
+            if passive {
+                spellcheck = Some((result, position, target));
+                (config, Section::General, None, Vec::new(), None, false)
+            } else {
+                (
+                    config,
+                    Section::General,
+                    None,
+                    Vec::new(),
+                    Some((result, position)),
+                    false,
+                )
+            }
+        }
+        Request::List(ListRequest::Show(view)) => {
+            let mut config = Config::default();
+            config.general.theme = view.config.theme;
+            list = Some(*view);
+            (
+                Box::new(config),
+                Section::General,
+                None,
+                Vec::new(),
+                None,
+                false,
+            )
+        }
+        Request::History(HistoryRequest::Show(view)) => {
+            let mut config = Config::default();
+            config.general.theme = view.config.theme;
+            history = Some(*view);
+            (
+                Box::new(config),
+                Section::General,
+                None,
+                Vec::new(),
+                None,
+                false,
+            )
+        }
+        Request::Input(_) | Request::List(_) | Request::History(_) => return Start::Skip,
+        Request::Shutdown => return Start::Shutdown,
+    };
+    let lang = config.general.ui_language.resolve(system_language);
+    let theme = config.general.theme;
+    let mut view = SettingsView::new(*config, section, system_language);
+    shared.restore_dictionary_state(&mut view);
+    view.set_layouts(layouts);
+    if let Some(input) = input {
+        view.handle(input);
+    }
+    // The request itself shows its window; its flag is set only later.
+    let list = list
+        .inspect(|view| view.set_visible(true))
+        .unwrap_or_default();
+    let history = history
+        .inspect(|view| view.set_visible(true))
+        .unwrap_or_default();
+    // A passive spelling popup on X11 and Windows lives under a hidden root.
+    let settings_open = !list.visible()
+        && !history.visible()
+        && !(passive && spellcheck.is_some() && hides_by_closing());
+    let (text_result, text_result_position) = match text_result {
+        Some((result, position)) => (Some(result), position),
+        None => (None, None),
+    };
+    Start::Run(
+        Box::new(Carried {
+            view,
+            settings_open,
+            settings_visible,
+            text_result,
+            text_result_position,
+            spellcheck,
+            list,
+            history,
+            theme,
+            lang,
+        }),
+        passive,
+    )
+}
+
+fn run_loop(
+    state: Carried,
+    passive: bool,
+    requests: &Receiver<Request>,
+    events: &Sender<SettingsEvent>,
+    shared: &Arc<Shared>,
+    system_language: Lang,
+    carry: &std::rc::Rc<std::cell::RefCell<Option<Carried>>>,
+) {
+    let root = state.root();
+    let Carried {
+        view,
+        settings_open: _,
+        settings_visible,
+        text_result,
+        text_result_position,
+        spellcheck,
+        list,
+        history,
+        theme,
+        lang,
+    } = state;
+    shared.open.store(root == Root::Settings, Ordering::SeqCst);
+    list.set_visible(list.visible() || root == Root::List);
+    history.set_visible(history.visible() || root == Root::History);
+    let settings_title = text_result
+        .as_ref()
+        .map_or(tr(Text::SettingsWindowTitle, lang), |r| r.title(lang));
+    let title = match root {
+        Root::List => list.config.labels.title.clone(),
+        Root::History => history.config.labels.title.clone(),
+        Root::Settings => settings_title.into(),
+        Root::Spellcheck => tr(Text::SpellcheckWordTitle, lang).into(),
+    };
+    let mut options = native_options(&title, shared);
+    if let Some(result) = &text_result
+        && result.is_compact()
+        && !settings_visible
+    {
+        options.viewport = egui::ViewportBuilder::default()
+            .with_title(result.title(lang))
+            .with_icon(crate::branding::icon())
+            .with_inner_size([390.0, 130.0])
+            .with_min_inner_size([300.0, 115.0])
+            .with_max_inner_size([520.0, 170.0])
+            .with_resizable(false)
+            .with_maximize_button(false)
+            .with_active(false);
+        if !crate::window_position::uses_native_position() {
+            options.viewport = options
+                .viewport
+                .with_position(text_result_position.unwrap_or([24.0, 24.0]));
+        }
+    }
+    if passive {
+        options.viewport = options.viewport.with_active(false);
+        options.viewport = options.viewport.with_visible(false);
+    }
+    match root {
+        Root::List => {
+            options.viewport = list.root_builder();
+            options.centered = false;
+        }
+        Root::History => {
+            options.viewport = history.builder().with_visible(true);
+            options.centered = false;
+        }
+        Root::Spellcheck => {
+            options.viewport = spellcheck_builder(lang, 150.0).with_visible(true);
+            options.centered = false;
+        }
+        Root::Settings => {}
+    }
+    let (spellcheck_result, spellcheck_position, spellcheck_target) = match spellcheck {
+        Some((result, position, target)) => (Some(result), position, target),
+        None => (None, None, None),
+    };
+    let app_requests = requests.clone();
+    let app_events = events.clone();
+    let app_shared = shared.clone();
+    let app_carry = carry.clone();
+    let result = eframe::run_native(
+        &title,
+        options,
+        Box::new(move |cc| {
+            crate::appearance::configure(&cc.egui_ctx);
+            crate::appearance::apply_theme(&cc.egui_ctx, theme);
+            cc.egui_ctx.request_repaint();
+            if let Ok(mut slot) = app_shared.context.lock() {
+                *slot = Some(cc.egui_ctx.clone());
+            }
+            Ok(Box::new(App {
+                view,
+                requests: app_requests,
+                events: app_events,
+                shared: app_shared,
+                theme,
+                lang,
+                system_language,
+                settings_visible,
+                text_result,
+                text_result_position,
+                spellcheck_result,
+                spellcheck_position,
+                spellcheck_target,
+                spellcheck_pending: None,
+                spellcheck_height: 150.0,
+                root,
+                list,
+                history,
+                exiting: false,
+                carry: app_carry,
+            }))
+        }),
+    );
+    if let Err(err) = result {
+        shared.failed.store(true, Ordering::SeqCst);
+        tracing::error!("cannot open the settings window: {err}");
     }
 }
 
@@ -1343,6 +1490,7 @@ mod tests {
             list: ListView::default(),
             history: HistoryView::default(),
             exiting: false,
+            carry: Default::default(),
         };
         app.submit_spelling_replacement("world".into());
         let SettingsEvent::ReplaceSpelling {
@@ -1432,6 +1580,7 @@ mod tests {
                 list: ListView::default(),
                 history: HistoryView::default(),
                 exiting: false,
+                carry: Default::default(),
             };
             app.list.set_visible(true);
             app.history.set_visible(true);
@@ -1480,6 +1629,7 @@ mod tests {
             list: ListView::default(),
             history: HistoryView::default(),
             exiting: false,
+            carry: Default::default(),
         };
         for (visible, preference, expected) in [
             (true, UiLanguage::En, "Own Keyboard Switch Settings"),

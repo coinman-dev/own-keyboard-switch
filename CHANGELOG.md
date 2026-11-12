@@ -2,6 +2,15 @@
 
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Linux, Wayland:** closing the first window the program opened (for
+  example the clipboard history) while another one was open (the settings)
+  no longer leaves an empty window in its place. The open windows move on
+  intact, with unsaved settings edits.
+
 ## 0.6.0-beta — 2026-11-11
 
 ### Added

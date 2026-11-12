@@ -59,13 +59,26 @@ CONFIG
 if [[ ${OKBS_TEST_APP:-} == layout ]]; then echo 'SwitchMode=Window' >>"$XDG_CONFIG_HOME/kxkbrc"; fi
 kwin_wayland --virtual --output-count 2 --socket okbs-kde-test --width 1024 --height 768 --no-lockscreen --no-kactivities >tmp/linux-kde/kwin.log 2>&1 &
 linux_test_pid=$!
-finish() { kill "$linux_test_pid" 2>/dev/null || true; }
+finish() {
+    kill "$linux_test_pid" 2>/dev/null || true
+    # systemd --user activates portals and secret services for this private
+    # bus too; they would outlive it. Stop only those bound to this bus.
+    for linux_pid in $(pgrep -u "$(id -u)"); do
+        if tr '\0' '\n' <"/proc/$linux_pid/environ" 2>/dev/null | grep -qxF "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS"; then
+            [[ $linux_pid != $$ ]] && kill "$linux_pid" 2>/dev/null || true
+        fi
+    done
+}
 trap finish EXIT
 for linux_attempt in {1..60}; do
     if gdbus call --session --dest org.kde.keyboard --object-path /Layouts --method org.kde.KeyboardLayouts.getLayout >tmp/linux-kde/layout.log 2>/dev/null; then break; fi
     if ! kill -0 "$linux_test_pid" 2>/dev/null; then cat tmp/linux-kde/kwin.log; exit 1; fi
     sleep 0.5
 done
+if [[ ${OKBS_TEST_APP:-} == windows ]]; then
+    timeout 90s cargo test -p okbs-ui ${OKBS_TEST_NAME:-real_wayland_closing_the_first_window_keeps_the_others_without_an_empty_one} --locked -- --ignored --nocapture
+    exit
+fi
 if [[ ${OKBS_TEST_APP:-} == capture ]]; then
     timeout 60s "$OKBS_TEST_BROWSER_BINARY" wayland_picker_capture_recovers_metadata_and_rejects_stale_fields --ignored --nocapture
     exit
