@@ -1541,6 +1541,34 @@ mod tests {
     }
 
     #[test]
+    fn personal_words_are_not_reported_in_either_case() {
+        let root = tempfile::tempdir().unwrap();
+        let (requests, results) = spelling_worker(root.path().to_path_buf()).unwrap();
+        for (id, custom) in [(1, Vec::new()), (2, vec!["Okbswitch".to_string()])] {
+            requests
+                .send(SpellingJob {
+                    id,
+                    text: "okbswitch works".into(),
+                    interactive: false,
+                    target: None,
+                    settings: okbs_core::config::Spellcheck {
+                        languages: vec![okbs_core::Lang::En],
+                        custom_words: custom,
+                        ..Default::default()
+                    },
+                })
+                .unwrap();
+            let result = results.recv_timeout(Duration::from_secs(10)).unwrap();
+            let reported: Vec<_> = result
+                .misspellings
+                .iter()
+                .map(|m| m.word.as_str())
+                .collect();
+            assert_eq!(reported.is_empty(), id == 2, "{reported:?}");
+        }
+    }
+
+    #[test]
     fn automatic_correction_is_not_the_first_of_several_suggestions() {
         let root = tempfile::tempdir().unwrap();
         let (requests, results) = spelling_worker(root.path().to_path_buf()).unwrap();

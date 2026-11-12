@@ -4353,3 +4353,49 @@ fn hidden_tooltips_show_no_hint_for_tooltip_autoreplace() {
     assert!(!h.events.contains(&Event::Autoreplaced));
     assert_eq!(h.desktop.lock().enter_count, 1);
 }
+
+#[test]
+fn third_layout_input_is_ignored_unless_only_pair_layouts_is_off() {
+    for only_pair in [true, false] {
+        let mut h = Harness::with_config(
+            Lang::En,
+            config_with(|c| c.troubleshooting.only_pair_layouts = only_pair),
+        );
+        h.desktop.lock().third_layout = true;
+        h.desktop.lock().third_active = true;
+        let config = h.processor.config().clone();
+        h.processor.apply_config(config);
+        // Russian typed on the keys of a Latin third layout.
+        h.type_as("привет ", Lang::Ru);
+        if only_pair {
+            assert_eq!(h.text(), "ghbdtn ");
+            assert!(h.desktop.lock().third_active, "the layout is left alone");
+        } else {
+            assert_eq!(h.text(), "привет ");
+            assert!(!h.desktop.lock().third_active);
+            assert_eq!(h.layout(), Lang::Ru);
+        }
+    }
+}
+
+#[test]
+fn script_of_a_third_layout_picks_its_pair_language() {
+    let layout = |locale: &str, short: &str| LayoutInfo {
+        id: LayoutId(1),
+        lang: None,
+        locale: locale.into(),
+        name: short.into(),
+        short: short.into(),
+    };
+    assert_eq!(
+        crate::processor::script_lang(&layout("uk-UA", "ua")),
+        Lang::Ru
+    );
+    assert_eq!(crate::processor::script_lang(&layout("", "by")), Lang::Ru);
+    assert_eq!(crate::processor::script_lang(&layout("kk", "kz")), Lang::Ru);
+    assert_eq!(
+        crate::processor::script_lang(&layout("de-DE", "de")),
+        Lang::En
+    );
+    assert_eq!(crate::processor::script_lang(&layout("", "fr")), Lang::En);
+}

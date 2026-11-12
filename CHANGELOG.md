@@ -4,6 +4,14 @@
 
 ## Unreleased
 
+### Added
+
+- "Only consider Russian and English layouts" (Troubleshooting) now works.
+  It is on by default, as before: input in a third layout is left alone.
+  When it is off, a word typed in a third layout counts as typed in the pair
+  language of the same script (Cyrillic → Russian, Latin → English) and is
+  corrected to the other one when needed.
+
 ### Fixed
 
 - With "Show tooltips" off and autoreplace set to "by tooltip", Enter and Tab
