@@ -64,6 +64,20 @@ pub struct Config {
     pub log: Log,
 }
 
+impl Config {
+    /// The keys that confirm an autoreplacement. «По подсказке» needs a
+    /// visible hint: with tooltips hidden only the menu hotkey is left, so an
+    /// unseen replacement never takes the user's Enter or Tab.
+    pub fn effective_autoreplace_trigger(&self) -> AutoReplaceTrigger {
+        match self.autoreplace.trigger {
+            AutoReplaceTrigger::Tooltip if !self.advanced.show_tooltips => {
+                AutoReplaceTrigger::Hotkey
+            }
+            trigger => trigger,
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {

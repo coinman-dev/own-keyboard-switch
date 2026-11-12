@@ -984,7 +984,7 @@ impl Processor {
                         consume = true;
                     } else if !repeat
                         && self.mods.is_empty()
-                        && accepts(self.config.autoreplace.trigger, key)
+                        && accepts(self.config.effective_autoreplace_trigger(), key)
                     {
                         if key == PhysKey::Escape
                             && self.autoreplace_candidate().is_some()

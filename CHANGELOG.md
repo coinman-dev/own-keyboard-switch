@@ -6,6 +6,9 @@
 
 ### Fixed
 
+- With "Show tooltips" off and autoreplace set to "by tooltip", Enter and Tab
+  replaced a word the user had never been shown and were swallowed. Without a
+  visible hint there is nothing to confirm now; the menu hotkey still works.
 - **Linux, Wayland:** closing the first window the program opened (for
   example the clipboard history) while another one was open (the settings)
   no longer leaves an empty window in its place. The open windows move on

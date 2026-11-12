@@ -107,6 +107,9 @@ struct Desktop {
     fail_picker_capture: bool,
     picker_target: Option<InputTarget>,
     focus_change_on_layout: bool,
+    /// A German layout installed between English and Russian.
+    third_layout: bool,
+    third_active: bool,
     enter_count: usize,
     terminal: bool,
     /// Language of the access keys of the window's menu bar, if it has one.
@@ -144,6 +147,8 @@ impl Desktop {
             fail_picker_capture: false,
             picker_target: None,
             focus_change_on_layout: false,
+            third_layout: false,
+            third_active: false,
             enter_count: 0,
             terminal: false,
             menu_language: None,
@@ -316,9 +321,11 @@ fn id(lang: Lang) -> LayoutId {
         Lang::En => 0x0409,
     })
 }
+const GERMAN: LayoutId = LayoutId(0x0407);
+
 impl LayoutManager for FakeLayouts {
     fn layouts(&self) -> Result<Vec<LayoutInfo>> {
-        Ok(Lang::ALL
+        let mut list: Vec<LayoutInfo> = Lang::ALL
             .iter()
             .map(|&l| LayoutInfo {
                 id: id(l),
@@ -330,15 +337,34 @@ impl LayoutManager for FakeLayouts {
                 name: l.code().to_string(),
                 short: l.code().to_string(),
             })
-            .collect())
+            .collect();
+        if self.0.lock().third_layout {
+            list.insert(
+                1,
+                LayoutInfo {
+                    id: GERMAN,
+                    lang: None,
+                    locale: "de-DE".to_string(),
+                    name: "de".to_string(),
+                    short: "de".to_string(),
+                },
+            );
+        }
+        Ok(list)
     }
     fn current(&self) -> Result<LayoutId> {
-        Ok(id(self.0.lock().layout))
+        let d = self.0.lock();
+        Ok(if d.third_active { GERMAN } else { id(d.layout) })
     }
     fn set(&mut self, layout: LayoutId) -> Result<()> {
         if self.0.lock().fail_layout {
             return Err(PlatformError::Other("simulated layout failure".into()));
         }
+        if layout == GERMAN && self.0.lock().third_layout {
+            self.0.lock().third_active = true;
+            return Ok(());
+        }
+        self.0.lock().third_active = false;
         let lang = Lang::ALL
             .into_iter()
             .find(|&l| id(l) == layout)
@@ -4248,4 +4274,82 @@ fn break_turns_a_comma_typed_again_into_a_question_mark() {
         assert_eq!(h.text(), expected, "{steps:?}");
         assert_eq!(h.layout(), Lang::En, "{steps:?}");
     }
+}
+
+#[test]
+fn each_navigation_key_blocks_the_next_word_only_when_its_option_is_on() {
+    type Option_ = fn(&mut okbs_core::config::NoSwitchAfter) -> &mut bool;
+    let cases: [(PhysKey, Option_); 5] = [
+        (PhysKey::ArrowLeft, |n| &mut n.arrow_left),
+        (PhysKey::ArrowRight, |n| &mut n.arrow_right),
+        (PhysKey::ArrowUp, |n| &mut n.arrow_up),
+        (PhysKey::ArrowDown, |n| &mut n.arrow_down),
+        (PhysKey::Delete, |n| &mut n.delete),
+    ];
+    for (key, option) in cases {
+        for block in [false, true] {
+            let mut config = Config::default();
+            *option(&mut config.troubleshooting.no_switch_after) = block;
+            let mut h = Harness::with_config(Lang::En, config);
+            h.tap(key);
+            h.type_as("привет ", Lang::Ru);
+            let expected = if block { "ghbdtn " } else { "привет " };
+            assert_eq!(h.text(), expected, "{key:?} block={block}");
+            // The block lasts for one word only.
+            h.type_as("vbh ", Lang::En);
+            assert!(h.text().ends_with("мир "), "{key:?} block={block}");
+        }
+    }
+}
+
+#[test]
+fn switch_key_cycles_all_layouts_unless_only_russian_and_english() {
+    use okbs_core::config::SwitchKey;
+    for only_pair in [false, true] {
+        let mut h = Harness::with_config(
+            Lang::En,
+            config_with(|c| {
+                c.switching.switch_key = SwitchKey::RightCtrl;
+                c.switching.switch_key_only_pair = only_pair;
+            }),
+        );
+        h.desktop.lock().third_layout = true;
+        let config = h.processor.config().clone();
+        h.processor.apply_config(config);
+        // Installed order: Russian, German, English.
+        h.tap(PhysKey::ControlRight);
+        assert_eq!(h.layout(), Lang::Ru, "only_pair={only_pair}");
+        h.tap(PhysKey::ControlRight);
+        assert_eq!(
+            h.desktop.lock().third_active,
+            !only_pair,
+            "only_pair={only_pair}: the German layout is skipped only with the option"
+        );
+        h.tap(PhysKey::ControlRight);
+        assert!(!h.desktop.lock().third_active);
+        assert_eq!(
+            h.layout(),
+            if only_pair { Lang::Ru } else { Lang::En },
+            "only_pair={only_pair}"
+        );
+    }
+}
+
+#[test]
+fn hidden_tooltips_show_no_hint_for_tooltip_autoreplace() {
+    let mut h = gated_autoreplace(okbs_core::config::AutoReplaceTrigger::Tooltip, Lang::En);
+    let mut config = h.processor.config().clone();
+    config.advanced.show_tooltips = false;
+    h.processor.apply_config(config);
+    h.type_as("снп", Lang::Ru);
+    assert!(
+        !h.events
+            .iter()
+            .any(|e| matches!(e, Event::AutoreplaceHint(Some(_)))),
+        "{:?}",
+        h.events
+    );
+    h.tap(PhysKey::Enter);
+    assert!(!h.events.contains(&Event::Autoreplaced));
+    assert_eq!(h.desktop.lock().enter_count, 1);
 }
