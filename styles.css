@@ -31,7 +31,12 @@
 
 * { box-sizing: border-box; }
 
-html { scroll-behavior: smooth; scroll-padding-top: 84px; }
+html {
+  color-scheme: dark; /* form controls, scrollbars and dark-theme detection */
+  background: var(--bg);
+  scroll-behavior: smooth;
+  scroll-padding-top: 84px;
+}
 
 body {
   margin: 0;
