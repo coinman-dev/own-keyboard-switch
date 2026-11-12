@@ -11,6 +11,8 @@ flock 9
 linux_kde_data=tmp/linux-kde
 if [[ ${OKBS_TEST_BROWSER_INPUT:-0} == 1 ]]; then linux_kde_data=tmp/linux-kde-input; fi
 mkdir -p "$linux_kde_data"/{run,config,data,cache}
+# Logs of every mode go to tmp/linux-kde, also when the data lives elsewhere.
+mkdir -p tmp/linux-kde
 export XDG_RUNTIME_DIR="$PWD/$linux_kde_data/run"
 export XDG_CONFIG_HOME="$PWD/$linux_kde_data/config"
 export XDG_DATA_HOME="$PWD/$linux_kde_data/data"
