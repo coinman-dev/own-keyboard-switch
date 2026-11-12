@@ -14,6 +14,9 @@
 
 ### Fixed
 
+- **Linux:** the program no longer takes the virtual keyboards and mice of
+  its own acceptance tests (names starting with "OKBS ") unless they are
+  selected in the device list, so tests cannot type into the user's desktop.
 - With "Show tooltips" off and autoreplace set to "by tooltip", Enter and Tab
   replaced a word the user had never been shown and were swallowed. Without a
   visible hint there is nothing to confirm now; the menu hotkey still works.
