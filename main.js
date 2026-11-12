@@ -13,7 +13,7 @@
    * ------------------------------------------------------------------ */
   var EN = {
     'page.title': 'Own Keyboard Switch — automatic RU/EN keyboard layout switching',
-    'page.desc': 'Own Keyboard Switch fixes words typed in the wrong keyboard layout: ghbdtn → привет, руддщ → hello. Windows and Linux, no network, no ads, no update checks.',
+    'page.desc': 'Own Keyboard Switch fixes words typed in the wrong keyboard layout: ghbdtn → привет, руддщ → hello. Windows and Linux, no ads, typed text never leaves the computer.',
     'nav.label': 'Sections',
     'nav.how': 'How it works',
     'nav.features': 'Features',
@@ -22,14 +22,14 @@
     'nav.faq': 'FAQ',
     'nav.download': 'Download',
 
-    'hero.eyebrow': 'Windows and Linux · 0.6.0-beta',
+    'hero.eyebrow': 'Windows and Linux · 0.6.1-beta',
     'hero.title': 'Type as&nbsp;usual. <span class="grad">The program fixes the layout.</span>',
     'hero.lead': 'Own Keyboard Switch fixes words typed in the wrong Russian or English layout. When a word is finished, the program decides which language it is written in, erases it, switches the layout and types the word again.',
-    'hero.download': 'Download 0.6.0-beta',
+    'hero.download': 'Download 0.6.1-beta',
     'hero.guide': 'User guide',
     'hero.fact1': 'Text never leaves the computer',
     'hero.fact2': 'Dictionaries are built in',
-    'hero.fact3': 'No ads, no update checks',
+    'hero.fact3': 'No ads',
 
     'demo.title': 'What you type',
     'demo.note': 'The same keys, two readings. The one that is a word stays.',
@@ -86,7 +86,7 @@
     'tour.4.t': 'Autoreplace',
     'tour.4.p': 'Replace by a tooltip, Space, Enter, Tab or a hotkey. Entries can also be inserted without abbreviations — from a floating list or a menu at the caret.',
     'tour.5.t': 'Spell checking',
-    'tour.5.p': 'Russian and English, your own words, additional dictionaries. Downloading a dictionary with the Download button is the only thing the program needs the network for.',
+    'tour.5.p': 'Russian and English, your own words, additional dictionaries. An additional dictionary is downloaded with the Download button.',
     'tour.6.t': 'Hotkeys and mouse',
     'tour.6.p': 'Any action can be reassigned, and mouse buttons can be given key combinations. No Break key on the laptop — assign another one.',
 
@@ -104,13 +104,13 @@
     'priv.eyebrow': 'What the program does not do',
     'priv.title': 'Typed text stays on&nbsp;the&nbsp;computer',
     'priv.1.t': 'It does not send text over the network',
-    'priv.1.p': 'Dictionaries and language models are built in. The network is needed only to download an additional spelling dictionary when you click Download yourself. There are no update checks and no ads.',
+    'priv.1.p': 'Dictionaries and language models are built in. The network is needed to download an additional spelling dictionary when you click Download yourself, and once a week to ask GitHub whether a newer version exists. Nothing about you is sent; the check can be turned off. No ads.',
     'priv.2.t': 'It does not write text to the log',
     'priv.2.p': 'The log holds only technical details: how many letters the word had, what decision was made and why. The log is off until you turn it on yourself.',
     'priv.3.t': 'Russian and English only',
     'priv.3.p': 'The program works with the Russian–English pair. Other layouts can stay in the system: by default the program does not touch input in them.',
 
-    'dl.eyebrow': 'Download · 0.6.0-beta',
+    'dl.eyebrow': 'Download · 0.6.1-beta',
     'dl.title': 'Windows 10/11 and Linux',
     'dl.lead': 'A prerelease. The Linux version is still young: reports are welcome.',
     'dl.1': 'Put the file in a writable folder and run it. No installation required.',

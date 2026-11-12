@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="ru" data-version="0.6.0-beta">
+<html lang="ru" data-version="0.6.1-beta">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Own Keyboard Switch — автоматическое переключение раскладки RU/EN</title>
-  <meta name="description" content="Own Keyboard Switch исправляет слова, набранные не в той раскладке: ghbdtn → привет, руддщ → hello. Windows и Linux, без сети, рекламы и проверки обновлений.">
+  <meta name="description" content="Own Keyboard Switch исправляет слова, набранные не в той раскладке: ghbdtn → привет, руддщ → hello. Windows и Linux, без рекламы, текст не уходит в сеть.">
   <meta name="theme-color" content="#070a14">
   <!-- The page is dark only: tell browsers and Dark Reader not to recolor it. -->
   <meta name="color-scheme" content="dark">
@@ -33,7 +33,7 @@
     "description": "Automatic Russian–English keyboard layout switching for Windows and Linux: fixes words typed in the wrong layout (ghbdtn → привет). Works offline.",
     "applicationCategory": "UtilitiesApplication",
     "operatingSystem": "Windows 10, Windows 11, Linux",
-    "softwareVersion": "0.6.0-beta",
+    "softwareVersion": "0.6.1-beta",
     "inLanguage": ["ru", "en"],
     "image": "https://coinman-dev.github.io/own-keyboard-switch/img/logo.png",
     "screenshot": "https://coinman-dev.github.io/own-keyboard-switch/img/en/general.png",
@@ -47,7 +47,7 @@
   <link rel="icon" href="img/favicon.ico" sizes="any">
   <link rel="icon" type="image/png" href="img/logo-256.png">
   <script>document.documentElement.classList.add('js');</script>
-  <link rel="stylesheet" href="styles.css?v=202611121129">
+  <link rel="stylesheet" href="styles.css?v=202611121241">
 </head>
 <body>
   <div class="progress" aria-hidden="true"><span id="progressBar"></span></div>
@@ -84,17 +84,17 @@
     <!-- Hero -->
     <section class="hero" id="hero">
       <div class="hero-text">
-        <p class="eyebrow reveal" data-i18n="hero.eyebrow">Windows и Linux · 0.6.0-beta</p>
+        <p class="eyebrow reveal" data-i18n="hero.eyebrow">Windows и Linux · 0.6.1-beta</p>
         <h1 class="reveal" style="--d:80ms" data-i18n="hero.title">Печатайте как&nbsp;обычно. <span class="grad">Раскладку исправит программа.</span></h1>
         <p class="lead reveal" style="--d:160ms" data-i18n="hero.lead">Own Keyboard Switch исправляет слова, набранные не в той раскладке. Когда слово закончено, программа решает, на каком языке оно написано, стирает его, переключает раскладку и набирает заново.</p>
         <div class="cta reveal" style="--d:240ms">
-          <a class="btn btn-primary" href="#download" data-i18n="hero.download">Скачать 0.6.0-beta</a>
+          <a class="btn btn-primary" href="#download" data-i18n="hero.download">Скачать 0.6.1-beta</a>
           <a class="btn btn-ghost js-guide" href="https://github.com/coinman-dev/own-keyboard-switch/blob/main/doc/ru/README.md" data-href-en="https://github.com/coinman-dev/own-keyboard-switch/blob/main/doc/en/README.md" data-i18n="hero.guide">Руководство пользователя</a>
         </div>
         <ul class="facts reveal" style="--d:320ms">
           <li data-i18n="hero.fact1">Текст не уходит в сеть</li>
           <li data-i18n="hero.fact2">Словари встроены</li>
-          <li data-i18n="hero.fact3">Без рекламы и проверки обновлений</li>
+          <li data-i18n="hero.fact3">Без рекламы</li>
         </ul>
       </div>
 
@@ -292,7 +292,7 @@
           </article>
           <article class="tour-step" data-shot="spellcheck.png">
             <h3 data-i18n="tour.5.t">Проверка орфографии</h3>
-            <p data-i18n="tour.5.p">Русский и английский, свои слова, дополнительные словари. Скачивание словаря кнопкой «Загрузить» — единственное, для чего программе нужна сеть.</p>
+            <p data-i18n="tour.5.p">Русский и английский, свои слова, дополнительные словари. Дополнительный словарь скачивается кнопкой «Загрузить».</p>
             <img class="tour-inline" src="img/ru/spellcheck.png" data-shot="spellcheck.png" width="1002" height="789" loading="lazy" alt="">
           </article>
           <article class="tour-step" data-shot="hotkeys.png">
@@ -361,7 +361,7 @@
       <div class="trio" data-stagger="110">
         <article class="pillar reveal" data-reveal="zoom">
           <h3 data-i18n="priv.1.t">Не отправляет текст в сеть</h3>
-          <p data-i18n="priv.1.p">Словари и языковые модели встроены. Сеть нужна только чтобы скачать дополнительный словарь орфографии, когда вы сами нажмёте «Загрузить». Обновления не проверяются, рекламы нет.</p>
+          <p data-i18n="priv.1.p">Словари и языковые модели встроены. Сеть нужна, чтобы скачать дополнительный словарь орфографии, когда вы сами нажмёте «Загрузить», и раз в неделю — чтобы спросить у GitHub, нет ли новой версии. О вас ничего не передаётся, проверку можно выключить. Рекламы нет.</p>
         </article>
         <article class="pillar reveal" data-reveal="zoom">
           <h3 data-i18n="priv.2.t">Не пишет текст в журнал</h3>
@@ -377,34 +377,34 @@
     <!-- Download -->
     <section class="section" id="download">
       <header class="section-head">
-        <p class="eyebrow reveal" data-i18n="dl.eyebrow">Скачать · 0.6.0-beta</p>
+        <p class="eyebrow reveal" data-i18n="dl.eyebrow">Скачать · 0.6.1-beta</p>
         <h2 class="reveal" style="--d:80ms" data-i18n="dl.title">Windows 10/11 и Linux</h2>
         <p class="section-lead reveal" style="--d:160ms" id="prereleaseNote" data-i18n="dl.lead">Предварительный релиз. Версия для Linux ещё молодая: сообщения об ошибках приветствуются.</p>
       </header>
 
       <div class="downloads" data-stagger="90">
-        <a data-asset="portable" class="dl c-blue reveal" href="https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.6.0-beta/okbswitch-portable.exe">
+        <a data-asset="portable" class="dl c-blue reveal" href="https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.6.1-beta/okbswitch-portable.exe">
           <span class="dl-os">Windows x64</span>
           <strong>Portable</strong>
           <span class="dl-file">okbswitch-portable.exe</span>
           <span class="dl-note" data-i18n="dl.1">Положить в доступную для записи папку и запустить. Установка не нужна.</span>
         </a>
-        <a data-asset="installer" class="dl c-blue reveal" href="https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.6.0-beta/okbswitch-install.exe">
+        <a data-asset="installer" class="dl c-blue reveal" href="https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.6.1-beta/okbswitch-install.exe">
           <span class="dl-os">Windows x64</span>
           <strong data-i18n="dl.2.t">Установщик</strong>
           <span class="dl-file">okbswitch-install.exe</span>
           <span class="dl-note" data-i18n="dl.2">Установка для себя или всех пользователей, ярлыки и автозапуск.</span>
         </a>
-        <a data-asset="deb" class="dl c-red reveal" href="https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.6.0-beta/okbswitch_0.6.0-beta_amd64.deb">
+        <a data-asset="deb" class="dl c-red reveal" href="https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.6.1-beta/okbswitch_0.6.1-beta_amd64.deb">
           <span class="dl-os">Linux x86_64</span>
           <strong data-i18n="dl.3.t">Пакет .deb</strong>
-          <span class="dl-file">okbswitch_0.6.0-beta_amd64.deb</span>
+          <span class="dl-file">okbswitch_0.6.1-beta_amd64.deb</span>
           <span class="dl-note" data-i18n="dl.3">Ubuntu 24.04 и новее. Добавляет программу в меню приложений.</span>
         </a>
-        <a data-asset="appimage" class="dl c-red reveal" href="https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.6.0-beta/okbswitch-0.6.0-beta-x86_64.AppImage">
+        <a data-asset="appimage" class="dl c-red reveal" href="https://github.com/coinman-dev/own-keyboard-switch/releases/download/v0.6.1-beta/okbswitch-0.6.1-beta-x86_64.AppImage">
           <span class="dl-os">Linux x86_64</span>
           <strong>AppImage</strong>
-          <span class="dl-file">okbswitch-0.6.0-beta-x86_64.AppImage</span>
+          <span class="dl-file">okbswitch-0.6.1-beta-x86_64.AppImage</span>
           <span class="dl-note" data-i18n="dl.4">Сделать исполняемым и запустить; настройки хранятся рядом с файлом.</span>
         </a>
       </div>
@@ -422,13 +422,13 @@
         <div class="panel reveal" data-reveal="right">
           <h3 data-i18n="dl.cmd.t">Установка в Linux</h3>
           <div class="code">
-            <button type="button" class="copy" data-copy="sudo apt install ./okbswitch_0.6.0-beta_amd64.deb" data-i18n="copy">Копировать</button>
-            <pre><code>sudo apt install ./okbswitch_0.6.0-beta_amd64.deb</code></pre>
+            <button type="button" class="copy" data-copy="sudo apt install ./okbswitch_0.6.1-beta_amd64.deb" data-i18n="copy">Копировать</button>
+            <pre><code>sudo apt install ./okbswitch_0.6.1-beta_amd64.deb</code></pre>
           </div>
           <div class="code">
-            <button type="button" class="copy" data-copy="chmod +x okbswitch-0.6.0-beta-x86_64.AppImage &amp;&amp; ./okbswitch-0.6.0-beta-x86_64.AppImage" data-i18n="copy">Копировать</button>
-            <pre><code>chmod +x okbswitch-0.6.0-beta-x86_64.AppImage
-./okbswitch-0.6.0-beta-x86_64.AppImage</code></pre>
+            <button type="button" class="copy" data-copy="chmod +x okbswitch-0.6.1-beta-x86_64.AppImage &amp;&amp; ./okbswitch-0.6.1-beta-x86_64.AppImage" data-i18n="copy">Копировать</button>
+            <pre><code>chmod +x okbswitch-0.6.1-beta-x86_64.AppImage
+./okbswitch-0.6.1-beta-x86_64.AppImage</code></pre>
           </div>
           <p class="aside" data-i18n="dl.cmd.note">При первом запуске программа просит разрешение (pkexec), чтобы дать сеансу доступ к клавиатурам. Сама программа всегда работает от обычного пользователя.</p>
         </div>
@@ -498,6 +498,6 @@
     </nav>
   </footer>
 
-  <script src="main.js?v=202611121129"></script>
+  <script src="main.js?v=202611121241"></script>
 </body>
 </html>
