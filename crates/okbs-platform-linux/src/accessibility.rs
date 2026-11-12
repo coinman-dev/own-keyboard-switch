@@ -326,10 +326,16 @@ impl Reader {
         if role != 73 || !editable {
             return object.clone();
         }
-        let deadline = Instant::now() + Duration::from_millis(50);
+        let started = Instant::now();
+        let deadline = started + Duration::from_millis(50);
         let mut parent = object.clone();
-        for _ in 0..16 {
+        for depth in 0..16 {
             if Instant::now() >= deadline {
+                tracing::debug!(
+                    depth,
+                    elapsed_ms = started.elapsed().as_millis() as u64,
+                    "editor identity: paragraph kept, ancestor search timed out"
+                );
                 break;
             }
             let Some(next) = self
@@ -349,7 +355,8 @@ impl Reader {
             let Ok(role) = proxy.call::<_, _, u32>("GetRole", &()) else {
                 break;
             };
-            if role == 94 {
+            // DOCUMENT_TEXT; LibreOffice 26 reports Writer as DOCUMENT_FRAME.
+            if matches!(role, 82 | 94) {
                 if proxy
                     .call::<_, _, Vec<u32>>("GetState", &())
                     .ok()

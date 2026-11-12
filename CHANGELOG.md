@@ -2,6 +2,40 @@
 
 # Changelog
 
+## 0.6.1-beta — 2026-11-12
+
+### Added
+
+- **Update check** (About): once a week by default, or once a day, once a
+  month or never. The program asks GitHub only for the list of releases and
+  sends nothing about the user. A newer release adds a "New version
+  available" item to the tray menu and a button to its download page; nothing
+  is downloaded or installed automatically.
+
+- "Only consider Russian and English layouts" (Troubleshooting) now works.
+  It is on by default, as before: input in a third layout is left alone.
+  When it is off, a word typed in a third layout counts as typed in the pair
+  language of the same script (Cyrillic → Russian, Latin → English) and is
+  corrected to the other one when needed.
+
+### Fixed
+
+- **Linux, LibreOffice 26:** Writer reports its document with a new
+  accessibility role, so the program took each paragraph for a separate
+  field. Right after a correction it then dropped the next word or refused
+  an autoreplacement ("focused control changed"), for example `Github b`
+  stayed uncorrected. The whole document is one field again.
+- **Linux:** the program no longer takes the virtual keyboards and mice of
+  its own acceptance tests (names starting with "OKBS ") unless they are
+  selected in the device list, so tests cannot type into the user's desktop.
+- With "Show tooltips" off and autoreplace set to "by tooltip", Enter and Tab
+  replaced a word the user had never been shown and were swallowed. Without a
+  visible hint there is nothing to confirm now; the menu hotkey still works.
+- **Linux, Wayland:** closing the first window the program opened (for
+  example the clipboard history) while another one was open (the settings)
+  no longer leaves an empty window in its place. The open windows move on
+  intact, with unsaved settings edits.
+
 ## 0.6.0-beta — 2026-11-11
 
 ### Added

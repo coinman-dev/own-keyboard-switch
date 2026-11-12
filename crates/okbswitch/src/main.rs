@@ -22,6 +22,7 @@ mod locale;
 mod logging;
 mod paths;
 mod settings;
+mod updates;
 
 use anyhow::{Context, Result};
 use clap::Parser;

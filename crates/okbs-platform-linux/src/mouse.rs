@@ -179,7 +179,9 @@ fn run(
                 if grabbed.contains_key(&path) {
                     continue;
                 }
-                let wanted = Device::open(&path).is_ok_and(|d| is_remappable_mouse(&d, &mouse));
+                let wanted = Device::open(&path).is_ok_and(|d| {
+                    crate::input::discoverable(&d, &requested) && is_remappable_mouse(&d, &mouse)
+                });
                 if wanted && let Some(g) = Grabbed::open(&path) {
                     grabbed.insert(path, g);
                 }

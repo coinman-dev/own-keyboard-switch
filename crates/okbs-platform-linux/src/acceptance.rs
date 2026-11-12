@@ -249,6 +249,8 @@ impl Drop for Driver {
 }
 fn output_driver(path: PathBuf, root: u32) -> Driver {
     let mut reader = Device::open(path).unwrap();
+    // Keep test input away from a host desktop that sees uinput keyboards.
+    reader.grab().unwrap();
     reader.set_nonblocking(true).unwrap();
     let stop = Arc::new(AtomicBool::new(false));
     let stopping = stop.clone();

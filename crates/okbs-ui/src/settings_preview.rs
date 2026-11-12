@@ -1,6 +1,8 @@
 //! Manual visual check without opening a desktop window:
 //! `cargo test -p okbs-ui render_previews -- --ignored`
 //! Images go to `target/settings-preview/`. The PNG encoder is test-only.
+//! `OKBS_PREVIEW_SCALE=1.25` renders at a display scale (the guide's
+//! screenshots use 125%), `OKBS_PREVIEW_SECTION=About` only one section.
 
 use super::*;
 use egui::{ColorImage, ImageData, TextureId};
@@ -30,28 +32,38 @@ fn rasterize(
     ctx: &egui::Context,
     output: egui::FullOutput,
     textures: &HashMap<TextureId, ColorImage>,
+    scale: f32,
 ) -> Vec<u8> {
-    let width = WINDOW_SIZE[0] as usize;
-    let height = WINDOW_SIZE[1] as usize;
+    let width = (WINDOW_SIZE[0] * scale).round() as usize;
+    let height = (WINDOW_SIZE[1] * scale).round() as usize;
     let mut pixels = vec![0u8; width * height * 3];
-    for primitive in ctx.tessellate(output.shapes, 1.0) {
+    for primitive in ctx.tessellate(output.shapes, scale) {
         let egui::epaint::Primitive::Mesh(mesh) = primitive.primitive else {
             continue;
         };
         let texture = &textures[&mesh.texture_id];
+        // Meshes are in points; the image is in physical pixels.
+        let clip_rect = egui::Rect::from_min_max(
+            (primitive.clip_rect.min.to_vec2() * scale).to_pos2(),
+            (primitive.clip_rect.max.to_vec2() * scale).to_pos2(),
+        );
         for indices in mesh.indices.as_chunks::<3>().0 {
             let vertices = [
                 mesh.vertices[indices[0] as usize],
                 mesh.vertices[indices[1] as usize],
                 mesh.vertices[indices[2] as usize],
-            ];
+            ]
+            .map(|mut vertex| {
+                vertex.pos = (vertex.pos.to_vec2() * scale).to_pos2();
+                vertex
+            });
             let [a, b, c] = vertices.map(|v| v.pos);
             let cross = |u: egui::Vec2, v: egui::Vec2| u.x * v.y - u.y * v.x;
             let area = cross(b - a, c - a);
             if area.abs() < 0.0001 {
                 continue;
             }
-            let bounds = egui::Rect::from_points(&[a, b, c]).intersect(primitive.clip_rect);
+            let bounds = egui::Rect::from_points(&[a, b, c]).intersect(clip_rect);
             for y in (bounds.top().floor().max(0.0) as usize)
                 ..(bounds.bottom().ceil().min(height as f32) as usize)
             {
@@ -59,7 +71,7 @@ fn rasterize(
                     ..(bounds.right().ceil().min(width as f32) as usize)
                 {
                     let p = egui::pos2(x as f32 + 0.5, y as f32 + 0.5);
-                    if !primitive.clip_rect.contains(p) {
+                    if !clip_rect.contains(p) {
                         continue;
                     }
                     let weights = [
@@ -102,9 +114,21 @@ fn render_previews() {
     let directory =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/settings-preview");
     std::fs::create_dir_all(&directory).expect("preview directory");
+    let scale: f32 = std::env::var("OKBS_PREVIEW_SCALE")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(1.0);
+    let only = std::env::var("OKBS_PREVIEW_SECTION").ok();
     for lang in Lang::ALL {
         for section in Section::ALL {
+            if only
+                .as_deref()
+                .is_some_and(|only| only != format!("{section:?}"))
+            {
+                continue;
+            }
             let ctx = egui::Context::default();
+            ctx.set_pixels_per_point(scale);
             configure_context(&ctx);
             ctx.set_theme(egui::ThemePreference::Dark);
             let mut config = Config::default();
@@ -144,15 +168,18 @@ fn render_previews() {
                 );
                 texture_updates(&mut textures, &mut output);
                 if frame == 3 {
-                    let pixels = rasterize(&ctx, output, &textures);
+                    let pixels = rasterize(&ctx, output, &textures, scale);
                     let filename = match lang {
                         Lang::Ru => format!("{section:?}.png"),
                         Lang::En => format!("{section:?}-en.png"),
                     };
                     let file =
                         std::fs::File::create(directory.join(filename)).expect("preview file");
-                    let mut encoder =
-                        png::Encoder::new(file, WINDOW_SIZE[0] as u32, WINDOW_SIZE[1] as u32);
+                    let mut encoder = png::Encoder::new(
+                        file,
+                        (WINDOW_SIZE[0] * scale).round() as u32,
+                        (WINDOW_SIZE[1] * scale).round() as u32,
+                    );
                     encoder.set_color(png::ColorType::Rgb);
                     encoder.set_depth(png::BitDepth::Eight);
                     encoder

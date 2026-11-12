@@ -31,6 +31,8 @@ tracing-appender.workspace = true
 tracing-subscriber.workspace = true
 tempfile.workspace = true
 ureq.workspace = true
+serde.workspace = true
+serde_json = "1.0"
 
 [target.'cfg(windows)'.dependencies]
 okbs-platform-windows.workspace = true
@@ -39,7 +41,6 @@ okbs-platform-windows.workspace = true
 okbs-platform-linux.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
-serde_json = "1.0"
 evdev.workspace = true
 
 [build-dependencies]

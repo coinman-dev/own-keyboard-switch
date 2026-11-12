@@ -14,7 +14,7 @@ use okbs_core::config::{
     AutoReplaceItem, AutoReplaceTrigger, Config, ExecutableExclusion, FolderExclusion,
     HotkeyAction, HotkeyBinding, ImportedRules, LogLevel, MatchKind, MergeReport, MouseButton,
     Rule, RuleAction, SoundEvent, SoundMode, SwitchKey, Theme, TitleExclusion, TypedSpellcheckMode,
-    UiLanguage,
+    UiLanguage, UpdateCheck,
 };
 use okbs_core::{Hotkey, Lang};
 
@@ -159,6 +159,10 @@ impl SoundId {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SettingsEvent {
     LinuxSetup(crate::linux_setup::Action),
+    /// «Проверить сейчас».
+    CheckUpdates,
+    /// «Открыть страницу загрузки» of a found release.
+    OpenUpdate(String),
     /// Save and apply this configuration.
     Apply(Box<Config>),
     /// Report the next key combination (sent back as [`SettingsInput::HotkeyCaptured`]).
@@ -211,6 +215,8 @@ pub enum DictionaryState {
 /// Messages from the application to the settings window.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SettingsInput {
+    /// The result of the latest update check, for «О программе».
+    UpdateStatus(UpdateStatus),
     ApplyRejected {
         previous: Box<Config>,
         attempted: Box<Config>,
@@ -334,6 +340,28 @@ impl HotkeySlot {
             Self::Action(action) => config.hotkeys.get_mut(action),
             Self::Mouse(button) => config.mouse.get_mut(button),
         }
+    }
+}
+
+/// What «О программе» shows about updates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdateStatus {
+    /// A check is running.
+    Checking,
+    /// No newer release.
+    Latest,
+    /// A newer release and its page.
+    Available { version: String, url: String },
+    /// The last check failed.
+    Failed,
+}
+
+fn update_check_text(check: UpdateCheck) -> Text {
+    match check {
+        UpdateCheck::Never => Text::UpdateNever,
+        UpdateCheck::Daily => Text::UpdateDaily,
+        UpdateCheck::Weekly => Text::UpdateWeekly,
+        UpdateCheck::Monthly => Text::UpdateMonthly,
     }
 }
 
@@ -478,6 +506,7 @@ pub struct SettingsView {
     rules_status: Option<RulesStatus>,
     /// «Лицензии...» of «О программе» is shown.
     licenses_open: bool,
+    update_status: Option<UpdateStatus>,
     linux_devices_text: String,
 }
 
@@ -693,6 +722,7 @@ impl SettingsView {
             rules_transfer: None,
             rules_status: None,
             licenses_open: false,
+            update_status: None,
         }
     }
 
@@ -804,6 +834,7 @@ impl SettingsView {
             }
             // Handled by the window, which hides itself.
             SettingsInput::CloseWindow => {}
+            SettingsInput::UpdateStatus(status) => self.update_status = Some(status),
             SettingsInput::LinuxSetupConfig(config) => {
                 if matches!(self.dialog, Some(Dialog::LinuxSetup(_))) {
                     self.draft = (*config).clone();
@@ -993,6 +1024,8 @@ impl SettingsView {
                             if crate::about::section(ui, lang) {
                                 self.licenses_open = true;
                             }
+                            ui.separator();
+                            self.updates(ui, lang, events);
                         }
                     }
                 });
@@ -1463,6 +1496,60 @@ impl SettingsView {
         if let Some(action) = open {
             self.selected_hotkey = Some(action);
             self.open_hotkey_dialog(HotkeySlot::Action(action), events);
+        }
+    }
+
+    /// «Проверять обновления» and the result of the last check.
+    fn updates(&mut self, ui: &mut Ui, lang: Lang, events: &mut Vec<SettingsEvent>) {
+        form_row(ui, tr(Text::UpdateCheckLabel, lang), |ui| {
+            let current = self.draft.general.update_check;
+            egui::ComboBox::from_id_salt("update_check")
+                .selected_text(tr(update_check_text(current), lang))
+                .show_ui(ui, |ui| {
+                    for check in UpdateCheck::ALL {
+                        ui.selectable_value(
+                            &mut self.draft.general.update_check,
+                            check,
+                            tr(update_check_text(check), lang),
+                        );
+                    }
+                });
+        });
+        weak(ui, tr(Text::UpdateCheckHint, lang));
+        ui.horizontal_wrapped(|ui| {
+            let checking = self.update_status == Some(UpdateStatus::Checking);
+            if ui
+                .add_enabled(!checking, action_button(tr(Text::BtnCheckNow, lang)))
+                .clicked()
+            {
+                self.update_status = Some(UpdateStatus::Checking);
+                events.push(SettingsEvent::CheckUpdates);
+            }
+            match &self.update_status {
+                Some(UpdateStatus::Checking) => {
+                    ui.label(tr(Text::UpdateChecking, lang));
+                }
+                Some(UpdateStatus::Latest) => {
+                    ui.label(tr(Text::UpdateLatest, lang));
+                }
+                Some(UpdateStatus::Failed) => {
+                    ui.label(tr(Text::UpdateFailed, lang));
+                }
+                Some(UpdateStatus::Available { version, .. }) => {
+                    ui.label(
+                        RichText::new(format!("{} {version}", tr(Text::UpdateAvailable, lang)))
+                            .strong(),
+                    );
+                }
+                None => {}
+            }
+        });
+        if let Some(UpdateStatus::Available { url, .. }) = &self.update_status
+            && ui
+                .add(action_button(tr(Text::BtnOpenDownload, lang)))
+                .clicked()
+        {
+            events.push(SettingsEvent::OpenUpdate(url.clone()));
         }
     }
 
@@ -2974,6 +3061,38 @@ mod tests {
         ));
         assert_eq!(view.draft().mouse.middle.to_string(), "Ctrl+W");
         assert_eq!(view.draft().mouse.forward.to_string(), "Ctrl+C");
+    }
+
+    #[test]
+    fn about_checks_updates_on_request_and_opens_a_found_release() {
+        let ctx = test_context();
+        let mut view = SettingsView::new(Config::default(), Section::About, Lang::Ru);
+        assert_eq!(
+            view.draft().general.update_check,
+            UpdateCheck::Weekly,
+            "weekly by default"
+        );
+        let events = click(&mut view, &ctx, tr(Text::BtnCheckNow, Lang::Ru));
+        assert!(matches!(events.as_slice(), [SettingsEvent::CheckUpdates]));
+        let texts = |view: &mut SettingsView| -> Vec<String> {
+            drawn_texts(view, &ctx)
+                .into_iter()
+                .map(|(t, _)| t)
+                .collect()
+        };
+        assert!(
+            texts(&mut view)
+                .iter()
+                .any(|t| t == tr(Text::UpdateChecking, Lang::Ru))
+        );
+        view.handle(SettingsInput::UpdateStatus(UpdateStatus::Available {
+            version: "9.9.9".into(),
+            url: "https://github.com/coinman-dev/own-keyboard-switch/releases/tag/v9.9.9".into(),
+        }));
+        assert!(texts(&mut view).iter().any(|t| t.contains("9.9.9")));
+        let events = click(&mut view, &ctx, tr(Text::BtnOpenDownload, Lang::Ru));
+        assert!(matches!(events.as_slice(),
+            [SettingsEvent::OpenUpdate(url)] if url.ends_with("v9.9.9")));
     }
 
     /// Everything the window offers on Windows works; only the Linux port of

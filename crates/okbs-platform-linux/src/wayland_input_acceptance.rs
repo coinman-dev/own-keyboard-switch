@@ -4,9 +4,18 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Device acceptance creates uinput keyboards: root in an isolated VM/WSL,
+/// or the desktop user when the device test script confirmed uinput access
+/// (`OKBS_DEVICE_ACCEPTANCE=1`) and test devices cannot reach the host.
+pub(crate) fn device_acceptance_allowed() -> bool {
+    crate::permissions::is_root()
+        || std::env::var("OKBS_DEVICE_ACCEPTANCE").is_ok_and(|value| value == "1")
+}
+
 /// Headless compositors have no libinput seat. This test-only driver delivers
 /// production uinput output to their private virtual keyboard transports.
-/// It never sends test input to the host desktop or bypasses the engine.
+/// It never sends test input to the host desktop (the output keyboard is
+/// grabbed) or bypasses the engine.
 pub(crate) struct KeyboardDriver {
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     releases: std::sync::Arc<Vec<std::sync::atomic::AtomicUsize>>,
@@ -28,7 +37,24 @@ impl KeyboardDriver {
         path: PathBuf,
         remote: Option<(zbus::zvariant::OwnedObjectPath, zbus::blocking::Connection)>,
     ) -> Self {
-        let mut reader = evdev::Device::open(path).unwrap();
+        // udev grants the session user access a moment after creation.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut reader = loop {
+            match evdev::Device::open(&path) {
+                Ok(reader) => break reader,
+                Err(error) if Instant::now() < deadline => {
+                    let _ = error;
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(error) => panic!("cannot open the test output keyboard: {error}"),
+            }
+        };
+        // On a machine with its own desktop the host compositor sees this
+        // uinput keyboard too. Take it exclusively before any key is sent,
+        // so test input reaches only the private compositor.
+        reader
+            .grab()
+            .expect("the test output keyboard must not reach the host desktop");
         reader.set_nonblocking(true).unwrap();
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let stopping = stop.clone();

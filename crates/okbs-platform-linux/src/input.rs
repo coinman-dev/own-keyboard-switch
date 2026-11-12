@@ -17,6 +17,18 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 pub const VIRTUAL_NAME: &str = "Own Keyboard Switch virtual keyboard";
+/// Name prefix of the input devices created by acceptance tests and fixtures.
+/// A running program never takes them by itself, so tests do not type into
+/// the user's desktop; a test selects its device in `linux.devices`.
+pub const TEST_DEVICE_PREFIX: &str = "OKBS ";
+
+/// Whether automatic discovery may take this device.
+pub(crate) fn discoverable(device: &Device, requested: &[String]) -> bool {
+    !requested.is_empty()
+        || !device
+            .name()
+            .is_some_and(|name| name.starts_with(TEST_DEVICE_PREFIX))
+}
 #[derive(Debug, Default)]
 struct PhysicalKeys(HashMap<PathBuf, HashSet<u16>>);
 impl PhysicalKeys {
@@ -674,7 +686,10 @@ fn discover_missing(
         let Ok(mut device) = Device::open(&path) else {
             continue;
         };
-        if device.name() == Some(VIRTUAL_NAME) || crate::mouse::is_own_virtual(&device) {
+        if device.name() == Some(VIRTUAL_NAME)
+            || crate::mouse::is_own_virtual(&device)
+            || !discoverable(&device, requested)
+        {
             continue;
         }
         let keyboard = device
@@ -803,6 +818,8 @@ mod tests {
             .unwrap()
             .unwrap();
         let mut output_reader = Device::open(virtual_path).unwrap();
+        // The host desktop must not receive the synthetic chord below.
+        output_reader.grab().unwrap();
         output_reader.set_nonblocking(true).unwrap();
         injector
             .tap(&[PhysKey::ControlLeft], PhysKey::KeyC)

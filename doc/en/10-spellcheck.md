@@ -42,9 +42,8 @@ while typing: commands and their parameters are not dictionary words.
   (United Kingdom).
 - **Russian dictionary** — built-in Russian or “Modern expanded Russian”.
 
-Additional dictionaries are downloaded with the **Download** button — this is
-the only thing the program needs the network for. **Delete** removes a
-downloaded dictionary.
+Additional dictionaries are downloaded with the **Download** button.
+**Delete** removes a downloaded dictionary.
 
 **My words** — your own words that are not counted as errors: type a word and
 click **Add**. Words added with the **Add to my words** button go here too.

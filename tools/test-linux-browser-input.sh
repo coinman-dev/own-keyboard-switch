@@ -1,11 +1,21 @@
 #!/usr/bin/env bash
-# Explicit root-only acceptance in an isolated development VM/WSL. The private
+# Explicit acceptance in an isolated development VM/WSL or a desktop. The private
 # compositor receives only events from the fixture keyboard and OKBS uinput.
 # Build first as a regular user: cargo test -p okbs-platform-linux --locked --no-run
 set -euo pipefail
 cd "$(dirname "$0")/.."
-if [[ $EUID != 0 ]]; then echo 'Run this device acceptance as root in an isolated development VM.' >&2; exit 1; fi
-modprobe evdev
+# Root in a WSL/VM; on a desktop with the program's udev rule the session
+# user already owns uinput and keyboards. Running as that user also keeps the
+# logind session active, which the program requires. Test devices are named
+# "OKBS ..." (never taken by a running program) and the output keyboard is
+# grabbed, so nothing reaches the host desktop.
+if [[ $EUID == 0 ]]; then
+    modprobe evdev
+elif [[ -w /dev/uinput ]]; then
+    export OKBS_DEVICE_ACCEPTANCE=1
+else
+    echo 'Run as root in an isolated VM, or as the desktop user with uinput access.' >&2; exit 1
+fi
 mapfile -t linux_test_binaries < <(find target/debug/deps -maxdepth 1 -name 'okbs_platform_linux-*' -type f -executable -printf '%T@ %p\n' | sort -nr | cut -d' ' -f2-)
 if [[ ${#linux_test_binaries[@]} == 0 ]]; then echo 'Build the Linux backend tests first.' >&2; exit 1; fi
 export OKBS_TEST_BROWSER_BINARY="$PWD/${linux_test_binaries[0]}"

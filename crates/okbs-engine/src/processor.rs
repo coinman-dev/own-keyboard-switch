@@ -545,7 +545,14 @@ impl Processor {
 
     fn current_lang(&mut self) -> Option<Lang> {
         match self.backends.layouts.current() {
-            Ok(id) => self.lang_of(id),
+            Ok(id) => self.lang_of(id).or_else(|| {
+                // «Учитывать ввод только в русской и английской раскладках»
+                // off: a third layout counts as the pair language of its script.
+                (!self.config.troubleshooting.only_pair_layouts)
+                    .then(|| self.layouts.iter().find(|l| l.id == id))
+                    .flatten()
+                    .map(script_lang)
+            }),
             Err(err) => {
                 tracing::debug!("cannot read the current layout: {err}");
                 None
@@ -984,7 +991,7 @@ impl Processor {
                         consume = true;
                     } else if !repeat
                         && self.mods.is_empty()
-                        && accepts(self.config.autoreplace.trigger, key)
+                        && accepts(self.config.effective_autoreplace_trigger(), key)
                     {
                         if key == PhysKey::Escape
                             && self.autoreplace_candidate().is_some()
@@ -3217,4 +3224,24 @@ impl Processor {
             self.fail("cannot paste plain text", &err, out);
         }
     }
+}
+
+/// The pair language closest to a layout outside the pair: Russian for
+/// Cyrillic layouts (Ukrainian, Belarusian, Kazakh...), English otherwise.
+pub(crate) fn script_lang(layout: &LayoutInfo) -> Lang {
+    const CYRILLIC: &[&str] = &[
+        "ru", "uk", "ua", "be", "by", "bg", "mk", "kk", "kz", "ky", "kg", "tg", "tj", "mn", "tt",
+        "ba", "cv", "os", "sr", "rs",
+    ];
+    let code = |text: &str| {
+        text.split(['-', '_', '+', '('])
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+    };
+    let cyrillic = [&layout.locale, &layout.short]
+        .into_iter()
+        .any(|text| CYRILLIC.contains(&code(text).as_str()));
+    if cyrillic { Lang::Ru } else { Lang::En }
 }

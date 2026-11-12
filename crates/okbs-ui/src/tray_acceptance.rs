@@ -164,7 +164,7 @@ fn real_status_notifier_tray_exposes_icon_menu_and_commands() {
         sounds: true,
         layout: Some(0),
     };
-    let mut tray = Tray::new(state, Lang::En, &autoreplace, &layouts).unwrap();
+    let mut tray = Tray::new(state, Lang::En, &autoreplace, &layouts, None).unwrap();
     wait("the tray did not register with the watcher", || {
         !registered.lock().unwrap().is_empty()
     });
@@ -383,7 +383,7 @@ fn real_gnome_panel_tray_shows_icon_menu_and_commands() {
         sounds: true,
         layout: Some(0),
     };
-    let mut tray = Tray::new(state, Lang::En, &AutoReplace::default(), &layouts).unwrap();
+    let mut tray = Tray::new(state, Lang::En, &AutoReplace::default(), &layouts, None).unwrap();
     let mut item = serde_json::Value::Null;
     let deadline = Instant::now() + Duration::from_secs(10);
     // The Shell loads the pixmap and the menu asynchronously.

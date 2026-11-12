@@ -11,6 +11,8 @@ flock 9
 linux_kde_data=tmp/linux-kde
 if [[ ${OKBS_TEST_BROWSER_INPUT:-0} == 1 ]]; then linux_kde_data=tmp/linux-kde-input; fi
 mkdir -p "$linux_kde_data"/{run,config,data,cache}
+# Logs of every mode go to tmp/linux-kde, also when the data lives elsewhere.
+mkdir -p tmp/linux-kde
 export XDG_RUNTIME_DIR="$PWD/$linux_kde_data/run"
 export XDG_CONFIG_HOME="$PWD/$linux_kde_data/config"
 export XDG_DATA_HOME="$PWD/$linux_kde_data/data"
@@ -59,13 +61,40 @@ CONFIG
 if [[ ${OKBS_TEST_APP:-} == layout ]]; then echo 'SwitchMode=Window' >>"$XDG_CONFIG_HOME/kxkbrc"; fi
 kwin_wayland --virtual --output-count 2 --socket okbs-kde-test --width 1024 --height 768 --no-lockscreen --no-kactivities >tmp/linux-kde/kwin.log 2>&1 &
 linux_test_pid=$!
-finish() { kill "$linux_test_pid" 2>/dev/null || true; }
+finish() {
+    kill "$linux_test_pid" 2>/dev/null || true
+    # systemd --user activates portals and secret services for this private
+    # bus too; they would outlive it. Stop only those bound to this bus.
+    for linux_pid in $(pgrep -u "$(id -u)"); do
+        if { tr '\0' '\n' <"/proc/$linux_pid/environ"; } 2>/dev/null | grep -qxF "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS"; then
+            [[ $linux_pid != $$ ]] && kill "$linux_pid" 2>/dev/null || true
+        fi
+    done
+}
 trap finish EXIT
 for linux_attempt in {1..60}; do
     if gdbus call --session --dest org.kde.keyboard --object-path /Layouts --method org.kde.KeyboardLayouts.getLayout >tmp/linux-kde/layout.log 2>/dev/null; then break; fi
     if ! kill -0 "$linux_test_pid" 2>/dev/null; then cat tmp/linux-kde/kwin.log; exit 1; fi
     sleep 0.5
 done
+# Headless KWin has no screen locker; report an unlocked screen on this bus.
+python3 -I tools/linux-screensaver-fixture.py &
+for linux_attempt in {1..40}; do
+    gdbus call --session --dest org.freedesktop.ScreenSaver --object-path /ScreenSaver --method org.freedesktop.ScreenSaver.GetActive >/dev/null 2>&1 && break
+    sleep 0.1
+done
+if [[ ${OKBS_TEST_APP:-} == integration ]]; then
+    # Desktop integration only: no input devices are created.
+    cargo test -p okbs-platform-linux kde_setup_loads_the_script_and_enables_it_at_login --locked -- --ignored --nocapture
+    cargo test -p okbs-platform-linux kde_reads_switches_and_verifies_the_real_keyboard_group --locked -- --ignored --nocapture
+    cargo test -p okbs-platform-linux kde_script_tracks_real_windows_and_applies_owned_placement --locked -- --ignored --nocapture
+    cargo test -p okbs-platform-linux layer_shell_popup_uses_the_secondary_monitor_and_local_margins --locked -- --ignored --nocapture
+    exit
+fi
+if [[ ${OKBS_TEST_APP:-} == windows ]]; then
+    timeout 90s cargo test -p okbs-ui ${OKBS_TEST_NAME:-real_wayland_closing_the_first_window_keeps_the_others_without_an_empty_one} --locked -- --ignored --nocapture
+    exit
+fi
 if [[ ${OKBS_TEST_APP:-} == capture ]]; then
     timeout 60s "$OKBS_TEST_BROWSER_BINARY" wayland_picker_capture_recovers_metadata_and_rejects_stale_fields --ignored --nocapture
     exit

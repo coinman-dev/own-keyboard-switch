@@ -162,7 +162,7 @@ impl AutoReplaceGate {
         Self(Mutex::new(State {
             epoch: 0,
             replacer: AutoReplacer::new(&config.autoreplace),
-            trigger: config.autoreplace.trigger,
+            trigger: config.effective_autoreplace_trigger(),
             hotkeys: config.hotkeys.clone(),
             hotkeys_enabled: config.general.autoswitch
                 || !config.general.hotkeys_off_when_autoswitch_off,
@@ -201,7 +201,7 @@ impl AutoReplaceGate {
         if let Ok(mut s) = self.0.lock() {
             s.epoch = s.epoch.wrapping_add(1);
             s.replacer = replacer;
-            s.trigger = config.autoreplace.trigger;
+            s.trigger = config.effective_autoreplace_trigger();
             s.hotkeys = config.hotkeys.clone();
             s.hotkeys_enabled =
                 config.general.autoswitch || !config.general.hotkeys_off_when_autoswitch_off;

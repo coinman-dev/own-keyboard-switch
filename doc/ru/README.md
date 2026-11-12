@@ -1,6 +1,6 @@
 # Own Keyboard Switch — руководство пользователя
 
-Версия 0.6.0-beta. [English version](../en/README.md)
+Версия 0.6.1-beta. [English version](../en/README.md)
 
 1. [Что такое Own Keyboard Switch](01-overview.md) — что программа делает,
    чего не делает, главное на одной странице.

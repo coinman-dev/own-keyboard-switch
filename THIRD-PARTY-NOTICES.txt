@@ -1687,7 +1687,7 @@ DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------
 Boost Software License 1.0
-- clipboard-win 5.4.1 (https://github.com/DoumanAsh/clipboard-win)
+- clipboard-win 5.4.3 (https://github.com/DoumanAsh/clipboard-win)
 
 Boost Software License - Version 1.0 - August 17th, 2003
 
@@ -1700,7 +1700,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ------------------------------------------------------------------------
 Community Data License Agreement Permissive 2.0
-- webpki-roots 1.0.9 (https://github.com/rustls/webpki-roots)
+- webpki-roots 1.0.12 (https://github.com/rustls/webpki-roots)
 
 # Community Data License Agreement - Permissive - Version 2.0
 
@@ -2292,7 +2292,7 @@ THIS SOFTWARE.
 
 ------------------------------------------------------------------------
 ISC License
-- rustls-webpki 0.103.15 (https://github.com/rustls/webpki)
+- rustls-webpki 0.103.16 (https://github.com/rustls/webpki)
 
 Except as otherwise noted, this project is licensed under the following
 (ISC-style) terms:
@@ -5619,7 +5619,7 @@ MIT License
 - adler2 2.0.1 (https://github.com/oyvindln/adler2)
 - anyhow 1.0.104 (https://github.com/dtolnay/anyhow)
 - async-channel 2.5.0 (https://github.com/smol-rs/async-channel)
-- async-executor 1.14.0 (https://github.com/smol-rs/async-executor)
+- async-executor 1.14.1 (https://github.com/smol-rs/async-executor)
 - async-io 2.6.0 (https://github.com/smol-rs/async-io)
 - async-lock 3.4.2 (https://github.com/smol-rs/async-lock)
 - async-process 2.5.0 (https://github.com/smol-rs/async-process)
@@ -7065,13 +7065,13 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ------------------------------------------------------------------------
 PolyForm Noncommercial License 1.0.0
-- okbs-core 0.6.0-beta
-- okbs-engine 0.6.0-beta
-- okbs-platform 0.6.0-beta
-- okbs-platform-linux 0.6.0-beta
-- okbs-platform-windows 0.6.0-beta
-- okbs-ui 0.6.0-beta
-- okbswitch 0.6.0-beta
+- okbs-core 0.6.1-beta
+- okbs-engine 0.6.1-beta
+- okbs-platform 0.6.1-beta
+- okbs-platform-linux 0.6.1-beta
+- okbs-platform-windows 0.6.1-beta
+- okbs-ui 0.6.1-beta
+- okbswitch 0.6.1-beta
 
 # PolyForm Noncommercial License 1.0.0
 

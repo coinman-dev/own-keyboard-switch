@@ -51,11 +51,24 @@ texts! {
     // About
     AboutVersion => "версия", "version";
     AboutDescription => "Автоматически переключает раскладку между русским и английским, исправляет текст, набранный не в той раскладке, заменяет сокращения и проверяет орфографию.", "Switches the keyboard layout between Russian and English automatically, fixes text typed in the wrong layout, expands abbreviations and checks spelling.";
-    AboutPrivacy => "Набранный текст не покидает компьютер, обновления не проверяются. Сеть нужна только для скачивания дополнительных словарей по вашей команде.", "Typed text never leaves the computer and there are no update checks. The network is used only to download additional dictionaries when you ask for them.";
+    AboutPrivacy => "Набранный текст не покидает компьютер. Сеть нужна для скачивания дополнительных словарей по вашей команде и для проверки обновлений (настраивается ниже).", "Typed text never leaves the computer. The network is used to download additional dictionaries when you ask for them and to check for updates (see below).";
     AboutLicense => "Лицензия PolyForm Noncommercial 1.0.0: разрешено некоммерческое использование.", "License: PolyForm Noncommercial 1.0.0, for noncommercial use.";
     AboutThirdParty => "В программу встроены сторонние библиотеки, шрифты и словари Hunspell; их авторские права и лицензии сохраняются.", "Third-party libraries, fonts and Hunspell dictionaries built into the program keep their own copyrights and licenses.";
     AboutLicenses => "Лицензии...", "Licenses...";
     AboutLicensesTitle => "Лицензии", "Licenses";
+    UpdateCheckLabel => "Проверять обновления:", "Check for updates:";
+    UpdateNever => "никогда", "never";
+    UpdateDaily => "раз в день", "once a day";
+    UpdateWeekly => "раз в неделю", "once a week";
+    UpdateMonthly => "раз в месяц", "once a month";
+    UpdateCheckHint => "Программа запрашивает у GitHub только список выпусков и ничего не отправляет о вас и компьютере.", "The program asks GitHub only for the list of releases and sends nothing about you or the computer.";
+    BtnCheckNow => "Проверить сейчас", "Check now";
+    UpdateChecking => "Проверка...", "Checking...";
+    UpdateLatest => "Установлена последняя версия.", "This is the latest version.";
+    UpdateAvailable => "Доступна новая версия:", "A new version is available:";
+    UpdateFailed => "Не удалось проверить обновления. Повторим позже.", "Could not check for updates. Will try again later.";
+    BtnOpenDownload => "Открыть страницу загрузки", "Open the download page";
+    MenuUpdateAvailable => "Доступна новая версия", "New version available";
 
     // Settings sections
     SectionGeneral => "Общие", "General";

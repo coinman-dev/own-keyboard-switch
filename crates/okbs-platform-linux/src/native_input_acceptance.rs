@@ -581,7 +581,7 @@ impl FieldWindow {
 #[ignore = "requires root/uinput and private GNOME/KDE Wayland with per-window layouts; set OKBS_TEST_APP=layout in the device test script"]
 fn real_single_layout_follows_window_focus() {
     assert!(
-        crate::permissions::is_root(),
+        crate::wayland_input_acceptance::device_acceptance_allowed(),
         "run only in an isolated development VM"
     );
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -651,7 +651,7 @@ fn real_single_layout_follows_window_focus() {
 #[ignore = "requires root/uinput, private GNOME/KDE Wayland, Writer/UNO and foot; set OKBS_TEST_APP=native in the device test script"]
 fn real_wayland_writer_and_terminal_correct_paste_and_submit() {
     assert!(
-        crate::permissions::is_root(),
+        crate::wayland_input_acceptance::device_acceptance_allowed(),
         "run only in an isolated development VM"
     );
     // Engine decisions in the test log; typed text is never logged.
@@ -1412,7 +1412,7 @@ fn real_wayland_writer_and_terminal_correct_paste_and_submit() {
 #[ignore = "requires root/uinput, private GNOME/KDE Wayland and KWrite; set OKBS_TEST_APP=kwrite in the device test script"]
 fn real_kwrite_corrects_converts_and_pastes() {
     assert!(
-        crate::permissions::is_root(),
+        crate::wayland_input_acceptance::device_acceptance_allowed(),
         "run only in an isolated development VM"
     );
     let _ = tracing_subscriber::fmt()
@@ -1541,7 +1541,7 @@ fn real_kwrite_corrects_converts_and_pastes() {
 #[ignore = "requires root/uinput and private GNOME/KDE Wayland; set OKBS_TEST_APP=stress in the device test script"]
 fn real_fast_typing_across_conversions_loses_no_word() {
     assert!(
-        crate::permissions::is_root(),
+        crate::wayland_input_acceptance::device_acceptance_allowed(),
         "run only in an isolated development VM"
     );
     let _ = tracing_subscriber::fmt()
@@ -1597,7 +1597,7 @@ fn real_fast_typing_across_conversions_loses_no_word() {
 fn real_engine_settings_follow_live_configuration() {
     use okbs_core::config::{MatchKind, Rule, RuleAction, SwitchKey};
     assert!(
-        crate::permissions::is_root(),
+        crate::wayland_input_acceptance::device_acceptance_allowed(),
         "run only in an isolated development VM"
     );
     let _ = tracing_subscriber::fmt()

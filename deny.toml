@@ -59,8 +59,9 @@ ignore = true
 multiple-versions = "allow"
 wildcards = "deny"
 allow-wildcard-paths = true
-# The only network access is the optional dictionary download of the program
-# itself (okbswitch -> ureq -> rustls); nothing else may bring a network stack.
+# The only network access is the optional dictionary download and the update
+# check of the program itself (okbswitch -> ureq -> rustls); nothing else may
+# bring a network stack.
 deny = [
     { crate = "reqwest", reason = "no network access" },
     { crate = "ureq", wrappers = ["okbswitch"], reason = "only the dictionary download" },
