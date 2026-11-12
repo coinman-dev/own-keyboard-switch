@@ -818,6 +818,8 @@ mod tests {
             .unwrap()
             .unwrap();
         let mut output_reader = Device::open(virtual_path).unwrap();
+        // The host desktop must not receive the synthetic chord below.
+        output_reader.grab().unwrap();
         output_reader.set_nonblocking(true).unwrap();
         injector
             .tap(&[PhysKey::ControlLeft], PhysKey::KeyC)

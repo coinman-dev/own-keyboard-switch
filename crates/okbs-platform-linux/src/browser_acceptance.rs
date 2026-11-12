@@ -401,7 +401,7 @@ fn real_firefox_engine_corrects_and_pastes_without_crossing_fields() {
 fn browser_fields(check_input: bool) {
     if check_input {
         assert!(
-            crate::permissions::is_root(),
+            crate::wayland_input_acceptance::device_acceptance_allowed(),
             "run device acceptance as root in an isolated development VM"
         );
         assert!(matches!(

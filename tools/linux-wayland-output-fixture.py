@@ -31,6 +31,10 @@ try:
             remote.call_sync("NotifyKeyboardKeycode", GLib.Variant("(ub)", (42, pressed)), 0, 3000, None)
     event = struct.Struct("llHHi")
     with device.open("rb", buffering=0) as stream:
+        # EVIOCGRAB: on a machine with its own desktop the host compositor
+        # sees this uinput keyboard too; keep test input away from it.
+        import fcntl
+        fcntl.ioctl(stream.fileno(), 0x40044590, 1)
         ready.write_text("ready\n")
         while True:
             if not select.select([stream], [], [], 0.05)[0]:

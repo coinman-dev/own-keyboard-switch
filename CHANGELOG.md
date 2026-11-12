@@ -14,6 +14,11 @@
 
 ### Fixed
 
+- **Linux, LibreOffice 26:** Writer reports its document with a new
+  accessibility role, so the program took each paragraph for a separate
+  field. Right after a correction it then dropped the next word or refused
+  an autoreplacement ("focused control changed"), for example `Github b`
+  stayed uncorrected. The whole document is one field again.
 - **Linux:** the program no longer takes the virtual keyboards and mice of
   its own acceptance tests (names starting with "OKBS ") unless they are
   selected in the device list, so tests cannot type into the user's desktop.

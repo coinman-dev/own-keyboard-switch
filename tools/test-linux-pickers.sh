@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
-# Isolated controller/real-UI acceptance; root creates only the owned uinput.
+# Isolated controller/real-UI acceptance; it creates only the owned uinput.
 # Build first: cargo test -p okbswitch --locked --no-run
 set -euo pipefail
 cd "$(dirname "$0")/.."
-[[ $EUID == 0 ]] || { echo 'Run in an isolated development VM as root.' >&2; exit 1; }
-modprobe evdev
+# Root in a VM/WSL, or the desktop user with uinput access (see
+# test-linux-browser-input.sh: test devices never reach the host desktop).
+if [[ $EUID == 0 ]]; then
+    modprobe evdev
+elif [[ -w /dev/uinput ]]; then
+    export OKBS_DEVICE_ACCEPTANCE=1
+else
+    echo 'Run as root in an isolated VM, or as the desktop user with uinput access.' >&2; exit 1
+fi
 mapfile -t linux_test_binaries < <(find target/debug/deps -maxdepth 1 -name 'okbswitch-*' -type f -executable -printf '%T@ %p\n' | sort -nr | cut -d' ' -f2-)
 [[ ${#linux_test_binaries[@]} != 0 ]] || { echo 'Build the application tests first.' >&2; exit 1; }
 export OKBS_TEST_BROWSER_BINARY="$PWD/${linux_test_binaries[0]}"

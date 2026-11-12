@@ -64,7 +64,7 @@ finish() {
     # systemd --user activates portals and secret services for this private
     # bus too; they would outlive it. Stop only those bound to this bus.
     for linux_pid in $(pgrep -u "$(id -u)"); do
-        if tr '\0' '\n' <"/proc/$linux_pid/environ" 2>/dev/null | grep -qxF "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS"; then
+        if { tr '\0' '\n' <"/proc/$linux_pid/environ"; } 2>/dev/null | grep -qxF "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS"; then
             [[ $linux_pid != $$ ]] && kill "$linux_pid" 2>/dev/null || true
         fi
     done
