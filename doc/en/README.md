@@ -1,6 +1,6 @@
 # Own Keyboard Switch — user guide
 
-Version 0.6.0-beta. [Русская версия](../ru/README.md)
+Version 0.6.1-beta. [Русская версия](../ru/README.md)
 
 1. [What is Own Keyboard Switch](01-overview.md) — what the program does, what
    it does not do, the essentials on one page.
