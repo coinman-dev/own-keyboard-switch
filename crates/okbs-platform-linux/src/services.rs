@@ -426,6 +426,21 @@ impl SystemSettings for LinuxSystemSettings {
         };
         spawn_reaped(Command::new(program).args(args)).map(|_| ())
     }
+
+    fn open_url(&self, url: &str) -> Result<()> {
+        if !url.starts_with("https://") {
+            return Err(error("only https:// pages are opened"));
+        }
+        // The AppImage points these at its own bundled libraries and data;
+        // the browser must start with the system ones.
+        spawn_reaped(
+            Command::new("xdg-open")
+                .arg(url)
+                .env_remove("LD_LIBRARY_PATH")
+                .env_remove("XKB_CONFIG_ROOT"),
+        )
+        .map(|_| ())
+    }
 }
 /// Starts a program without waiting for it; a thread reaps it on exit, as an
 /// unwaited child would stay a zombie until this program ends.

@@ -38,6 +38,8 @@ pub enum TrayCommand {
     KeyboardSettings,
     /// «О программе».
     About,
+    /// «Доступна новая версия …»: open the release page.
+    OpenUpdate,
     /// «Выйти».
     Exit,
 }
@@ -93,6 +95,7 @@ pub struct Tray {
     clipboard_spellcheck: MenuItem,
     clipboard_history: MenuItem,
     keyboard_settings: MenuItem,
+    update: Option<MenuItem>,
     about: MenuItem,
     exit: MenuItem,
     /// Native handle of the popup menu, valid while `icon` lives.
@@ -130,11 +133,13 @@ impl Tray {
     /// Creates the tray icon. On Windows call it on a thread that pumps messages.
     /// `layouts` are the installed keyboard layouts, in the order
     /// [`TrayState::layout`] and [`TrayCommand::SelectLayout`] refer to.
+    /// `update` is the version of a newer release found by the update check.
     pub fn new(
         state: TrayState,
         ui: Lang,
         autoreplace: &AutoReplace,
         layouts: &[TrayLayout],
+        update: Option<&str>,
     ) -> Result<Self, TrayError> {
         let settings = MenuItem::new(tr(Text::MenuSettings, ui), true, None);
         let items: Vec<CheckMenuItem> = layouts
@@ -182,6 +187,13 @@ impl Tray {
             cfg!(any(windows, target_os = "linux")),
             None,
         );
+        let update = update.map(|version| {
+            MenuItem::new(
+                format!("{} {version}...", tr(Text::MenuUpdateAvailable, ui)),
+                true,
+                None,
+            )
+        });
         let about = MenuItem::new(tr(Text::MenuAbout, ui), true, None);
         let exit = MenuItem::new(tr(Text::MenuExit, ui), true, None);
         let autoreplace_list = MenuItem::new(
@@ -228,10 +240,12 @@ impl Tray {
             &clipboard,
             &autoreplace_menu,
             &PredefinedMenuItem::separator(),
-            &about,
-            &exit,
         ])
         .map_err(err)?;
+        if let Some(update) = &update {
+            menu.append(update).map_err(err)?;
+        }
+        menu.append_items(&[&about, &exit]).map_err(err)?;
         #[cfg(windows)]
         let hmenu = tray_icon::menu::ContextMenu::hpopupmenu(&menu);
         #[cfg(windows)]
@@ -269,6 +283,7 @@ impl Tray {
             clipboard_spellcheck,
             clipboard_history,
             keyboard_settings,
+            update,
             about,
             exit,
             #[cfg(windows)]
@@ -393,6 +408,8 @@ impl Tray {
                 TrayCommand::SelectLayout(index)
             } else if id == self.keyboard_settings.id() {
                 TrayCommand::KeyboardSettings
+            } else if self.update.as_ref().is_some_and(|item| id == item.id()) {
+                TrayCommand::OpenUpdate
             } else if id == self.about.id() {
                 TrayCommand::About
             } else if id == self.exit.id() {

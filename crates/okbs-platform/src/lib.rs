@@ -292,6 +292,12 @@ pub trait FileDialogs: Send + Sync {
 pub trait SystemSettings: Send {
     /// «Системные настройки клавиатуры»: where layouts are added and removed.
     fn open_keyboard_settings(&self) -> Result<()>;
+
+    /// Opens an `https://` page in the default browser.
+    fn open_url(&self, url: &str) -> Result<()> {
+        let _ = url;
+        Err(PlatformError::Unsupported("opening web pages"))
+    }
 }
 
 /// What the floating layout indicator shows and how it behaves.

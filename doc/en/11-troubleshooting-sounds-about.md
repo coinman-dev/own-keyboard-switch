@@ -86,3 +86,12 @@ test it with the **Play** button. **Default** restores the built-in sound.
 Version, purpose of the program, privacy and license information, a link to
 the project. **Licenses...** shows the licenses of the built-in libraries,
 fonts and dictionaries.
+
+**Check for updates** — how often the program asks GitHub for the list of
+releases: never, once a day, once a week (the default) or once a month. Only
+the request itself is sent, nothing about you or the computer. When a new
+version is out, the tray menu gets a **New version available …** item and this
+section an **Open the download page** button. The program downloads and
+installs nothing by itself. **Check now** checks at once. Users of a
+prerelease also hear about newer prereleases; users of a stable version only
+about stable ones.

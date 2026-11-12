@@ -17,6 +17,7 @@ use okbs_ui::clipboard_history::{
 use okbs_ui::icon::{ICON_SIZE, IconState};
 use okbs_ui::settings::{
     DictionaryState, LayoutEntry, RulesTransfer, Section, SettingsEvent, SettingsInput, SoundId,
+    UpdateStatus,
 };
 use okbs_ui::text_result::TextResult;
 use okbs_ui::tray::{Tray, TrayCommand, TrayLayout, TrayState};
@@ -307,6 +308,24 @@ pub struct Controller {
     restart_elevated: bool,
     file_dialogs: Option<Arc<dyn FileDialogs>>,
     system_settings: Option<Box<dyn SystemSettings>>,
+    updates: Updates,
+}
+
+/// «Проверять обновления»: the running check and what it found.
+#[derive(Default)]
+struct Updates {
+    /// A check in progress; `true` when the user asked for it.
+    running: Option<(
+        Receiver<anyhow::Result<Option<crate::updates::Release>>>,
+        bool,
+    )>,
+    /// A failed scheduled check is not repeated before this time.
+    retry_after: Option<std::time::SystemTime>,
+    /// Do not read the time of the last check from disk on every step.
+    next_look: Option<Instant>,
+    available: Option<crate::updates::Release>,
+    /// The result shown in «О программе».
+    status: Option<UpdateStatus>,
 }
 
 /// Indicator settings taken from «Общие → Основные».
@@ -471,6 +490,7 @@ impl Controller {
             restart_elevated: false,
             file_dialogs: platform.file_dialogs,
             system_settings: platform.system_settings,
+            updates: Updates::default(),
         };
         if let Some(window) = &controller.window {
             for package in crate::dictionaries::PACKAGES {
@@ -642,6 +662,10 @@ impl Controller {
                     ),
                 })
                 .collect::<Vec<_>>(),
+            self.updates
+                .available
+                .as_ref()
+                .map(|release| release.version.as_str()),
         ) {
             Ok(tray) => self.tray = Some(tray),
             Err(err) => tracing::error!("{err}"),
@@ -671,6 +695,125 @@ impl Controller {
         let layouts = self.layout_entries();
         if let Some(window) = &self.window {
             window.open(&self.settings.config, section, None, layouts);
+            if let Some(status) = &self.updates.status {
+                window.send(SettingsInput::UpdateStatus(status.clone()));
+            }
+        }
+    }
+
+    /// Starts a scheduled check when it is due, or one the user asked for,
+    /// and takes the result of a finished one.
+    fn poll_updates(&mut self) {
+        if let Some((running, interactive)) = &self.updates.running {
+            let interactive = *interactive;
+            match running.try_recv() {
+                Ok(result) => {
+                    self.updates.running = None;
+                    self.finish_update_check(result, interactive);
+                }
+                Err(crossbeam_channel::TryRecvError::Empty) => {}
+                Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                    self.updates.running = None;
+                }
+            }
+            return;
+        }
+        let now = Instant::now();
+        if self.updates.next_look.is_some_and(|at| now < at) {
+            return;
+        }
+        self.updates.next_look = Some(now + Duration::from_secs(60));
+        let wall = std::time::SystemTime::now();
+        if self.updates.retry_after.is_some_and(|at| wall < at) {
+            return;
+        }
+        let last = crate::updates::last_check(&crate::updates::state_path(&self.settings.path));
+        if crate::updates::due(self.settings.config.general.update_check, last, wall) {
+            self.start_update_check(false);
+        }
+    }
+
+    fn start_update_check(&mut self, interactive: bool) {
+        if self.updates.running.is_some() {
+            return;
+        }
+        let (sender, receiver) = unbounded();
+        let spawned = std::thread::Builder::new()
+            .name("okbs-updates".into())
+            .spawn(move || {
+                let _ = sender.send(crate::updates::check());
+            });
+        match spawned {
+            Ok(_) => {
+                tracing::info!(interactive, "checking for updates");
+                self.updates.running = Some((receiver, interactive));
+                self.set_update_status(UpdateStatus::Checking);
+            }
+            Err(err) => tracing::warn!("cannot start the update check: {err}"),
+        }
+    }
+
+    fn finish_update_check(
+        &mut self,
+        result: anyhow::Result<Option<crate::updates::Release>>,
+        interactive: bool,
+    ) {
+        match result {
+            Ok(found) => {
+                let now = std::time::SystemTime::now();
+                self.updates.retry_after = None;
+                if let Err(err) = crate::updates::record_check(
+                    &crate::updates::state_path(&self.settings.path),
+                    now,
+                ) {
+                    tracing::warn!("{err:#}");
+                }
+                tracing::info!(newer = ?found.as_ref().map(|r| &r.version), "update check finished");
+                let changed = found != self.updates.available;
+                self.updates.available = found.clone();
+                self.set_update_status(match found {
+                    Some(release) => UpdateStatus::Available {
+                        version: release.version,
+                        url: release.url,
+                    },
+                    None => UpdateStatus::Latest,
+                });
+                if changed {
+                    self.rebuild_tray();
+                }
+            }
+            Err(err) => {
+                tracing::warn!("update check failed: {err:#}");
+                self.updates.retry_after =
+                    Some(std::time::SystemTime::now() + crate::updates::RETRY);
+                // A failed background check keeps showing a release found before.
+                let status = match (&self.updates.available, interactive) {
+                    (Some(release), false) => UpdateStatus::Available {
+                        version: release.version.clone(),
+                        url: release.url.clone(),
+                    },
+                    _ => UpdateStatus::Failed,
+                };
+                self.set_update_status(status);
+            }
+        }
+    }
+
+    fn set_update_status(&mut self, status: UpdateStatus) {
+        self.updates.status = Some(status.clone());
+        if let Some(window) = &self.window {
+            window.send(SettingsInput::UpdateStatus(status));
+        }
+    }
+
+    fn open_update_page(&self, url: &str) {
+        match &self.system_settings {
+            Some(system) => {
+                if let Err(err) = system.open_url(url) {
+                    tracing::warn!("cannot open the release page: {err}");
+                }
+            }
+            None => tracing::warn!("cannot open the release page on this system"),
         }
     }
 
@@ -1048,6 +1191,8 @@ impl Controller {
                 self.engine.send(Command::CaptureHotkey);
             }
             SettingsEvent::LinuxSetup(_) => {}
+            SettingsEvent::CheckUpdates => self.start_update_check(true),
+            SettingsEvent::OpenUpdate(url) => self.open_update_page(&url),
             SettingsEvent::CancelCapture | SettingsEvent::Closed => {
                 self.engine.send(Command::CancelCapture);
             }
@@ -1268,6 +1413,7 @@ impl Controller {
         while let Ok(event) = self.window_events.try_recv() {
             self.handle_window_event(event);
         }
+        self.poll_updates();
         if let Some(title) = &self.history_focus
             && self
                 .history
@@ -1457,6 +1603,11 @@ impl Controller {
                     }
                 }
                 TrayCommand::About => self.open_settings(Section::About),
+                TrayCommand::OpenUpdate => {
+                    if let Some(release) = self.updates.available.clone() {
+                        self.open_update_page(&release.url);
+                    }
+                }
                 TrayCommand::AutoreplaceMenu => {
                     self.engine.send(Command::AutoreplaceList { toggle: false });
                 }

@@ -166,8 +166,24 @@ impl FileDialogs for WinFileDialogs {
 }
 
 impl SystemSettings for WinSystemSettings {
+    fn open_url(&self, url: &str) -> Result<()> {
+        if !url.starts_with("https://") {
+            return Err(PlatformError::Other(
+                "only https:// pages are opened".into(),
+            ));
+        }
+        shell_open(url)
+    }
+
     fn open_keyboard_settings(&self) -> Result<()> {
-        let page = HSTRING::from(KEYBOARD_SETTINGS);
+        shell_open(KEYBOARD_SETTINGS)
+    }
+}
+
+/// Opens a page or settings URI with its registered handler.
+fn shell_open(target: &str) -> Result<()> {
+    {
+        let page = HSTRING::from(target);
         // SAFETY: NUL-terminated strings that live until the call returns.
         let result = unsafe {
             ShellExecuteW(
@@ -184,7 +200,7 @@ impl SystemSettings for WinSystemSettings {
         } else {
             Err(PlatformError::Os {
                 code: result.0 as isize as i64,
-                context: format!("ShellExecuteW({KEYBOARD_SETTINGS})"),
+                context: format!("ShellExecuteW({target})"),
             })
         }
     }

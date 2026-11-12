@@ -43,8 +43,9 @@ switching works, every setting, Linux, troubleshooting.
 Windows 10/11 x64; Linux x86_64 with X11, GNOME 45–50 or KDE Plasma 6. On Linux
 the first start asks for permission (pkexec) to give your session access to the
 keyboards. Dictionaries and language models are built in. Typed text never
-leaves the computer; the network is used only when you download an optional
-dictionary in Settings. No advertising, no update checks.
+leaves the computer. The network is used to download an optional dictionary
+in Settings and, once a week, to ask GitHub whether a newer release exists
+(nothing about you is sent; it can be turned off in About). No advertising.
 [All releases](https://github.com/coinman-dev/own-keyboard-switch/releases) ·
 [Changelog](CHANGELOG.md).
 

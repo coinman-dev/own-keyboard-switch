@@ -6,6 +6,12 @@
 
 ### Added
 
+- **Update check** (About): once a week by default, or once a day, once a
+  month or never. The program asks GitHub only for the list of releases and
+  sends nothing about the user. A newer release adds a "New version
+  available" item to the tray menu and a button to its download page; nothing
+  is downloaded or installed automatically.
+
 - "Only consider Russian and English layouts" (Troubleshooting) now works.
   It is on by default, as before: input in a third layout is left alone.
   When it is off, a word typed in a third layout counts as typed in the pair

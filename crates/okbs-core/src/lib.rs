@@ -27,6 +27,7 @@ mod technical_words;
 pub mod text;
 pub mod translit;
 pub mod typo;
+pub mod version;
 
 pub use hotkey::{Hotkey, ModState, Modifiers, Side};
 pub use keymap::KeyMap;

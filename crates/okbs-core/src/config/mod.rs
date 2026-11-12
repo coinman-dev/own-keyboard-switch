@@ -114,6 +114,38 @@ pub enum Theme {
     Dark,
 }
 
+/// «Проверять обновления»: how often the program asks GitHub for a newer
+/// release. Nothing about the user is sent; only the release list is read.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateCheck {
+    /// Never.
+    Never,
+    /// Once a day.
+    Daily,
+    /// Once a week.
+    #[default]
+    Weekly,
+    /// Once a month.
+    Monthly,
+}
+
+impl UpdateCheck {
+    /// All choices in settings-window order.
+    pub const ALL: [UpdateCheck; 4] = [Self::Never, Self::Daily, Self::Weekly, Self::Monthly];
+
+    /// Time between two checks, or `None` when checks are off.
+    pub const fn interval(self) -> Option<std::time::Duration> {
+        const DAY: u64 = 24 * 60 * 60;
+        match self {
+            Self::Never => None,
+            Self::Daily => Some(std::time::Duration::from_secs(DAY)),
+            Self::Weekly => Some(std::time::Duration::from_secs(7 * DAY)),
+            Self::Monthly => Some(std::time::Duration::from_secs(30 * DAY)),
+        }
+    }
+}
+
 /// Interface language preference, kept separate from the detected system language.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -188,6 +220,8 @@ pub struct General {
     pub ui_language: UiLanguage,
     /// Settings window theme.
     pub theme: Theme,
+    /// «Проверять обновления».
+    pub update_check: UpdateCheck,
 }
 
 impl Default for General {
@@ -209,6 +243,7 @@ impl Default for General {
             language_pair: [Lang::Ru, Lang::En],
             ui_language: UiLanguage::System,
             theme: Theme::System,
+            update_check: UpdateCheck::Weekly,
         }
     }
 }

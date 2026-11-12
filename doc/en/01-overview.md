@@ -34,9 +34,11 @@ notification area.
 ## What the program does not do
 
 - **It does not send text over the network.** Dictionaries and language
-  models are built in. The network is needed only to download an additional
-  spelling dictionary when you click **Download** yourself. There are no
-  update checks and no ads.
+  models are built in. The network is needed to download an additional
+  spelling dictionary when you click **Download** yourself, and once a week to
+  ask GitHub for the list of releases to see whether a newer version exists.
+  Nothing about you is sent; how often to check, or not at all, is chosen in
+  **About**. There are no ads.
 - **It does not write typed text to the log.** The log holds only technical
   details: how many letters the word had, what decision was made and why.
 - **It works only with the Russian–English pair.** Other layouts can stay in
